@@ -416,7 +416,16 @@ html.dark .el-button--warning { --el-button-bg-color: #4A2A0A; --el-button-text-
 html.dark .el-button--danger  { --el-button-bg-color: #4D1511; --el-button-text-color: #FFB4AB; --el-button-hover-bg-color: #6B1D17; --el-button-hover-text-color: #FFDAD6; }.el-button--info    { --el-button-bg-color: var(--nx-field-hover); --el-button-text-color: var(--nx-text); }
 .el-button.is-text, .el-button.is-link { --el-button-bg-color: transparent; --el-button-text-color: var(--el-color-primary); background: transparent; }
 .el-button.is-disabled { opacity: 0.45; }
-html.dark .el-button--primary { --el-button-text-color: #0D0035; --el-button-hover-text-color: #0D0035; }
+html.dark .el-pagination .el-pager li.is-active { background: #B899FF !important; color: #0D0035 !important; }
+// tema escuro: primário claro com texto escuro (8,5:1)
+html.dark .el-button--primary {
+  --el-button-bg-color: #B899FF;
+  --el-button-text-color: #0D0035;
+  --el-button-hover-bg-color: #D8C2FF;
+  --el-button-hover-text-color: #0D0035;
+  --el-button-active-bg-color: #9D75FF;
+  --el-button-active-text-color: #0D0035;
+}
 
 // ---------- Campos ----------
 .el-input,
@@ -475,6 +484,12 @@ html.dark .el-button--primary { --el-button-text-color: #0D0035; --el-button-hov
   &.el-tag--info    { --el-tag-bg-color: var(--nx-field); --el-tag-text-color: var(--nx-text-muted); }
 }
 
+// Meus dados: o upstream fixa o formulário em 600px, o que estoura no celular
+#app .info-form { width: auto; max-width: 600px; }
+
+// avisos longos em badge (ex.: Meus catálogos) quebram linha em vez de estourar
+.el-tag { max-width: 100%; white-space: normal; height: auto; min-height: 22px; line-height: 1.35; padding-top: 3px; padding-bottom: 3px; }
+
 // ---------- Diálogos, menus suspensos e paginação ----------
 .el-dialog {
   border-radius: var(--nx-radius-card);
@@ -488,7 +503,7 @@ html.dark .el-button--primary { --el-button-text-color: #0D0035; --el-button-hov
 .el-pagination {
   --el-pagination-button-bg-color: transparent;
   .el-pager li { border-radius: 10px; font-weight: 600; }
-  .el-pager li.is-active { background: var(--nx-accent); color: #fff; }
+  .el-pager li.is-active { background: var(--nx-accent) !important; color: #fff !important; }
 }
 .el-empty__description p { color: var(--nx-text-muted); }
 
@@ -630,6 +645,18 @@ html.dark #app .login-container .login-card {
   .list-query .el-select { --el-input-width: 100%; --el-select-width: 100%; width: 100%; }
   // coluna de ações deixa de ser fixa: senão cobre os dados na tela estreita
   .el-table .el-table-fixed-column--right { position: static !important; box-shadow: none !important; }
+  // paginação: só as setas e as páginas (sem "por página" e "ir para", que não cabem)
+  .el-pagination { flex-wrap: wrap; row-gap: 8px; }
+  .el-pagination .el-pagination__sizes, .el-pagination .el-pagination__jump { display: none; }
+  // cartões lado a lado (Comandos do servidor) viram uma coluna
+  .el-space { flex-wrap: wrap; width: 100%; }
+  .el-space__item { width: 100%; margin-right: 0 !important; }
+  .el-space__item > .el-card { width: 100% !important; }
+  // Meus dados: rótulo acima do campo
+  .info-form .el-form-item { flex-direction: column; align-items: stretch; }
+  .info-form .el-form-item__label { width: auto !important; justify-content: flex-start; }
+  .info-form .el-form-item__content { margin-left: 0 !important; min-width: 0; }
+  .info-form .el-table { width: 100%; }
   .el-table__fixed-right-patch { display: none; }
   .el-dialog { --el-dialog-width: 92% !important; width: 92% !important; }
 }
