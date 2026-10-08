@@ -233,6 +233,22 @@ html.dark .el-button--primary {
   font-weight: 600;
 }
 
+// ---------- Formulários de página inteira (novo/editar usuário etc.) ----------
+.form-card {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 28px 32px 12px;
+  background: var(--nx-surface);
+  border: 1px solid var(--nx-border);
+  border-radius: 12px;
+  box-shadow: 0 1px 2px rgba(13, 0, 53, 0.06);
+
+  .el-form-item__label {
+    width: 170px !important; // evita quebrar "Nome de exibição" em duas linhas
+    font-weight: 600;
+  }
+  .el-form-item__content { min-width: 0; }
+}
 // ---------- Tela de login ----------
 #app .login-container {
   position: relative;
