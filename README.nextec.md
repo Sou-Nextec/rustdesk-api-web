@@ -15,7 +15,7 @@ Tudo que é da Nextec fica em arquivos próprios:
 | `src/nextec/theme.scss` | Cores, fontes, menu, cabeçalho, login e ajustes do Element Plus |
 | `src/nextec/routes.js` | Agrupamento do menu (sem editar `src/router/index.js`) |
 | `src/nextec/views/Home.vue` | Tela inicial com resumo |
-| `src/nextec/assets/` | Logo e símbolo (SVG) |
+| `src/nextec/assets/` | Logo e símbolo (PNG) |
 | `src/nextec/fonts/` | Fontes Visby CF (`.woff2`, não versionadas) |
 | `src/utils/i18n/pt_BR.json` | Tradução do painel |
 | `nextec/i18n/pt_BR.toml` | Tradução das mensagens do backend |
@@ -49,7 +49,7 @@ Nunca aponte para o servidor de produção.
 
 * Cores: `#0D0035` base, `#F4F4F4` neutro, `#5C50FF` destaque, `#4901FA` apoio e branco. As cores fortes aparecem só em destaques (botão principal, item ativo, ícones de resumo).
 * Fontes: Visby CF nos títulos e Open Sans no corpo.
-* Logo: substitua `src/nextec/assets/logo-dark.svg` (versão para fundo claro, usada no login) e `src/nextec/assets/mark.svg` (símbolo do cabeçalho). Troque também `public/nextec/favicon.svg`. Os arquivos atuais são provisórios.
+* Logo: `src/nextec/assets/logo-dark.png` (fundo claro, usado no login), `logo-light.png` (texto branco, reservado para fundo escuro), `mark.png` (símbolo do cabeçalho) e `public/nextec/favicon.png`. Para trocar, substitua os arquivos mantendo os nomes.
 * Visby CF: copie `VisbyCF-Medium.woff2`, `VisbyCF-Bold.woff2` e `VisbyCF-ExtraBold.woff2` para `src/nextec/fonts/` antes do build. Sem eles, os títulos usam Open Sans.
 
 ## Sincronizar com o upstream
