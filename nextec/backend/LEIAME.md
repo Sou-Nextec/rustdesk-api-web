@@ -1,9 +1,9 @@
 # Correção na API enviada ao projeto original
 
 PR: https://github.com/lejianwen/rustdesk-api/pull/540 (branch `fix/admin-update-empty-fields` no fork `Sou-Nextec/rustdesk-api`).
-Quando for aceito e sair numa nova versão da imagem `lejianwen/rustdesk-server-s6`, basta atualizar a imagem base; o patch abaixo deixa de ser necessário.
+Enquanto o PR não é aceito, o patch é aplicado na imagem Nextec (estágio `api` do Dockerfile). Quando for aceito e sair numa nova versão da imagem `lejianwen/rustdesk-server-s6`, use `NEXTEC_API_PATCH=0`.
 
-## Histórico: proposta original (não aplicada na imagem)
+## Histórico
 
 A imagem Nextec mantém a API original da lejianwen, como definido no projeto. Este patch fica aqui
 como proposta, para decidir se vale aplicar na imagem ou enviar como PR para o upstream.

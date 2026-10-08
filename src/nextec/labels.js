@@ -86,7 +86,7 @@ function replaceExact (root, selector, map) {
 const FIELD_NAMES = {
   用户名: 'Usuário', 密码: 'Senha', 旧密码: 'Senha atual', 新密码: 'Nova senha', 确认密码: 'Confirmação da senha',
   邮箱: 'E-mail', 昵称: 'Nome de exibição', 名称: 'Nome', 验证码: 'Código de verificação', 备注: 'Observação',
-  分组: 'Grupo', 颜色: 'Cor', 标签: 'Etiqueta', 地址簿: 'Catálogo', 状态: 'Situação', 类型: 'Tipo',
+  Id: 'ID', 分组: 'Grupo', 颜色: 'Cor', 标签: 'Etiqueta', 地址簿: 'Catálogo', 状态: 'Situação', 类型: 'Tipo',
 }
 const field = name => FIELD_NAMES[name] || name
 const SERVER_MESSAGES = [
