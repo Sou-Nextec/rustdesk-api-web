@@ -195,6 +195,9 @@ h1, h2, h3, h4, h5, h6,
     }
     .el-sub-menu .el-menu { background: transparent; }
     .el-sub-menu .el-menu-item { padding-left: 46px !important; }
+    // texto do item nunca passa da borda do menu
+    .el-menu-item span, .el-sub-menu__title span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .el-sub-menu__title { padding-right: 36px !important; }
     .el-sub-menu__title .el-sub-menu__icon-arrow { color: rgba(255, 255, 255, 0.55); }
   }
 
@@ -486,6 +489,12 @@ html.dark .el-button--primary {
 
 // Meus dados: o upstream fixa o formulário em 600px, o que estoura no celular
 #app .info-form { width: auto; max-width: 600px; }
+
+// avisos (el-alert) na paleta da marca
+.el-alert { border-radius: 14px; }
+.el-alert--info.is-light { background: var(--nx-tint); --el-alert-title-color: var(--nx-text); --el-alert-description-color: var(--nx-text-muted); color: var(--nx-text); .el-alert__icon { color: var(--nx-accent); } }
+html.dark .el-alert--info.is-light { background: #241D70; .el-alert__icon { color: #B899FF; } }
+.el-alert__title { font-weight: 600; }
 
 // avisos longos em badge (ex.: Meus catálogos) quebram linha em vez de estourar
 .el-tag { max-width: 100%; white-space: normal; height: auto; min-height: 22px; line-height: 1.35; padding-top: 3px; padding-bottom: 3px; }

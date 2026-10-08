@@ -14,6 +14,12 @@ const TABLE_HEADERS = {
   HIGHEST: 'Pico',
   AVG: 'Média',
   SPEED: 'Velocidade',
+  // comandos avançados (Ajustes do servidor)
+  cmd: 'Comando',
+  alias: 'Atalho',
+  option: 'Parâmetros',
+  explain: 'Descrição',
+  actions: 'Ações',
 }
 
 const CARD_TITLES = {
@@ -40,6 +46,11 @@ const FORM_LABELS = {
   'rdp端口': 'Porta RDP',
   'rdp用户名': 'Usuário RDP',
   '在线': 'Online',
+  cmd: 'Comando',
+  alias: 'Atalho',
+  option: 'Parâmetros',
+  target: 'Destino',
+  explain: 'Descrição',
 }
 
 // textos de exemplo e opções fixos no template
