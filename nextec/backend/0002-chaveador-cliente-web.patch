@@ -1,0 +1,280 @@
+diff --git a/cmd/apimain.go b/cmd/apimain.go
+index eddefb2..4d7fdb4 100644
+--- a/cmd/apimain.go
++++ b/cmd/apimain.go
+@@ -121,6 +121,11 @@ func InitGlobal() {
+ 		ReportCaller: global.Config.Logger.ReportCaller,
+ 	})
+ 
++	// configurações alteradas pelo painel Nextec (data/nextec-settings.json) têm prioridade
++	if err := global.LoadNextecSettings(); err != nil {
++		global.Logger.Error("load nextec settings: ", err)
++	}
++
+ 	global.InitI18n()
+ 
+ 	//redis
+diff --git a/global/nextec.go b/global/nextec.go
+new file mode 100644
+index 0000000..53c6b4d
+--- /dev/null
++++ b/global/nextec.go
+@@ -0,0 +1,103 @@
++package global
++
++import (
++	"encoding/json"
++	"errors"
++	"os"
++	"path/filepath"
++	"sync"
++)
++
++// NextecSettingsFile guarda as configurações alteradas pelo painel em tempo de execução.
++// Fica no diretório data (volume do Docker), então sobrevive a reinícios e recriações do contêiner.
++const NextecSettingsFile = "./data/nextec-settings.json"
++
++var nextecSettingsMu sync.Mutex
++
++// LoadNextecSettings é chamado na inicialização e sobrescreve o valor do config.yaml e das variáveis de ambiente.
++func LoadNextecSettings() error {
++	nextecSettingsMu.Lock()
++	defer nextecSettingsMu.Unlock()
++	s, err := readNextecSettings()
++	if err != nil {
++		return err
++	}
++	if v, ok := s["web_client"]; ok {
++		var wc int
++		if err := json.Unmarshal(v, &wc); err != nil {
++			return err
++		}
++		Config.App.WebClient = wc
++	}
++	return nil
++}
++
++// SetWebClient liga ou desliga o cliente web e grava a escolha no arquivo.
++func SetWebClient(enabled bool) error {
++	nextecSettingsMu.Lock()
++	defer nextecSettingsMu.Unlock()
++	wc := 0
++	if enabled {
++		wc = 1
++	}
++	s, err := readNextecSettings()
++	if err != nil {
++		return err
++	}
++	s["web_client"], _ = json.Marshal(wc)
++	if err := writeNextecSettings(s); err != nil {
++		return err
++	}
++	Config.App.WebClient = wc
++	return nil
++}
++
++func readNextecSettings() (map[string]json.RawMessage, error) {
++	s := map[string]json.RawMessage{}
++	b, err := os.ReadFile(NextecSettingsFile)
++	if errors.Is(err, os.ErrNotExist) {
++		return s, nil
++	}
++	if err != nil {
++		return nil, err
++	}
++	if len(b) == 0 {
++		return s, nil
++	}
++	if err := json.Unmarshal(b, &s); err != nil {
++		return nil, err
++	}
++	return s, nil
++}
++
++// writeNextecSettings grava num arquivo temporário e renomeia, para nunca deixar o arquivo pela metade.
++func writeNextecSettings(s map[string]json.RawMessage) error {
++	b, err := json.MarshalIndent(s, "", "  ")
++	if err != nil {
++		return err
++	}
++	dir := filepath.Dir(NextecSettingsFile)
++	if err := os.MkdirAll(dir, 0755); err != nil {
++		return err
++	}
++	tmp, err := os.CreateTemp(dir, ".nextec-settings-*.json")
++	if err != nil {
++		return err
++	}
++	defer os.Remove(tmp.Name())
++	if _, err := tmp.Write(append(b, '\n')); err != nil {
++		tmp.Close()
++		return err
++	}
++	if err := tmp.Sync(); err != nil {
++		tmp.Close()
++		return err
++	}
++	if err := tmp.Close(); err != nil {
++		return err
++	}
++	if err := os.Chmod(tmp.Name(), 0644); err != nil {
++		return err
++	}
++	return os.Rename(tmp.Name(), NextecSettingsFile)
++}
+diff --git a/http/controller/admin/nextec.go b/http/controller/admin/nextec.go
+new file mode 100644
+index 0000000..949cfdc
+--- /dev/null
++++ b/http/controller/admin/nextec.go
+@@ -0,0 +1,41 @@
++package admin
++
++import (
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/global"
++	"github.com/lejianwen/rustdesk-api/v2/http/response"
++)
++
++type Nextec struct {
++}
++
++type NextecWebClientForm struct {
++	Enabled *bool `json:"enabled" binding:"required"`
++}
++
++// WebClient liga ou desliga o cliente web
++// @Tags ADMIN
++// @Summary Liga ou desliga o cliente web
++// @Description Altera app.web-client em tempo de execução e grava em data/nextec-settings.json
++// @Accept  json
++// @Produce  json
++// @Param body body NextecWebClientForm true "enabled"
++// @Success 200 {object} response.Response
++// @Failure 500 {object} response.Response
++// @Router /admin/nextec/web-client [post]
++// @Security token
++func (n *Nextec) WebClient(c *gin.Context) {
++	f := &NextecWebClientForm{}
++	if err := c.ShouldBindJSON(f); err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError")+err.Error())
++		return
++	}
++	if err := global.SetWebClient(*f.Enabled); err != nil {
++		global.Logger.Error("save nextec settings: ", err)
++		response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
++		return
++	}
++	response.Success(c, &gin.H{
++		"web_client": global.Config.App.WebClient,
++	})
++}
+diff --git a/http/middleware/webclient.go b/http/middleware/webclient.go
+new file mode 100644
+index 0000000..c015d46
+--- /dev/null
++++ b/http/middleware/webclient.go
+@@ -0,0 +1,21 @@
++package middleware
++
++import (
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/global"
++	"net/http"
++)
++
++// WebClientEnabled responde 404 quando o cliente web está desligado. A checagem é feita a cada
++// requisição porque a chave pode mudar em tempo de execução.
++func WebClientEnabled() gin.HandlerFunc {
++	return func(c *gin.Context) {
++		if global.Config.App.WebClient != 1 {
++			// mesma resposta do NoRoute, como se a rota não existisse
++			c.String(http.StatusNotFound, "404 not found")
++			c.Abort()
++			return
++		}
++		c.Next()
++	}
++}
+diff --git a/http/router/admin.go b/http/router/admin.go
+index 2cd01de..5ce2ea0 100644
+--- a/http/router/admin.go
++++ b/http/router/admin.go
+@@ -50,6 +50,7 @@ func Init(g *gin.Engine) {
+ 
+ 	RustdeskCmdBind(adg)
+ 	DeviceGroupBind(adg)
++	NextecBind(adg)
+ 	//访问静态文件
+ 	//g.StaticFS("/upload", http.Dir(global.Config.Gin.ResourcesPath+"/upload"))
+ }
+@@ -62,6 +63,11 @@ func RustdeskCmdBind(adg *gin.RouterGroup) {
+ 	rg.POST("/cmdDelete", cont.CmdDelete)
+ 	rg.POST("/cmdCreate", cont.CmdCreate)
+ }
++func NextecBind(adg *gin.RouterGroup) {
++	cont := &admin.Nextec{}
++	rg := adg.Group("/nextec").Use(middleware.AdminPrivilege())
++	rg.POST("/web-client", cont.WebClient)
++}
+ func LoginBind(rg *gin.RouterGroup) {
+ 	cont := &admin.Login{}
+ 	rg.POST("/login", cont.Login)
+diff --git a/http/router/api.go b/http/router/api.go
+index 52c7773..1965378 100644
+--- a/http/router/api.go
++++ b/http/router/api.go
+@@ -61,9 +61,7 @@ func ApiInit(g *gin.Engine) {
+ 		frg.POST("/sysinfo_ver", pe.SysInfoVer)
+ 	}
+ 
+-	if global.Config.App.WebClient == 1 {
+-		WebClientRoutes(frg)
+-	}
++	WebClientRoutes(frg)
+ 
+ 	{
+ 		au := &api.Audit{}
+@@ -135,7 +133,9 @@ func PersonalRoutes(frg *gin.RouterGroup) {
+ 
+ }
+ 
+-func WebClientRoutes(frg *gin.RouterGroup) {
++func WebClientRoutes(rg *gin.RouterGroup) {
++	// rotas sempre registradas; a chave app.web-client é checada a cada requisição
++	frg := rg.Group("", middleware.WebClientEnabled())
+ 	w := &api.WebClient{}
+ 	{
+ 		frg.POST("/shared-peer", w.SharedPeer)
+diff --git a/http/router/router.go b/http/router/router.go
+index d887774..89a7a90 100644
+--- a/http/router/router.go
++++ b/http/router/router.go
+@@ -4,6 +4,7 @@ import (
+ 	"github.com/gin-gonic/gin"
+ 	"github.com/lejianwen/rustdesk-api/v2/global"
+ 	"github.com/lejianwen/rustdesk-api/v2/http/controller/web"
++	"github.com/lejianwen/rustdesk-api/v2/http/middleware"
+ 	"net/http"
+ )
+ 
+@@ -11,13 +12,10 @@ func WebInit(g *gin.Engine) {
+ 	i := &web.Index{}
+ 	g.GET("/", i.Index)
+ 
+-	if global.Config.App.WebClient == 1 {
+-		g.GET("/webclient-config/index.js", i.ConfigJs)
+-	}
+-
+-	if global.Config.App.WebClient == 1 {
+-		g.StaticFS("/webclient", http.Dir(global.Config.Gin.ResourcesPath+"/web"))
+-		g.StaticFS("/webclient2", http.Dir(global.Config.Gin.ResourcesPath+"/web2"))
+-	}
++	// rotas sempre registradas; a chave app.web-client é checada a cada requisição
++	wc := g.Group("/", middleware.WebClientEnabled())
++	wc.GET("/webclient-config/index.js", i.ConfigJs)
++	wc.StaticFS("/webclient", http.Dir(global.Config.Gin.ResourcesPath+"/web"))
++	wc.StaticFS("/webclient2", http.Dir(global.Config.Gin.ResourcesPath+"/web2"))
+ 	g.StaticFS("/_admin", http.Dir(global.Config.Gin.ResourcesPath+"/admin"))
+ }

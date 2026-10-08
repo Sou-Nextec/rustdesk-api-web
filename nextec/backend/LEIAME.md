@@ -31,3 +31,30 @@ Isso muda o motor, contrariando a regra de manter servidor e API originais, e o 
 
 * Enviar como PR para `lejianwen/rustdesk-api` (melhor opção: a correção chega a todos e o motor continua original).
 * Ou aplicar na imagem Nextec com um `go.sum` fixado e revisado, aceitando manter o patch a cada atualização.
+
+## Patch 0002: chave do cliente web
+
+`0002-chaveador-cliente-web.patch` é exclusivo da Nextec (não vai para o upstream) e deve ser aplicado
+depois do 0001, sobre a mesma tag `v2.6.29`. O `git apply /patches/*.patch` do Dockerfile já segue a
+ordem dos nomes. Origem: branch `nextec/web-client-toggle` do fork `Sou-Nextec/rustdesk-api`.
+
+1. **Rotas do cliente web sempre registradas.** `/webclient`, `/webclient2`, `/webclient-config/index.js`,
+   `/api/shared-peer`, `/api/server-config` e `/api/server-config-v2` passam a existir sempre e checam
+   `app.web-client` a cada requisição. Desligado, respondem 404 como uma rota inexistente. Ligado, nada muda.
+2. **Endpoint para o painel.** `POST /api/admin/nextec/web-client`, somente administrador, com o corpo
+   `{"enabled": true}` ou `{"enabled": false}`. Responde no formato padrão com `{"web_client": 1}` ou
+   `{"web_client": 0}`. O `GET /api/admin/config/app` passa a refletir o valor atual sem reiniciar.
+3. **Persistência.** A escolha fica em `/app/data/nextec-settings.json` (o volume do banco SQLite), gravada
+   de forma atômica. Na inicialização esse arquivo tem prioridade sobre o `config.yaml` e sobre a variável
+   `RUSTDESK_API_APP_WEB_CLIENT`. Sem o arquivo, vale a configuração original. Para voltar ao controle
+   pela variável, apague o arquivo e reinicie o contêiner.
+
+## Patch 0003: listas compartilhadas no painel
+
+O app RustDesk já mostra ao técnico as listas compartilhadas com ele, mas o painel não tinha como ler isso. O patch acrescenta, para o usuário logado (sem exigir admin):
+
+- `GET /api/admin/my/shared/collections`: listas compartilhadas com ele (por pessoa ou equipe), com dono, nível e quantidade.
+- `GET /api/admin/my/shared/address_book/list?collection_id=`: dispositivos dessas listas, sem senha nem hash, com a última comunicação.
+- `POST /api/admin/my/shared/status` com `{"ids": [...]}`: última comunicação só dos IDs que ele enxerga (listas próprias, compartilhadas ou computadores dele).
+
+Branch `nextec/web-client-toggle` do fork da API (commit seguinte ao 0002). Não vai para o projeto original.
