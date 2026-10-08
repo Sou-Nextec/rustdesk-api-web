@@ -54,3 +54,10 @@ router.beforeEach((to) => {
     return { path: '/home', replace: true }
   }
 })
+
+// 4. Celular: o menu começa recolhido e fecha ao navegar
+const mobile = window.matchMedia('(max-width: 768px)')
+if (mobile.matches) appStore.setting.sideIsCollapse = true
+router.afterEach(() => {
+  if (mobile.matches) appStore.setting.sideIsCollapse = true
+})

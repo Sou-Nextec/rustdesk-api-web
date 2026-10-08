@@ -201,6 +201,12 @@ h1, h2, h3, h4, h5, h6,
   th.el-table__cell {
     font-weight: 700;
   }
+  // o padrão do Element Plus quebra palavra no meio ('Situaçã o'); quebra só entre palavras
+  .cell {
+    word-break: normal;
+    overflow-wrap: break-word;
+    padding: 0 8px;
+  }
 }
 html.dark .el-table {
   --el-table-header-bg-color: #211A66;
@@ -310,6 +316,13 @@ html.dark #app .login-container .login-card {
 
 // ---------- Responsivo ----------
 @media (max-width: 768px) {
+  // menu lateral: recolhido some por completo; aberto vira painel sobre o conteúdo
+  #app .app-left:has(.menus.el-menu--collapse) { width: 0 !important; overflow: hidden; }
+  #app .app-left:not(:has(.menus.el-menu--collapse)) {
+    position: fixed; left: 0; top: 0; bottom: 0; z-index: 2000;
+    box-shadow: 8px 0 32px rgba(13, 0, 53, 0.25);
+  }
+  #app .header-tags { flex-wrap: nowrap; overflow-x: auto; }
   #app .app-main { padding: 12px; }
   #app .app-header.el-header .header-logo .title { display: none; }
   .list-query .el-input,
