@@ -1,0 +1,102 @@
+diff --git a/http/controller/admin/deviceGroup.go b/http/controller/admin/deviceGroup.go
+index 3d3a884..2adac4e 100644
+--- a/http/controller/admin/deviceGroup.go
++++ b/http/controller/admin/deviceGroup.go
+@@ -115,7 +115,7 @@ func (ct *DeviceGroup) Update(c *gin.Context) {
+ 		return
+ 	}
+ 	u := f.ToDeviceGroup()
+-	err := service.AllService.GroupService.DeviceGroupUpdate(u)
++	err := service.UpdateFields(u, "name")
+ 	if err != nil {
+ 		response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
+ 		return
+diff --git a/http/controller/admin/group.go b/http/controller/admin/group.go
+index bf70ca9..8960c05 100644
+--- a/http/controller/admin/group.go
++++ b/http/controller/admin/group.go
+@@ -115,7 +115,7 @@ func (ct *Group) Update(c *gin.Context) {
+ 		return
+ 	}
+ 	u := f.ToGroup()
+-	err := service.AllService.GroupService.Update(u)
++	err := service.UpdateFields(u, "name", "type")
+ 	if err != nil {
+ 		response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
+ 		return
+diff --git a/http/controller/admin/oauth.go b/http/controller/admin/oauth.go
+index 811fabb..c5c6641 100644
+--- a/http/controller/admin/oauth.go
++++ b/http/controller/admin/oauth.go
+@@ -251,7 +251,11 @@ func (o *Oauth) Update(c *gin.Context) {
+ 		return
+ 	}
+ 	u := f.ToOauth()
+-	err := service.AllService.OauthService.Update(u)
++	fields := []string{"op", "oauth_type", "issuer", "scopes", "client_id", "auto_register", "pkce_enable", "pkce_method"}
++	if u.ClientSecret != "" {
++		fields = append(fields, "client_secret")
++	}
++	err := service.UpdateFields(u, fields...)
+ 	if err != nil {
+ 		response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
+ 		return
+diff --git a/http/controller/admin/peer.go b/http/controller/admin/peer.go
+index d8914a4..0fc117e 100644
+--- a/http/controller/admin/peer.go
++++ b/http/controller/admin/peer.go
+@@ -148,7 +148,7 @@ func (ct *Peer) Update(c *gin.Context) {
+ 		return
+ 	}
+ 	u := f.ToPeer()
+-	err := service.AllService.PeerService.Update(u)
++	err := service.UpdateFields(u, "id", "cpu", "hostname", "memory", "os", "username", "uuid", "version", "group_id", "alias")
+ 	if err != nil {
+ 		response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
+ 		return
+diff --git a/http/controller/admin/user.go b/http/controller/admin/user.go
+index 963b1cd..af8eb9f 100644
+--- a/http/controller/admin/user.go
++++ b/http/controller/admin/user.go
+@@ -124,7 +124,11 @@ func (ct *User) Update(c *gin.Context) {
+ 		return
+ 	}
+ 	u := f.ToUser()
+-	err := service.AllService.UserService.Update(u)
++	fields := []string{"username", "email", "nickname", "group_id", "status", "remark"}
++	if u.IsAdmin != nil {
++		fields = append(fields, "is_admin")
++	}
++	err := service.UpdateFields(u, fields...)
+ 	if err != nil {
+ 		response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
+ 		return
+diff --git a/http/request/admin/peer.go b/http/request/admin/peer.go
+index 88db2c0..2678fd4 100644
+--- a/http/request/admin/peer.go
++++ b/http/request/admin/peer.go
+@@ -4,7 +4,7 @@ import "github.com/lejianwen/rustdesk-api/v2/model"
+ 
+ type PeerForm struct {
+ 	RowId    uint   `json:"row_id" `
+-	Id       string `json:"id"`
++	Id       string `json:"id" validate:"required"` // patch Nextec: ID obrigatório no cadastro
+ 	Cpu      string `json:"cpu"`
+ 	Hostname string `json:"hostname"`
+ 	Memory   string `json:"memory"`
+diff --git a/service/service.go b/service/service.go
+index b5fb1bf..316aab8 100644
+--- a/service/service.go
++++ b/service/service.go
+@@ -70,3 +70,11 @@ func CommonEnable() func(db *gorm.DB) *gorm.DB {
+ 		return db.Where("status = ?", model.COMMON_STATUS_ENABLE)
+ 	}
+ }
++
++// UpdateFields grava os campos listados mesmo quando vazios (zero value).
++// Updates(struct) do GORM ignora valores vazios, o que impedia apagar um campo pela tela de administração
++// (ex.: o apelido de um dispositivo). Usado só pelos controladores de administração; o cliente RustDesk
++// e o LDAP continuam com o comportamento original, que envia dados parciais. (patch Nextec)
++func UpdateFields(m interface{}, fields ...string) error {
++	return DB.Model(m).Select(fields).Updates(m).Error
++}

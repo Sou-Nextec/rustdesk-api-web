@@ -92,3 +92,4 @@ No `docker-compose.yml`, troque `image:` por `nextec/rustdesk-server-s6:dev` e d
 
 * Campos de texto esvaziados na edição (ex.: apagar o apelido de um dispositivo) não são gravados: o servidor ignora valores vazios. Para trocar, digite o novo valor.
 * O servidor aceita cadastros com campos obrigatórios vazios. O painel Nextec bloqueia isso na tela (`required-guard.js`), mas chamadas diretas à API continuam aceitas.
+* Há um patch proposto para os dois pontos em `nextec/backend/` (veja o LEIAME), ainda não aplicado na imagem.
