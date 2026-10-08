@@ -1,0 +1,46 @@
+# Stack do Portainer: servidor RustDesk Nextec (hbbs, hbbr, API e painel) + túnel da Cloudflare.
+# Variáveis (Portainer > Environment variables):
+#   TUNNEL_TOKEN  obrigatória (token do túnel da Cloudflare)
+#   DOMINIO       padrão remoto.nex.tec.br
+#   URL_PAINEL    padrão https://painel-remoto.nex.tec.br
+#   PASTA_DADOS   padrão /opt/rustdesk-nextec (guarda data/ e api/ no disco da VPS)
+services:
+  rustdesk:
+    image: ghcr.io/sou-nextec/rustdesk-nextec:latest
+    pull_policy: always
+    container_name: rustdesk
+    restart: unless-stopped
+    ports:
+      - "21115:21115"
+      - "21116:21116"
+      - "21116:21116/udp"
+      - "21117:21117"
+      - "21118:21118"
+      - "21119:21119"
+      # 21114 (painel e API) fica só na rede interna, para o cloudflared
+    environment:
+      - TZ=America/Sao_Paulo
+      - RELAY=${DOMINIO:-remoto.nex.tec.br}:21117
+      - ENCRYPTED_ONLY=1
+      - MUST_LOGIN=N
+      - RUSTDESK_API_LANG=pt-BR
+      - RUSTDESK_API_RUSTDESK_ID_SERVER=${DOMINIO:-remoto.nex.tec.br}:21116
+      - RUSTDESK_API_RUSTDESK_RELAY_SERVER=${DOMINIO:-remoto.nex.tec.br}:21117
+      - RUSTDESK_API_RUSTDESK_API_SERVER=${URL_PAINEL:-https://painel-remoto.nex.tec.br}
+      - RUSTDESK_API_KEY_FILE=/data/id_ed25519.pub
+      - RUSTDESK_API_RUSTDESK_KEY_FILE=/data/id_ed25519.pub
+    volumes:
+      # chave do servidor e cadastro de IDs (hbbs)
+      - ${PASTA_DADOS:-/opt/rustdesk-nextec}/data:/data
+      # banco do painel: usuários, listas, permissões e ajustes
+      - ${PASTA_DADOS:-/opt/rustdesk-nextec}/api:/app/data
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: cloudflared-painel
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN:?defina TUNNEL_TOKEN}
+    depends_on:
+      - rustdesk
