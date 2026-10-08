@@ -12,6 +12,11 @@ import { pinia } from '@/store'
 import { useAppStore } from '@/store/app'
 import { useUserStore } from '@/store/user'
 
+// Tema claro por padrão (o escuro continua disponível no botão do cabeçalho)
+try {
+  if (!localStorage.getItem('vueuse-color-scheme')) localStorage.setItem('vueuse-color-scheme', 'light')
+} catch (e) { /* storage indisponível: segue o padrão do navegador */ }
+
 // 0. Visby CF (títulos): usa os .woff2 que existirem em src/nextec/fonts. Sem eles, cai em Open Sans.
 const visby = import.meta.glob('./fonts/VisbyCF-*.woff2', { eager: true, query: '?url', import: 'default' })
 const WEIGHTS = { Medium: 500, Bold: 700, ExtraBold: 800 }

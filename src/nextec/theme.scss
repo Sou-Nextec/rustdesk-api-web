@@ -104,22 +104,24 @@ h1, h2, h3, h4, h5, h6,
 }
 
 // ---------- Estrutura (menu lateral, cabeçalho) ----------
+// Superfícies claras; o #0D0035 aparece só em texto e o #5C50FF só no item ativo e nos botões.
 #app {
   .app-left .scroll-sidebar {
-    background-color: var(--nx-base);
+    background-color: var(--nx-surface);
+    border-right: 1px solid var(--nx-border);
   }
 
   .app-header.el-header {
-    background-color: var(--nx-base);
-    color: var(--nx-white);
+    background-color: var(--nx-surface);
+    color: var(--nx-text);
     height: 56px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    border-bottom: 1px solid var(--nx-border);
 
     .header-logo .title {
       font-family: var(--nx-font-title);
       font-weight: 800;
       font-size: 18px;
-      letter-spacing: 0.01em;
+      color: var(--nx-text);
     }
     .header-logo .logo {
       width: auto;
@@ -129,16 +131,17 @@ h1, h2, h3, h4, h5, h6,
     .ex-icon {
       border-radius: 6px;
       padding: 0 6px;
+      color: var(--nx-text);
     }
   }
 
   .el-menu.menus {
-    --el-menu-bg-color: #0D0035 !important;
-    --el-menu-text-color: #E3E0F3 !important;
-    --el-menu-active-color: #FFFFFF !important;
-    --el-menu-hover-bg-color: rgba(255, 255, 255, 0.08) !important;
-    --el-menu-hover-text-color: #FFFFFF !important;
-    background-color: var(--nx-base) !important;
+    --el-menu-bg-color: transparent !important;
+    --el-menu-text-color: var(--nx-text) !important;
+    --el-menu-active-color: var(--nx-text) !important;
+    --el-menu-hover-bg-color: var(--el-color-primary-light-9) !important;
+    --el-menu-hover-text-color: var(--nx-text) !important;
+    background-color: transparent !important;
     padding: 8px;
 
     .el-menu-item,
@@ -148,37 +151,30 @@ h1, h2, h3, h4, h5, h6,
       height: 44px;
       line-height: 44px;
       font-weight: 600;
-      color: #E3E0F3 !important;
+      color: var(--nx-text) !important;
 
       &:hover {
-        background-color: rgba(255, 255, 255, 0.08) !important;
-        color: #fff !important;
+        background-color: var(--el-color-primary-light-9) !important;
       }
     }
     .el-menu-item.is-active {
-      background-color: rgba(92, 80, 255, 0.32) !important;
-      color: #fff !important;
-      box-shadow: inset 3px 0 0 #8F86FF; // marcador do item atual (não depende só da cor)
+      background-color: var(--el-color-primary-light-9) !important;
+      color: var(--el-color-primary-dark-2) !important;
+      box-shadow: inset 3px 0 0 var(--nx-accent); // marcador do item atual (não depende só da cor)
     }
-    .el-sub-menu .el-menu {
-      background: transparent;
-    }
-    .el-sub-menu .el-menu-item {
-      font-weight: 500;
-    }
-    .el-sub-menu__title .el-sub-menu__icon-arrow {
-      color: #C4C0DC;
-    }
+    .el-sub-menu .el-menu { background: transparent; }
+    .el-sub-menu .el-menu-item { font-weight: 500; }
+    .el-sub-menu__title .el-sub-menu__icon-arrow { color: var(--nx-text-muted); }
   }
 
   .setting .title {
-    color: #fff;
+    color: var(--nx-text);
     border-radius: 6px;
     padding: 4px 8px;
   }
 
   .header-tags {
-    background: var(--nx-surface);
+    background: var(--nx-bg);
     border-bottom: 1px solid var(--nx-border);
     padding: 8px 12px;
     gap: 6px;
@@ -190,7 +186,6 @@ h1, h2, h3, h4, h5, h6,
     padding: 20px 24px;
   }
 }
-
 // ---------- Cartões, tabelas e formulários ----------
 .el-card {
   border-radius: 12px;
@@ -234,14 +229,14 @@ html.dark .el-button--primary {
 
 // ---------- Tela de login ----------
 #app .login-container {
-  background-color: var(--nx-base);
-  background-image: radial-gradient(60% 50% at 85% 0%, rgba(92, 80, 255, 0.28) 0%, rgba(13, 0, 53, 0) 70%);
+  background-color: var(--nx-bg);
 
   .login-card {
     background-color: #fff;
     border-radius: 16px;
     padding: 40px 36px;
-    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+    border: 1px solid var(--nx-border);
+    box-shadow: 0 8px 24px rgba(13, 0, 53, 0.08);
 
     // troca o logo sem alterar o componente
     .login-logo {

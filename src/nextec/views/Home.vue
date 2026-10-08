@@ -171,10 +171,9 @@
   .nx-stat-icon {
     width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; flex: none;
     &.is-accent { background: var(--nx-accent); color: #fff; }
-    &.is-support { background: var(--nx-support); color: #fff; }
-    &.is-base { background: var(--nx-base); color: #fff; }
+    &.is-base { background: var(--el-color-primary-light-9); color: var(--el-color-primary-dark-2); }
+    &.is-support { background: var(--el-color-primary-light-9); color: var(--nx-support); }
   }
-  html.dark .nx-stat-icon.is-base { background: #2A2380; }
   .nx-stat-label { font-size: 13px; font-weight: 600; color: var(--nx-text-muted); }
   .nx-stat-value { font-family: var(--nx-font-title); font-size: 32px; font-weight: 800; line-height: 1.2; color: var(--nx-text); }
   .nx-stat-hint { font-size: 12px; color: var(--nx-text-muted); margin-top: 2px; }
