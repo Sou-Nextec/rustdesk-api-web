@@ -58,3 +58,9 @@ O app RustDesk já mostra ao técnico as listas compartilhadas com ele, mas o pa
 - `POST /api/admin/my/shared/status` com `{"ids": [...]}`: última comunicação só dos IDs que ele enxerga (listas próprias, compartilhadas ou computadores dele).
 
 Branch `nextec/web-client-toggle` do fork da API (commit seguinte ao 0002). Não vai para o projeto original.
+
+## Patch 0004: foto do usuário e segredo do login externo
+
+- O login do app (`/api/login`) passa a incluir `display_name` e `avatar` do usuário.
+- `POST /api/admin/my/profile/avatar` grava ou remove a foto do usuário logado (data URL png/jpeg/webp, até 150 KB).
+- As respostas de listar e detalhar login externo não incluem mais o `client_secret`; ao editar, deixar o segredo vazio mantém o atual.

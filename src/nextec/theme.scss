@@ -688,3 +688,10 @@ html.dark #app .login-container .login-card {
 // Listas da Nextec: quando a tela mostra o próprio aviso de vazio (el-empty), some a faixa vazia da tabela
 .nx-card:has(> .el-empty) .el-table__empty-block { display: none; }
 .nx-card > .el-empty .el-empty__bottom p { margin: 0; font-size: 13px; color: var(--nx-text-muted); }
+
+// foto (ou inicial) do usuário ao lado do nome, no topo
+.setting .nx-avatar {
+  width: 28px; height: 28px; margin-right: 8px; border-radius: 50%; overflow: hidden; flex: none;
+  display: inline-grid; place-items: center; background: var(--nx-accent); color: #fff; font-size: 13px; font-weight: 700;
+  img { width: 100%; height: 100%; object-fit: cover; display: block; }
+}

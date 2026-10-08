@@ -44,6 +44,9 @@
             </el-radio>
           </el-radio-group>
         </el-form-item>
+        <el-form-item v-if="formData.oauth_type === 'oidc' && !formData.id" label=" ">
+          <el-button @click="fillMicrosoft">Preencher para Microsoft Entra ID</el-button>
+        </el-form-item>
         <el-form-item v-if="formData.oauth_type === 'oidc'" label="IdP" prop="op">
           <el-input v-model="formData.op" :placeholder="T('Your IdP Name')"></el-input>
         </el-form-item>
@@ -59,8 +62,10 @@
         <el-form-item label="ClientSecret" prop="client_secret">
           <el-input
               v-model="formData.client_secret"
-              :type="formData.id ? 'password' : 'text'"
-              :show-password="!formData.id"
+              type="password"
+              show-password
+              autocomplete="new-password"
+              :placeholder="formData.id ? 'Deixe em branco para manter o segredo atual' : ''"
           >
           </el-input>
         </el-form-item>
@@ -184,7 +189,8 @@
   })
   const rules = {
     client_id: [{ required: true, message: T('ParamRequired', { param: 'client_id' }), trigger: 'blur' }],
-    client_secret: [{ required: true, message: T('ParamRequired', { param: 'client_secret' }), trigger: 'blur' }],
+    // ao editar, em branco mantém o segredo guardado (a API não devolve o segredo ao navegador)
+    client_secret: [{ required: false, validator: (r, v, cb) => (!formData.id && !v ? cb(new Error(T('ParamRequired', { param: 'client_secret' }))) : cb()), trigger: 'blur' }],
     // redirect_url: [{ required: true, message: T('ParamRequired', { param: 'redirect_url' }), trigger: 'blur' }],
     oauth_type: [{ required: true, message: T('ParamRequired', { param: 'oauth_type' }), trigger: 'blur' }],
     issuer: [{ required: true, message: T('ParamRequired', { param: 'issuer' }), trigger: 'blur' }],
@@ -215,12 +221,25 @@
     formData.oauth_type = row.oauth_type
     formData.issuer = row.issuer
     formData.client_id = row.client_id
-    formData.client_secret = row.client_secret
+    formData.client_secret = ''
     // formData.redirect_url = row.redirect_url || defaultRedirect()
     formData.scopes = row.scopes
     formData.auto_register = row.auto_register
     formData.pkce_enable = row.pkce_enable
     formData.pkce_method = row.pkce_method
+  }
+  // Modelo Nextec: Microsoft Entra ID (pede só a ID do diretório; o segredo você digita em seguida)
+  const fillMicrosoft = async () => {
+    const r = await ElMessageBox.prompt('Cole a ID do diretório (locatário) do Entra ID.', 'Microsoft Entra ID', {
+      confirmButtonText: 'Preencher', cancelButtonText: 'Cancelar',
+      inputPattern: /^[0-9a-fA-F-]{36}$/, inputErrorMessage: 'A ID do diretório tem o formato 00000000-0000-0000-0000-000000000000',
+    }).catch(() => false)
+    if (!r) return
+    formData.op = 'Microsoft'
+    formData.issuer = `https://login.microsoftonline.com/${r.value.trim()}/v2.0`
+    formData.scopes = 'openid,profile,email'
+    formData.pkce_enable = true
+    formData.pkce_method = 'S256'
   }
   const toAdd = () => {
     formVisible.value = true

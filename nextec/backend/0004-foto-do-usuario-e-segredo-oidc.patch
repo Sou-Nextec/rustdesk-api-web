@@ -1,0 +1,164 @@
+diff --git a/http/controller/admin/my/nextec_profile.go b/http/controller/admin/my/nextec_profile.go
+new file mode 100644
+index 0000000..fbc26ea
+--- /dev/null
++++ b/http/controller/admin/my/nextec_profile.go
+@@ -0,0 +1,65 @@
++package my
++
++import (
++	"encoding/base64"
++	"strings"
++
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/http/response"
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++)
++
++// NextecProfile permite ao próprio usuário trocar a foto de perfil, que o app RustDesk exibe
++// (por exemplo, na janela de permissão de uma sessão).
++type NextecProfile struct {
++}
++
++type nextecAvatarForm struct {
++	// imagem em data URL (data:image/png;base64,...); vazio remove a foto
++	Avatar string `json:"avatar"`
++}
++
++const nextecAvatarMaxBytes = 150 * 1024
++
++var nextecAvatarPrefixes = []string{"data:image/png;base64,", "data:image/jpeg;base64,", "data:image/webp;base64,"}
++
++// Avatar grava ou remove a foto do usuário logado
++// @Tags 我的
++// @Summary Foto de perfil
++// @Accept  json
++// @Produce  json
++// @Param body body nextecAvatarForm true "avatar"
++// @Success 200 {object} response.Response
++// @Router /admin/my/profile/avatar [post]
++// @Security token
++func (ct *NextecProfile) Avatar(c *gin.Context) {
++	f := &nextecAvatarForm{}
++	if err := c.ShouldBindJSON(f); err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError")+err.Error())
++		return
++	}
++	if f.Avatar != "" {
++		ok := false
++		for _, p := range nextecAvatarPrefixes {
++			if strings.HasPrefix(f.Avatar, p) {
++				raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(f.Avatar, p))
++				ok = err == nil && len(raw) > 0 && len(raw) <= nextecAvatarMaxBytes
++				break
++			}
++		}
++		if !ok {
++			response.Fail(c, 101, response.TranslateMsg(c, "ParamsError"))
++			return
++		}
++	}
++	u := service.AllService.UserService.CurUser(c)
++	upd := &model.User{}
++	upd.Id = u.Id
++	upd.Avatar = f.Avatar
++	if err := service.UpdateFields(upd, "avatar"); err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
++		return
++	}
++	response.Success(c, gin.H{"avatar": f.Avatar})
++}
+diff --git a/http/controller/admin/oauth.go b/http/controller/admin/oauth.go
+index 467663c..84f2b47 100644
+--- a/http/controller/admin/oauth.go
++++ b/http/controller/admin/oauth.go
+@@ -154,6 +154,7 @@ func (o *Oauth) Detail(c *gin.Context) {
+ 	iid, _ := strconv.Atoi(id)
+ 	u := service.AllService.OauthService.InfoById(uint(iid))
+ 	if u.Id > 0 {
++		u.ClientSecret = "" // Nextec: não devolver o segredo ao navegador
+ 		response.Success(c, u)
+ 		return
+ 	}
+@@ -221,6 +222,10 @@ func (o *Oauth) List(c *gin.Context) {
+ 		return
+ 	}
+ 	res := service.AllService.OauthService.List(query.Page, query.PageSize, nil)
++	// Nextec: o segredo do provedor nunca volta ao navegador; ao editar, vazio mantém o atual
++	for _, item := range res.Oauths {
++		item.ClientSecret = ""
++	}
+ 	response.Success(c, res)
+ }
+ 
+@@ -245,12 +250,20 @@ func (o *Oauth) Update(c *gin.Context) {
+ 		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError"))
+ 		return
+ 	}
++	// Nextec: o painel não recebe o segredo; ao editar, vazio mantém o atual
++	keepSecret := f.ClientSecret == ""
++	if keepSecret {
++		f.ClientSecret = "-"
++	}
+ 	errList := global.Validator.ValidStruct(c, f)
+ 	if len(errList) > 0 {
+ 		response.Fail(c, 101, errList[0])
+ 		return
+ 	}
+ 	u := f.ToOauth()
++	if keepSecret {
++		u.ClientSecret = ""
++	}
+ 	fields := []string{"op", "oauth_type", "issuer", "scopes", "client_id", "pkce_method"}
+ 	if u.AutoRegister != nil {
+ 		fields = append(fields, "auto_register")
+diff --git a/http/response/api/user.go b/http/response/api/user.go
+index 0f466bb..e2bc322 100644
+--- a/http/response/api/user.go
++++ b/http/response/api/user.go
+@@ -19,16 +19,21 @@ UserStatus status;
+ bool isAdmin = false;
+ */
+ type UserPayload struct {
+-	Name    string                 `json:"name"`
+-	Email   string                 `json:"email"`
+-	Note    string                 `json:"note"`
+-	IsAdmin *bool                  `json:"is_admin"`
+-	Status  int                    `json:"status"`
+-	Info    map[string]interface{} `json:"info"`
++	Name string `json:"name"`
++	// Nextec: nome completo e foto exibidos pelo app (ex.: janela de permissão da sessão)
++	DisplayName string                 `json:"display_name,omitempty"`
++	Avatar      string                 `json:"avatar,omitempty"`
++	Email       string                 `json:"email"`
++	Note        string                 `json:"note"`
++	IsAdmin     *bool                  `json:"is_admin"`
++	Status      int                    `json:"status"`
++	Info        map[string]interface{} `json:"info"`
+ }
+ 
+ func (up *UserPayload) FromUser(user *model.User) *UserPayload {
+ 	up.Name = user.Username
++	up.DisplayName = user.Nickname
++	up.Avatar = user.Avatar
+ 	up.Email = user.Email
+ 	up.IsAdmin = user.IsAdmin
+ 	up.Status = int(user.Status)
+diff --git a/http/router/admin.go b/http/router/admin.go
+index 88cfd7d..f4126f0 100644
+--- a/http/router/admin.go
++++ b/http/router/admin.go
+@@ -311,6 +311,12 @@ func MyBind(rg *gin.RouterGroup) {
+ 		rg.GET("/my/shared/address_book/list", cont.AddressBooks)
+ 		rg.POST("/my/shared/status", cont.Status)
+ 	}
++
++	{
++		// Nextec: foto de perfil do próprio usuário
++		cont := &my.NextecProfile{}
++		rg.POST("/my/profile/avatar", cont.Avatar)
++	}
+ 	{
+ 		cont := &my.Peer{}
+ 		rg.GET("/my/peer/list", cont.List)
