@@ -24,13 +24,29 @@
     <el-alert v-if="idOk === false || relayOk === false" type="warning" show-icon :closable="false" class="nx-alert"
               title="O painel não conseguiu falar com o servidor"
               description="Os ajustes desta tela são enviados direto ao hbbs e ao hbbr. Isso só funciona quando a API e os dois serviços rodam no mesmo host, como na imagem Nextec."/>
-    <el-alert type="info" show-icon :closable="false" class="nx-alert"
-              title="Os ajustes valem até o servidor reiniciar"
-              description="Para que fiquem permanentes, defina também a variável indicada em cada item no docker-compose do servidor."/>
 
     <el-tabs v-model="tab" class="nx-tabs">
       <el-tab-pane label="Ajustes" name="simple">
         <div class="nx-grid">
+          <!-- Dados para configurar os apps -->
+          <div class="nx-card nx-wide nx-serverdata">
+            <div class="nx-card-head">
+              <h2>Dados do servidor</h2>
+              <p>Use estes dados para configurar o app RustDesk nos clientes (Configurações &gt; Rede &gt; Servidor de ID/Relay).</p>
+            </div>
+            <dl class="nx-kv">
+              <div v-for="item in serverItems" :key="item.key" class="nx-kv-item">
+                <dt>{{ item.label }}</dt>
+                <dd>
+                  <code>{{ item.value || '-' }}</code>
+                  <el-button v-if="item.value" size="small" :aria-label="'Copiar ' + item.label" @click="copyText(item.value, item.label)">
+                    <el-icon><el-icon-CopyDocument/></el-icon><span>Copiar</span>
+                  </el-button>
+                </dd>
+              </div>
+            </dl>
+          </div>
+
           <!-- Conexão -->
           <div class="nx-card" v-loading="loading.conn">
             <div class="nx-card-head">
@@ -135,27 +151,18 @@
 
           <!-- Cliente web -->
           <div class="nx-card nx-wide">
-            <div class="nx-card-head nx-head-row">
+            <div class="nx-field nx-switch-field nx-noborder">
               <div>
-                <h2>Acesso pelo navegador (cliente web)</h2>
-                <p>Permite abrir um dispositivo direto no navegador, sem instalar o app RustDesk. Usa o cliente web oficial do RustDesk, com a marca dele.</p>
+                <h2 class="nx-h2-inline">Acesso pelo navegador (cliente web)</h2>
+                <p class="nx-help">Mostra as opções "Abrir no navegador" e "Compartilhar pelo navegador" nas listas, para acessar um dispositivo sem instalar o app RustDesk. Usa o cliente web oficial do RustDesk, com a marca dele. Vale para todos os usuários na hora.</p>
               </div>
-              <el-tag :type="webClient ? 'success' : 'info'" size="large">{{ webClient ? 'Ligado' : 'Desligado' }}</el-tag>
+              <el-switch v-model="webClient" :loading="saving.web" :disabled="webClientManual" aria-label="Acesso pelo navegador"
+                         active-text="Ligado" inactive-text="Desligado" inline-prompt style="--el-switch-on-color: var(--nx-accent)"
+                         :before-change="toggleWebClient"/>
             </div>
-            <p class="nx-help">
-              {{ webClient
-                ? 'Hoje aparecem as opções "Abrir no navegador" e "Compartilhar pelo navegador" nas listas. Para desligar:'
-                : 'As opções de abrir pelo navegador estão escondidas e os endereços /webclient estão desativados. Para ligar:' }}
-            </p>
-            <ol class="nx-steps">
-              <li>No servidor, abra o <code>docker-compose.yml</code> e, no serviço do RustDesk, em <code>environment</code>, deixe a linha
-                <code class="nx-copy">RUSTDESK_API_APP_WEB_CLIENT={{ webClient ? 0 : 1 }}</code>
-                <el-button size="small" link type="primary" @click="copyEnv">Copiar</el-button>
-              </li>
-              <li>Aplique com <code>docker compose up -d</code> (o contêiner é recriado e volta em alguns segundos).</li>
-              <li>Recarregue esta página: o estado acima muda para {{ webClient ? 'Desligado' : 'Ligado' }}.</li>
-            </ol>
-            <p class="nx-env">A mudança não pode ser feita por aqui de propósito: vale para todos os usuários e exige reiniciar o serviço.</p>
+            <el-alert v-if="webClientManual" type="warning" show-icon :closable="false" class="nx-alert-inline"
+                      title="Este servidor ainda não tem o chaveador"
+                      :description="`Atualize para a imagem Nextec mais recente. Enquanto isso, defina RUSTDESK_API_APP_WEB_CLIENT=${webClient ? 0 : 1} no docker-compose e rode docker compose up -d.`"/>
           </div>
         </div>
       </el-tab-pane>
@@ -169,9 +176,10 @@
 </template>
 
 <script setup>
-  import { computed, onMounted, reactive, ref } from 'vue'
+  import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { sendCmd } from '@/api/rustdesk'
+  import { setWebClient } from '@/nextec/api'
   import UpstreamControl from '@/views/rustdesk/control.vue'
   import { useAppStore } from '@/store/app'
 
@@ -181,22 +189,46 @@
   const tab = ref('simple')
 
   const appStore = useAppStore()
-  const webClient = computed(() => !!appStore.setting.appConfig?.web_client)
-  const copyEnv = async () => {
-    const line = `RUSTDESK_API_APP_WEB_CLIENT=${webClient.value ? 0 : 1}`
-    try {
-      await navigator.clipboard.writeText(line)
-      ElMessage.success('Linha copiada.')
-    } catch {
-      ElMessage.info(line)
+
+  // dados do servidor (antes ficavam no Início; agora só aqui, na área de administração)
+  const serverItems = computed(() => {
+    const c = appStore.setting.rustdeskConfig || {}
+    return [
+      { key: 'id', label: 'Servidor de ID', value: c.id_server },
+      { key: 'relay', label: 'Servidor de relay', value: c.relay_server },
+      { key: 'api', label: 'Servidor de API', value: c.api_server },
+      { key: 'key', label: 'Chave pública', value: c.key },
+    ]
+  })
+  const copyText = async (text, label) => {
+    try { await navigator.clipboard.writeText(text); ElMessage.success(`${label} copiado.`) } catch { ElMessage.error('Não foi possível copiar.') }
+  }
+
+  // cliente web: liga e desliga na hora (patch 0002 da API); sem ele, cai nas instruções manuais
+  const webClient = ref(!!appStore.setting.appConfig?.web_client)
+  watch(() => appStore.setting.appConfig?.web_client, v => { webClient.value = !!v })
+  const webClientManual = ref(false)
+  const toggleWebClient = async () => {
+    const enabled = !webClient.value
+    saving.web = true
+    const res = await setWebClient({ enabled }).catch(e => ({ failed: true, status: e?.response?.status }))
+    saving.web = false
+    if (res?.failed) {
+      if (res.status === 404) webClientManual.value = true
+      else ElMessage.error('Não foi possível mudar o acesso pelo navegador.')
+      return false
     }
+    // o próprio interruptor muda depois deste retorno; a loja só é atualizada em seguida, para não mudar duas vezes
+    nextTick(() => { appStore.setting.appConfig.web_client = enabled ? 1 : 0 })
+    ElMessage.success(enabled ? 'Acesso pelo navegador ligado.' : 'Acesso pelo navegador desligado.')
+    return true
   }
   const idOk = ref(null)
   const relayOk = ref(null)
   const canMustLogin = ref(false)
   const checking = ref(false)
   const loading = reactive({ conn: false, bw: false, usage: false, ips: false })
-  const saving = reactive({ rs: false, aur: false, ml: false, bw: false })
+  const saving = reactive({ rs: false, aur: false, ml: false, bw: false, web: false })
 
   const relayServers = ref('')
   const alwaysRelay = ref(false)
@@ -389,8 +421,18 @@
   }
   .nx-switch-field { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
   .nx-help { margin: 0 0 8px; font-size: 12px; line-height: 1.5; color: var(--nx-text-muted); }
-  .nx-steps { margin: 8px 0 0; padding-left: 20px; font-size: 13px; line-height: 1.7; color: var(--nx-text);
-    code { font-size: 12px; background: var(--nx-field); padding: 1px 6px; border-radius: 6px; } .nx-copy { font-weight: 600; } }
+  .nx-noborder { border: none !important; padding-top: 0 !important; margin-top: 0 !important; }
+  .nx-h2-inline { margin: 0 0 4px; font-size: 16px; color: var(--nx-text); }
+  .nx-alert-inline { margin-top: 12px; border-radius: 12px; }
+  .nx-kv { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 20px; }
+  .nx-kv-item { min-width: 0; }
+  .nx-kv dt { font-size: 12px; font-weight: 600; color: var(--nx-text-muted); margin-bottom: 4px; }
+  .nx-kv dd { margin: 0; display: flex; align-items: center; gap: 8px; }
+  .nx-kv code {
+    flex: 1; min-width: 0; font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; font-size: 13px; color: var(--nx-text);
+    background: var(--nx-field); border-radius: 10px; padding: 8px 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  @media (max-width: 768px) { .nx-kv { grid-template-columns: minmax(0, 1fr); } }
   .nx-env { margin: 6px 0 0; font-size: 11px; color: var(--nx-text-subtle); code { font-size: 11px; background: var(--nx-field); padding: 1px 6px; border-radius: 6px; } }
   .nx-row { display: flex; gap: 8px; .el-input { flex: 1; } }
   .nx-unit { margin-left: 8px; font-size: 12px; color: var(--nx-text-muted); }

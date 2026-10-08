@@ -7,6 +7,7 @@
     <img :src="setting.logo" alt="" class="logo">
     <div class="title">{{setting.title}}</div>
   </div>
+  <NxTopbar/>
   <Setting></Setting>
 </template>
 
@@ -15,13 +16,14 @@
   import HeaderMenu from '@/layout/components/menu/index.vue'
   import Setting from '@/layout/components/setting/index.vue'
   import { useAppStore } from '@/store/app'
+  import NxTopbar from '@/nextec/views/Topbar.vue'
   import GTags from '@/layout/components/tags/index.vue'
 
   export default defineComponent({
     name: 'LayerHeader',
     created () {
     },
-    components: { HeaderMenu, Setting, GTags },
+    components: { HeaderMenu, Setting, GTags, NxTopbar },
     watch: {},
     setup (props) {
       const appStore = useAppStore()

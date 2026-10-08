@@ -1,0 +1,55 @@
+// Estilos das telas de lista no padrão de Dispositivos (Meus dispositivos, Meus acessos salvos).
+// Tudo dentro de .nx-listpage para não vazar para outras telas.
+.nx-listpage {
+  .nx-bar {
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 16px 18px; margin-bottom: 12px;
+    background: var(--nx-surface); border-radius: var(--nx-radius-card); box-shadow: var(--nx-shadow-card);
+  }
+  .nx-search { flex: 1 1 320px; max-width: 460px; }
+  .nx-filter { width: 220px; }
+  .nx-filter-sm { width: 160px; }
+  .nx-bar-right { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; .el-button + .el-button { margin-left: 0; } }
+
+  .nx-summary {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 4px 12px; font-size: 13px; color: var(--nx-text-muted);
+    strong { color: var(--nx-text); }
+    .el-button { margin-left: 0; }
+  }
+  .nx-sep { opacity: .5; }
+  .nx-dot {
+    display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: middle;
+    &.is-on { background: #0F7B55; box-shadow: 0 0 0 3px #D1FAE5; }
+    &.is-off { background: #9A97AD; }
+  }
+  .nx-card { background: var(--nx-surface); border-radius: var(--nx-radius-card); box-shadow: var(--nx-shadow-card); overflow: hidden; }
+  .nx-id { font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; font-size: 13px; white-space: nowrap; }
+  .nx-copy {
+    margin-left: 6px; border: none; background: transparent; cursor: pointer; color: var(--nx-text-subtle); padding: 2px; border-radius: 6px;
+    vertical-align: middle; &:hover { color: var(--nx-accent); background: var(--nx-tint); }
+  }
+  .nx-muted { color: var(--nx-text-subtle); }
+  .nx-tags { display: flex; flex-wrap: wrap; gap: 4px; .el-tag { text-transform: none; letter-spacing: 0; } }
+  .nx-row-actions { display: flex; gap: 6px; flex-wrap: nowrap; .el-button { margin: 0 !important; } }
+  .nx-danger { color: #BA1A1A; }
+  .nx-pager { padding: 12px 18px; border-top: 1px solid var(--nx-divider); display: flex; justify-content: flex-end; }
+  .nx-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; }
+  .nx-cols-help { margin: 0 0 12px; font-size: 13px; }
+
+  @media (max-width: 768px) {
+    .nx-search, .nx-filter, .nx-filter-sm { flex: 1 1 100%; max-width: none; width: 100%; }
+    .nx-bar-right { margin-left: 0; width: 100%; }
+  }
+}
+// diálogos são renderizados fora da tela (teleport); usam a própria classe
+.nx-dlg {
+  .nx-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 16px; }
+  .nx-form .el-select { width: 100%; }
+  .nx-help { margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: var(--nx-text-muted); }
+  .nx-tech { margin-top: 4px; border-top: 1px solid var(--nx-divider); border-bottom: none;
+    .el-collapse-item__header { font-weight: 600; font-size: 13px; color: var(--nx-text-muted); background: transparent; }
+    .el-collapse-item__wrap { background: transparent; border-bottom: none; }
+  }
+  .nx-kv { margin: 0; display: grid; grid-template-columns: 150px 1fr; gap: 8px 12px; font-size: 13px;
+    dt { color: var(--nx-text-muted); } dd { margin: 0; color: var(--nx-text); word-break: break-word; } }
+  @media (max-width: 768px) { .nx-form-grid { grid-template-columns: minmax(0, 1fr); } }
+}

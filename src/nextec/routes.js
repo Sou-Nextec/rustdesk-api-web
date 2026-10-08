@@ -10,8 +10,9 @@ const layout = () => import('@/layout/index.vue')
 const GROUPS = [
   { name: 'NxGroupDevices', title: 'NxGroupDevices', icon: 'Monitor', children: ['Peer', 'DeviceGroup'] },
   { name: 'NxGroupPeople', title: 'NxGroupPeople', icon: 'UserFilled', children: ['UserList', 'UserAdd', 'UserEdit', 'UserGroup'] },
-  { name: 'NxGroupAddressBook', title: 'NxGroupAddressBook', icon: 'Notebook', children: ['UserAddressBookName', 'UserAddressBook', 'UserTag'] },
-  { name: 'NxGroupAccess', title: 'NxGroupAccess', icon: 'Lock', children: ['NxClientAccess', 'Oauth', 'UserToken', 'ShareRecord'] },
+  // quem acessa o quê: permissões por cliente e as listas que aparecem no app RustDesk
+  { name: 'NxGroupAddressBook', title: 'NxGroupAddressBook', icon: 'Key', children: ['NxClientAccess', 'UserAddressBookName', 'UserAddressBook', 'UserTag'] },
+  { name: 'NxGroupAccess', title: 'NxGroupAccess', icon: 'Lock', children: ['Oauth', 'UserToken', 'ShareRecord'] },
   { name: 'NxGroupAudit', title: 'NxGroupAudit', icon: 'Tickets', children: ['LoginLog', 'AuditConn', 'AuditFile'] },
   { name: 'NxGroupServer', title: 'NxGroupServer', icon: 'Setting', children: ['ServerCmd'] },
 ]
@@ -24,7 +25,7 @@ export function applyNextecRoutes () {
   system.children.push({
     path: '/user/clientAccess',
     name: 'NxClientAccess',
-    meta: { title: 'NxClientAccess', icon: 'Key' },
+    meta: { title: 'NxClientAccess', icon: 'Share' },
     component: () => import('./views/ClientAccess.vue'),
   })
   const byName = new Map(system.children.map(c => [c.name, c]))
@@ -86,5 +87,20 @@ export function applyNextecRoutes () {
   my?.children?.forEach(c => {
     if (MY_TITLES[c.name]) c.meta = { ...c.meta, title: MY_TITLES[c.name] }
   })
+  if (my) {
+    // Meus dados e Meus logins ficam no menu do usuário (canto superior direito); o menu lateral
+    // fica só com o que se usa no dia a dia, na ordem de uso
+    const ORDER = ['MyPeer', 'MyAddressBookList', 'MyAddressBookCollection', 'MyTagList', 'MyShareRecordList']
+    my.meta = { ...my.meta, title: 'NxGroupMine' }
+    my.children.forEach(c => {
+      if (c.name === 'MyInfo' || c.name === 'MyLoginLog') c.meta = { ...c.meta, hide: true }
+    })
+    my.children.sort((a, b) => (ORDER.indexOf(a.name) + 1 || 99) - (ORDER.indexOf(b.name) + 1 || 99))
+    // telas próprias no padrão da tela Dispositivos
+    const myPeer = my.children.find(c => c.name === 'MyPeer')
+    if (myPeer) myPeer.component = () => import('./views/MyDevices.vue')
+    const myAb = my.children.find(c => c.name === 'MyAddressBookList')
+    if (myAb) myAb.component = () => import('./views/MySaved.vue')
+  }
   asyncRoutes.splice(0, asyncRoutes.length, home, ...groups.filter(g => g.children.length), ...(my ? [my] : []))
 }

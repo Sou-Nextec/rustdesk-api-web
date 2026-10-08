@@ -44,8 +44,10 @@
 
       <template #dropdown>
         <el-dropdown-menu>
+          <el-dropdown-item @click="$router.push('/')">{{ T('Userinfo') }}</el-dropdown-item>
+          <el-dropdown-item @click="$router.push('/my/loginLog')">{{ T('NxMyLogins') }}</el-dropdown-item>
           <el-dropdown-item @click="showChangePwd">{{ T('ChangePassword') }}</el-dropdown-item>
-          <el-dropdown-item @click="logout">{{ T('Logout') }}</el-dropdown-item>
+          <el-dropdown-item divided @click="logout">{{ T('Logout') }}</el-dropdown-item>
         </el-dropdown-menu>
       </template>
     </el-dropdown>

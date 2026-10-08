@@ -218,7 +218,8 @@
 </template>
 
 <script setup>
-  import { computed, onActivated, onMounted, reactive, ref } from 'vue'
+  import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
+  import { useRoute } from 'vue-router'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { batchRemove, create, list, remove, update } from '@/api/peer'
   import { list as groupList } from '@/api/device_group'
@@ -252,6 +253,12 @@
   onMounted(load)
   onActivated(load)
   const groupName = id => (id && groups.value.find(g => g.id === id)?.name) || ''
+  // subgrupos usam o nome "Cliente / Subgrupo": filtrar pelo cliente inclui os subgrupos dele
+  const inClient = (groupId, filterId) => {
+    if (groupId === filterId) return true
+    const parent = groupName(filterId)
+    return !!parent && groupName(groupId).startsWith(parent + ' / ')
+  }
 
   const isOnline = row => row.last_online_time && (Date.now() / 1000 - row.last_online_time) < 60
   const onlineCount = computed(() => all.value.filter(isOnline).length)
@@ -264,7 +271,7 @@
   const filtered = computed(() => {
     const term = norm(q.value.trim())
     return all.value.filter(r => {
-      if (clientFilter.value !== null && clientFilter.value !== '' && (r.group_id || 0) !== clientFilter.value) return false
+      if (clientFilter.value !== null && clientFilter.value !== '' && !inClient(r.group_id || 0, clientFilter.value)) return false
       if (statusFilter.value === 'online' && !isOnline(r)) return false
       if (statusFilter.value === 'offline' && isOnline(r)) return false
       if (!term) return true
@@ -272,6 +279,11 @@
     }).sort((a, b) => (b.last_online_time || 0) - (a.last_online_time || 0))
   })
   const clearFilters = () => { q.value = ''; clientFilter.value = null; statusFilter.value = null }
+  // pesquisa do topo: Enter abre esta tela com ?q=
+  const route = useRoute()
+  watch(() => route.query.q, v => { if (v) { clearFilters(); q.value = String(v) } }, { immediate: true })
+  // atalho do Início: ?client=0 lista os dispositivos sem cliente
+  watch(() => route.query.client, v => { if (v !== undefined && v !== '') { clearFilters(); clientFilter.value = Number(v) } }, { immediate: true })
 
   const page = ref(1)
   const pageSize = ref(20)

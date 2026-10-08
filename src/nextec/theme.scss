@@ -124,6 +124,12 @@ h1, h2, h3, h4, h5, h6,
   outline-offset: 2px;
   border-radius: 6px;
 }
+// campos de texto: o anel de foco já aparece na moldura do Element Plus (.is-focus);
+// o contorno no <input> interno desenhava um quadradinho em volta do cursor
+.el-input__inner:focus-visible,
+.el-textarea__inner:focus-visible,
+.el-select__input:focus-visible,
+.el-input-number .el-input__inner:focus-visible { outline: none; }
 
 // ---------- Estrutura: menu lateral, topbar e conteúdo ----------
 #app {
@@ -345,6 +351,11 @@ html.dark #app .app-header.el-header {
     border-bottom: 1px solid var(--nx-border);
   }
   td.el-table__cell { padding: 12px 0; }
+  // respiro nas bordas: primeira e última coluna não encostam na borda do cartão
+  th.el-table__cell:first-child:not(.el-table-column--selection) .cell,
+  td.el-table__cell:first-child:not(.el-table-column--selection) .cell { padding-left: 20px; }
+  th.el-table__cell:last-child .cell,
+  td.el-table__cell:last-child .cell { padding-right: 20px; }
   // cabeçalho: nunca quebra a palavra no meio; corta com reticências se faltar espaço
   th.el-table__cell .cell { white-space: normal; word-break: keep-all; overflow-wrap: normal; overflow: hidden; }
   // coluna de ações: botões quebram em linhas dentro da célula
@@ -673,3 +684,7 @@ html.dark #app .login-container .login-card {
 @media (prefers-reduced-motion: reduce) {
   * { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
 }
+
+// Listas da Nextec: quando a tela mostra o próprio aviso de vazio (el-empty), some a faixa vazia da tabela
+.nx-card:has(> .el-empty) .el-table__empty-block { display: none; }
+.nx-card > .el-empty .el-empty__bottom p { margin: 0; font-size: 13px; color: var(--nx-text-muted); }

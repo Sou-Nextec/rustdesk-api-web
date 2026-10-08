@@ -14,6 +14,7 @@ import { router } from '@/router'
 import { pinia } from '@/store'
 import { useAppStore } from '@/store/app'
 import { useUserStore } from '@/store/user'
+import { useRouteStore } from '@/store/router'
 import { T } from '@/utils/i18n'
 
 // Tema claro por padrão (o escuro continua disponível no botão do cabeçalho)
@@ -48,7 +49,7 @@ appStore.replaceAdminTitle = function (newTitle) {
 
 // Boas-vindas de "Meus dados": se o servidor ainda usa o texto padrão (em chinês), mostramos o nosso.
 // A imagem Nextec já troca o arquivo no servidor (nextec/conf/hello.html); isto cobre servidores sem a imagem.
-const HELLO_PT = '### Olá, **{{username}}**\n\nEste é o painel de acesso remoto da Nextec. Use o menu ao lado para cuidar dos seus dispositivos, catálogos e etiquetas.'
+const HELLO_PT = '### Olá, **{{username}}**\n\nEste é o painel de acesso remoto da Nextec. Use o menu ao lado para cuidar dos seus dispositivos, acessos salvos e etiquetas.'
 appStore.$subscribe(() => {
   const hello = appStore.setting.hello || ''
   if (/欢迎使用|RustDesk API\]/.test(hello)) {
@@ -69,11 +70,15 @@ applyNextecRoutes()
 const notFound = router.getRoutes().find(r => r.path === '/404')
 if (notFound) notFound.components.default = () => import('./views/NotFound.vue')
 
-// 3. Administradores aterrissam na visão geral ao entrar (após o login ou ao abrir o painel).
+// 3. Todos aterrissam no Início ao entrar (após o login ou ao abrir o painel); a tela muda conforme o perfil.
+// O servidor só libera para usuário comum as rotas de Minha conta; o Início é acrescentado aqui.
 // Clicar em "Meus dados" (que também usa o caminho /) continua abrindo a tela original.
+const routeStore = useRouteStore(pinia)
+const addRoutes = routeStore.addRoutes
+routeStore.addRoutes = (names = []) => addRoutes.call(routeStore, names.includes('*') ? names : [...names, 'NxHome'])
 router.beforeEach((to, from) => {
   const entering = !from.name || from.path === '/login' || from.path.startsWith('/oauth')
-  if (to.path === '/' && entering && useUserStore(pinia).route_names.includes('*')) {
+  if (to.path === '/' && entering && useUserStore(pinia).route_names.length) {
     return { path: '/home', replace: true }
   }
 })
@@ -85,8 +90,6 @@ if (mobile.matches) appStore.setting.sideIsCollapse = true
 mobile.addEventListener('change', e => { appStore.setting.sideIsCollapse = e.matches })
 router.afterEach(() => {
   if (mobile.matches) appStore.setting.sideIsCollapse = true
-// ao girar o aparelho ou redimensionar a janela, o menu acompanha (recolhido no celular, aberto no desktop)
-mobile.addEventListener('change', e => { appStore.setting.sideIsCollapse = e.matches })
 })
 
 // 5. Título da página na topbar (lido pelo CSS em --nx-page-title)

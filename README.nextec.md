@@ -22,6 +22,10 @@ Tudo que é da Nextec fica em arquivos próprios:
 | `nextec/conf/hello.html` | Boas-vindas de Meus dados em pt-BR (o padrão do upstream é em chinês) |
 | `src/nextec/views/Home.vue` | Tela inicial com resumo |
 | `src/nextec/views/ClientAccess.vue` | Permissões por cliente: uma lista `Cliente: <nome>` por cliente, compartilhada só com as equipes e pessoas escolhidas |
+| `src/nextec/views/Topbar.vue` | Topo: pesquisa global de dispositivos (Ctrl+K), + Conectar por ID e botão de ajuda da tela (chaves `NxHelp<Rota>`) |
+| `src/nextec/views/MyDevices.vue` e `MySaved.vue` | Meus dispositivos e Meus acessos salvos no padrão da tela Dispositivos |
+| `src/nextec/list-page.scss` | Estilos compartilhados dessas listas |
+| `src/nextec/api.js` | Endpoints que só existem com os patches da Nextec (chave do cliente web) |
 | `src/nextec/assets/` | Logo e símbolo (PNG) |
 | `src/nextec/fonts/` | Fontes Visby CF (`.woff2`, não versionadas) |
 | `src/utils/i18n/pt_BR.json` | Tradução do painel |
@@ -39,11 +43,13 @@ Arquivos do upstream que recebem edição mínima (qualquer merge futuro só pre
 | `index.html` | idioma, título, favicon |
 | `src/views/peer/index.vue` | correção: opção "Sem grupo" no campo Grupo (antes mostrava "0") |
 | `src/views/login/login.vue` | correção: exibe o código de verificação quando o servidor passa a exigi-lo após tentativas erradas (candidata a PR no upstream) |
+| `src/layout/components/header.vue` | inclui o `Topbar.vue` da Nextec (1 import e 1 tag) |
+| `src/layout/components/setting/index.vue` | menu do usuário ganha Meus dados e Meus acessos ao painel |
 | `package.json` e `package-lock.json` | dependência `@fontsource/open-sans` |
 
 ## Permissões por cliente
 
-Menu Acesso e segurança > Permissões por cliente (só admin). Para cada cliente (grupo de dispositivos), o painel:
+Menu Acesso dos técnicos > Permissões por cliente (só admin). Para cada cliente (grupo de dispositivos), o painel:
 
 1. cria uma lista de acessos do admin chamada `Cliente: <nome do cliente>`;
 2. coloca nela todos os dispositivos daquele cliente (botão Sincronizar traz os que entraram depois);
@@ -55,7 +61,11 @@ Tudo é feito com as APIs de listas e regras de compartilhamento do upstream, se
 
 ## Cliente web (acesso pelo navegador)
 
-Liga e desliga pela variável `RUSTDESK_API_APP_WEB_CLIENT` no `docker-compose.yml` (`1` ligado, padrão; `0` desligado) e `docker compose up -d`. Desligado, somem os botões de abrir e compartilhar pelo navegador e os endereços `/webclient` deixam de responder. A tela Ajustes do servidor mostra o estado atual e o passo a passo. O cliente web é o oficial do RustDesk e não recebe a marca Nextec.
+Ajustes do servidor > Acesso pelo navegador: um interruptor liga e desliga na hora, para todos. A escolha fica gravada em `/app/data/nextec-settings.json` (volume de dados) e vale também depois de reiniciar ou recriar o contêiner, por cima de `RUSTDESK_API_APP_WEB_CLIENT`. Isso vem do patch `nextec/backend/0002-chaveador-cliente-web.patch` (endpoint `POST /api/admin/nextec/web-client`). Em servidor sem o patch, a tela mostra como fazer pela variável. O cliente web é o oficial do RustDesk e não recebe a marca Nextec.
+
+## Subgrupos de cliente
+
+Um subgrupo é um grupo de dispositivos com o nome `Cliente / Subgrupo` (ex.: `Nextec / Servidores`), criado em Permissões por cliente > Mais ações > Novo subgrupo. Cada subgrupo tem a própria lista e o próprio acesso; quem acessa o cliente não vê o subgrupo, a menos que esteja liberado nele também. Em Dispositivos, filtrar pelo cliente mostra também os subgrupos.
 
 ## Desenvolvimento
 
