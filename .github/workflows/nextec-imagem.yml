@@ -1,5 +1,5 @@
 # Publica a imagem Nextec no GitHub Container Registry:
-#   ghcr.io/sou-nextec/rustdesk-server:<versão> e :latest
+#   ghcr.io/sou-nextec/rustdesk-nextec:<versão> e :latest
 # Dispara ao criar uma tag v* (ex.: v1.0.0) ou manualmente em Actions > Imagem Nextec > Run workflow.
 name: Imagem Nextec
 
@@ -17,7 +17,7 @@ permissions:
   packages: write
 
 env:
-  IMAGE: ghcr.io/sou-nextec/rustdesk-server
+  IMAGE: ghcr.io/sou-nextec/rustdesk-nextec
   # imagem base lejianwen/rustdesk-server-s6 fixa; a API dela precisa bater com API_TAG do Dockerfile
   BASE_TAG: v0.1.2
 
