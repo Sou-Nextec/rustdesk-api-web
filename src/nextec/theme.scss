@@ -1,6 +1,10 @@
-// Tema Nextec. Tudo da identidade visual fica neste arquivo, sem mexer nas telas do upstream.
-// Proporção de uso: #0D0035 base (~58%), #F4F4F4 neutro (~15%), #5C50FF destaque (~13%),
-// #4901FA apoio (~9%), branco (~5%). Cores fortes só em pontos de destaque, nunca em áreas grandes.
+// Tema Nextec, baseado no Nextec Design System (abril de 2026).
+// Tudo da identidade visual fica neste arquivo, sem mexer nas telas do upstream.
+//
+// Linguagem: canvas #F4F4F4, cartões brancos de 20px sem borda (separação por contraste tonal),
+// menu lateral em #0D0035 com item ativo em branco 10% e barra de destaque, topbar translúcida,
+// campos cinza que ficam brancos no foco, rótulos de metadados em caixa alta, números grandes em Visby CF.
+// Destaque da marca: #5C50FF (apoio #4901FA). Cores fortes só em pontos de destaque.
 
 :root {
   --nx-base: #0D0035;
@@ -11,34 +15,46 @@
 
   --nx-bg: #F4F4F4;
   --nx-surface: #FFFFFF;
-  --nx-text: #0D0035;
-  --nx-text-muted: #4B4566; // 8,2:1 sobre branco
-  --nx-border: #D9D6E8;
+  --nx-field: #EEEEEE;
+  --nx-field-hover: #E8E8E8;
+  --nx-text: #1A1C1C;
+  --nx-text-muted: #464556;    // 8,3:1 sobre branco
+  --nx-text-subtle: #646179;   // 5,9:1 sobre branco, 5,6:1 sobre #F9F9F9
+  --nx-border: #E2E2E2;
+  --nx-divider: #F3F3F3;
+  --nx-tint: #EEEDFF;          // fundo de ícones e item em foco
   --nx-focus: #4901FA;
+
+  --nx-radius-card: 20px;
+  --nx-radius-field: 14px;
+  --nx-radius-btn: 12px;
+  --nx-shadow-card: 0 0 32px rgba(26, 28, 28, 0.06);
 
   --nx-font-title: 'Visby CF', 'Open Sans', system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
   --nx-font-body: 'Open Sans', system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
 
   // Element Plus
-  --el-color-primary: #5C50FF; // 5,2:1 sobre branco
+  --el-color-primary: #5C50FF; // 5,2:1 com texto branco
   --el-color-primary-light-3: #8D85FF;
   --el-color-primary-light-5: #AEA8FF;
   --el-color-primary-light-7: #CECBFF;
   --el-color-primary-light-8: #DEDCFF;
   --el-color-primary-light-9: #EEEDFF;
   --el-color-primary-dark-2: #4901FA;
-  --el-color-success: #157347;
-  --el-color-warning: #9A5B00;
-  --el-color-danger: #B42318;
-  --el-color-info: #4B4566;
+  --el-color-success: #0F7B55;
+  --el-color-warning: #92400E;
+  --el-color-danger: #BA1A1A;
+  --el-color-info: #464556;
   --el-bg-color: #FFFFFF;
   --el-bg-color-page: var(--nx-bg);
   --el-text-color-primary: var(--nx-text);
-  --el-text-color-regular: #2A2347;
+  --el-text-color-regular: #2F3131;
   --el-text-color-secondary: var(--nx-text-muted);
-  --el-text-color-placeholder: #6B6585;
+  --el-text-color-placeholder: #6B6985;
   --el-border-color: var(--nx-border);
-  --el-border-radius-base: 8px;
+  --el-border-color-light: var(--nx-border);
+  --el-border-color-lighter: var(--nx-divider);
+  --el-border-radius-base: 12px;
   --el-font-family: var(--nx-font-body);
   --tag-bg-color: #ECEAF6;
   --primaryColor: #5C50FF;
@@ -47,10 +63,16 @@
 html.dark {
   --nx-bg: #0D0035;
   --nx-surface: #17104A;
+  --nx-field: #241D70;
+  --nx-field-hover: #2A2380;
   --nx-text: #F4F4F4;
   --nx-text-muted: #C4C0DC;
+  --nx-text-subtle: #A39EC4;
   --nx-border: #342C73;
+  --nx-divider: #241D70;
+  --nx-tint: #2A2380;
   --nx-focus: #B8B2FF;
+  --nx-shadow-card: 0 0 32px rgba(0, 0, 0, 0.3);
 
   --el-color-primary: #8F86FF;
   --el-color-primary-light-3: #6F65FF;
@@ -100,138 +122,293 @@ h1, h2, h3, h4, h5, h6,
 :focus-visible {
   outline: 3px solid var(--nx-focus);
   outline-offset: 2px;
-  border-radius: 4px;
+  border-radius: 6px;
 }
 
-// ---------- Estrutura (menu lateral, cabeçalho) ----------
-// Superfícies claras; o #0D0035 aparece só em texto e o #5C50FF só no item ativo e nos botões.
+// ---------- Estrutura: menu lateral, topbar e conteúdo ----------
 #app {
+  // Menu lateral escuro, com a marca no topo
   .app-left .scroll-sidebar {
-    background-color: var(--nx-surface);
-    border-right: 1px solid var(--nx-border);
-  }
-
-  .app-header.el-header {
-    background-color: var(--nx-surface);
-    color: var(--nx-text);
-    height: 56px;
-    border-bottom: 1px solid var(--nx-border);
-
-    .header-logo .title {
-      font-family: var(--nx-font-title);
-      font-weight: 800;
-      font-size: 18px;
-      color: var(--nx-text);
-    }
-    .header-logo .logo {
-      width: auto;
-      height: 30px;
-      border-radius: 6px;
-    }
-    .ex-icon {
-      border-radius: 6px;
-      padding: 0 6px;
-      color: var(--nx-text);
-    }
+    background-color: var(--nx-base);
   }
 
   .el-menu.menus {
-    --el-menu-bg-color: transparent !important;
-    --el-menu-text-color: var(--nx-text) !important;
-    --el-menu-active-color: var(--nx-text) !important;
-    --el-menu-hover-bg-color: var(--el-color-primary-light-9) !important;
-    --el-menu-hover-text-color: var(--nx-text) !important;
-    background-color: transparent !important;
-    padding: 8px;
+    --el-menu-bg-color: #0D0035 !important;
+    --el-menu-text-color: rgba(255, 255, 255, 0.72) !important;
+    --el-menu-active-color: #FFFFFF !important;
+    --el-menu-hover-bg-color: rgba(255, 255, 255, 0.06) !important;
+    --el-menu-hover-text-color: #FFFFFF !important;
+    background-color: var(--nx-base) !important;
+    padding: 0 0 16px;
+
+    // marca no topo do menu (logo completo; só o emblema quando recolhido)
+    &::before {
+      content: '';
+      display: block;
+      height: 64px;
+      margin-bottom: 8px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      background: url('./assets/logo-light.png') no-repeat 20px center / auto 24px;
+    }
+    &.el-menu--collapse::before {
+      background: url('./assets/mark.png') no-repeat center / auto 26px;
+    }
 
     .el-menu-item,
     .el-sub-menu__title {
-      border-radius: 8px;
-      margin-bottom: 2px;
-      height: 44px;
-      line-height: 44px;
-      font-weight: 600;
-      color: var(--nx-text) !important;
+      position: relative;
+      height: 42px;
+      line-height: 42px;
+      margin: 0 8px 2px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 500;
+      color: rgba(255, 255, 255, 0.72) !important;
+      transition: background-color 0.15s, color 0.15s;
 
       &:hover {
-        background-color: var(--el-color-primary-light-9) !important;
+        background-color: rgba(255, 255, 255, 0.06) !important;
+        color: #fff !important;
       }
     }
+    .el-sub-menu__title { font-weight: 600; }
     .el-menu-item.is-active {
-      background-color: var(--el-color-primary-light-9) !important;
-      color: var(--el-color-primary-dark-2) !important;
-      box-shadow: inset 3px 0 0 var(--nx-accent); // marcador do item atual (não depende só da cor)
+      background-color: rgba(255, 255, 255, 0.10) !important;
+      color: #fff !important;
+      font-weight: 600;
+      // marcador do item atual (não depende só da cor)
+      &::after {
+        content: '';
+        position: absolute;
+        right: 0; top: 6px; bottom: 6px;
+        width: 3px;
+        border-radius: 3px 0 0 3px;
+        background: #8F86FF;
+      }
     }
     .el-sub-menu .el-menu { background: transparent; }
-    .el-sub-menu .el-menu-item { font-weight: 500; }
-    .el-sub-menu__title .el-sub-menu__icon-arrow { color: var(--nx-text-muted); }
+    .el-sub-menu .el-menu-item { padding-left: 52px !important; }
+    .el-sub-menu__title .el-sub-menu__icon-arrow { color: rgba(255, 255, 255, 0.55); }
   }
 
-  .setting .title {
+  // Topbar translúcida com o título da página
+  .app-header.el-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    height: 64px;
+    padding: 0 28px;
+    background: rgba(244, 244, 244, 0.85);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
     color: var(--nx-text);
-    border-radius: 6px;
-    padding: 4px 8px;
-  }
+    position: sticky;
+    top: 0;
+    z-index: 100;
 
+    .header-logo { display: none; } // a marca fica no menu lateral
+    .ex-icon {
+      order: -1;
+      margin: 0;
+      height: 36px;
+      width: 36px;
+      justify-content: center;
+      border-radius: 10px;
+      color: var(--nx-text);
+      &:hover { background: var(--nx-field); }
+    }
+    &::before {
+      content: var(--nx-page-title, '');
+      font-family: var(--nx-font-title);
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--nx-text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  }
+  .setting .title { color: var(--nx-text); border-radius: 10px; padding: 6px 10px; }
+
+  // Páginas visitadas: chips discretos
   .header-tags {
-    background: var(--nx-bg);
-    border-bottom: 1px solid var(--nx-border);
-    padding: 8px 12px;
+    background: transparent;
+    border-bottom: none;
+    padding: 12px 28px 0;
     gap: 6px;
     flex-wrap: wrap;
+    .el-tag {
+      border-radius: 8px;
+      border: none;
+      background: var(--nx-field);
+      color: var(--nx-text-muted);
+      font-size: 12px;
+      font-weight: 500;
+      text-transform: none;
+      letter-spacing: 0;
+      cursor: pointer;
+      &.el-tag--dark { background: var(--nx-accent); color: #fff; font-weight: 600; }
+    }
   }
 
-  .app-main {
-    background: var(--nx-bg);
-    padding: 20px 24px;
-  }
+  .app-main { background: var(--nx-bg); padding: 20px 28px 32px; }
 }
-// ---------- Cartões, tabelas e formulários ----------
+
+// ---------- Cartões ----------
 .el-card {
-  border-radius: 12px;
-  border-color: var(--nx-border);
-  box-shadow: 0 1px 2px rgba(13, 0, 53, 0.06);
+  border: none;
+  border-radius: var(--nx-radius-card);
+  box-shadow: var(--nx-shadow-card);
+  --el-card-padding: 20px 24px;
+  &.is-hover-shadow:hover, &.is-always-shadow { box-shadow: var(--nx-shadow-card); }
+  .el-card__header { border-bottom: 1px solid var(--nx-divider); }
 }
 
+.list-query.el-card .el-form--inline .el-form-item { margin-bottom: 4px; }
+.list-body.el-card .el-card__body { padding: 0; overflow: hidden; }
+.list-page.el-card .el-card__body { padding: 12px 20px; }
+
+// ---------- Tabelas ----------
 .el-table {
-  --el-table-header-bg-color: #ECEAF6;
-  --el-table-header-text-color: var(--nx-text);
-  --el-table-row-hover-bg-color: var(--el-color-primary-light-9);
-  border-radius: 10px;
+  --el-table-header-bg-color: #F9F9F9;
+  --el-table-header-text-color: var(--nx-text-subtle);
+  --el-table-row-hover-bg-color: #F9F9F9;
+  --el-table-border-color: var(--nx-divider);
+  --el-table-border: 1px solid var(--nx-divider);
+  --el-table-text-color: var(--nx-text);
+  font-size: 13px;
+
   th.el-table__cell {
+    background: var(--el-table-header-bg-color);
+    font-size: 10px;
     font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--nx-border);
   }
+  td.el-table__cell { padding: 12px 0; }
+  &::before, &--border::after, &--group::after { display: none; }
   // o padrão do Element Plus quebra palavra no meio ('Situaçã o'); quebra só entre palavras
   .cell {
     word-break: normal;
     overflow-wrap: break-word;
-    padding: 0 8px;
+    padding: 0 12px;
+    line-height: 1.45;
   }
 }
 html.dark .el-table {
   --el-table-header-bg-color: #211A66;
   --el-table-bg-color: #17104A;
   --el-table-tr-bg-color: #17104A;
+  --el-table-row-hover-bg-color: #211A66;
 }
 
+// ---------- Botões ----------
 .el-button {
+  --el-button-bg-color: var(--nx-field-hover);
+  --el-button-border-color: transparent;
+  --el-button-text-color: var(--nx-text);
+  --el-button-hover-bg-color: #DEDEDE;
+  --el-button-hover-border-color: transparent;
+  --el-button-hover-text-color: var(--nx-text);
+  --el-button-active-bg-color: #D4D4D4;
+  --el-button-active-border-color: transparent;
+  border-radius: var(--nx-radius-btn);
+  border-color: transparent;
   font-weight: 600;
-  min-height: 32px;
+  min-height: 34px;
+  transition: filter 0.15s, transform 0.1s, background-color 0.15s;
+  &:active { transform: scale(0.98); }
 }
 .el-button--primary {
+  --el-button-bg-color: #5C50FF;
+  --el-button-text-color: #fff;
   --el-button-hover-bg-color: #4901FA;
-  --el-button-hover-border-color: #4901FA;
+  --el-button-hover-text-color: #fff;
   --el-button-active-bg-color: #3A00D0;
-  --el-button-active-border-color: #3A00D0;
+  --el-button-active-text-color: #fff;
 }
-html.dark .el-button--primary {
-  --el-button-text-color: #0D0035;
-  --el-button-hover-text-color: #0D0035;
+// Sucesso, aviso e perigo em tom suave: o upstream usa muitos botões coloridos lado a lado.
+// Só o primário fica sólido, para a ação principal se destacar.
+.el-button--success { --el-button-bg-color: #D1FAE5; --el-button-text-color: #065F46; --el-button-hover-bg-color: #A7F3D0; --el-button-hover-text-color: #064E3B; --el-button-active-bg-color: #6EE7B7; }
+.el-button--warning { --el-button-bg-color: #FEF3C7; --el-button-text-color: #92400E; --el-button-hover-bg-color: #FDE68A; --el-button-hover-text-color: #78350F; --el-button-active-bg-color: #FCD34D; }
+.el-button--danger  { --el-button-bg-color: #FFDAD6; --el-button-text-color: #93000A; --el-button-hover-bg-color: #FFB4AB; --el-button-hover-text-color: #690005; --el-button-active-bg-color: #FF8A80; }
+html.dark .el-button--success { --el-button-bg-color: #0F3D2E; --el-button-text-color: #6EE7B7; --el-button-hover-bg-color: #14543F; --el-button-hover-text-color: #A7F3D0; }
+html.dark .el-button--warning { --el-button-bg-color: #4A2A0A; --el-button-text-color: #FCD34D; --el-button-hover-bg-color: #633A0E; --el-button-hover-text-color: #FDE68A; }
+html.dark .el-button--danger  { --el-button-bg-color: #4D1511; --el-button-text-color: #FFB4AB; --el-button-hover-bg-color: #6B1D17; --el-button-hover-text-color: #FFDAD6; }.el-button--info    { --el-button-bg-color: var(--nx-field-hover); --el-button-text-color: var(--nx-text); }
+.el-button.is-text, .el-button.is-link { --el-button-bg-color: transparent; --el-button-text-color: var(--el-color-primary); background: transparent; }
+.el-button.is-disabled { opacity: 0.45; }
+html.dark .el-button--primary { --el-button-text-color: #0D0035; --el-button-hover-text-color: #0D0035; }
+
+// ---------- Campos ----------
+.el-input,
+.el-textarea,
+.el-select,
+.el-date-editor,
+.el-input-number {
+  --el-input-bg-color: var(--nx-field);
+  --el-input-border-color: transparent;
+  --el-input-hover-border-color: transparent;
+  --el-input-focus-border-color: transparent;
+  --el-border-radius-base: var(--nx-radius-field);
+}
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select__wrapper {
+  border-radius: var(--nx-radius-field);
+  background-color: var(--nx-field);
+  box-shadow: none;
+  min-height: 38px;
+  transition: box-shadow 0.15s, background-color 0.15s;
+  &:hover { background-color: var(--nx-field-hover); box-shadow: none; }
+  &.is-focus, &:focus-within, &.is-focused {
+    background-color: var(--nx-surface);
+    box-shadow: 0 0 0 3px rgba(92, 80, 255, 0.28) !important;
+  }
+}
+.el-textarea__inner { box-shadow: none; }
+.el-form-item.is-error .el-input__wrapper { background: #FFF5F5; box-shadow: 0 0 0 2px #BA1A1A !important; }
+.el-form-item__label { color: var(--nx-text-muted); font-weight: 600; font-size: 12px; }
+.el-form-item__error { color: #BA1A1A; font-size: 11px; }
+.el-checkbox__input.is-checked .el-checkbox__inner,
+.el-radio__input.is-checked .el-radio__inner { background: var(--nx-accent); border-color: var(--nx-accent); }
+
+// ---------- Badges e tags ----------
+.el-tag {
+  border: none;
+  border-radius: 999px;
+  padding: 0 10px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  --el-tag-bg-color: var(--nx-tint);
+  --el-tag-text-color: var(--nx-support);
+  --el-tag-border-color: transparent;
+  &.el-tag--success { --el-tag-bg-color: #D1FAE5; --el-tag-text-color: #065F46; }
+  &.el-tag--warning { --el-tag-bg-color: #FEF3C7; --el-tag-text-color: #92400E; }
+  &.el-tag--danger  { --el-tag-bg-color: #FFDAD6; --el-tag-text-color: #93000A; }
+  &.el-tag--info    { --el-tag-bg-color: var(--nx-field); --el-tag-text-color: var(--nx-text-muted); }
 }
 
-.el-tag {
-  font-weight: 600;
+// ---------- Diálogos, menus suspensos e paginação ----------
+.el-dialog {
+  border-radius: var(--nx-radius-card);
+  box-shadow: 0 16px 48px rgba(13, 0, 53, 0.25);
+  .el-dialog__header { padding: 20px 24px 8px; }
+  .el-dialog__body { padding: 8px 24px 20px; }
 }
+.el-overlay { background-color: rgba(13, 0, 53, 0.45); }
+.el-popper.is-light { border-radius: 14px; border: none; box-shadow: 0 8px 32px rgba(26, 28, 28, 0.14); }
+.el-dropdown-menu__item { border-radius: 8px; margin: 0 6px; }
+.el-pagination {
+  --el-pagination-button-bg-color: transparent;
+  .el-pager li { border-radius: 10px; font-weight: 600; }
+  .el-pager li.is-active { background: var(--nx-accent); color: #fff; }
+}
+.el-empty__description p { color: var(--nx-text-muted); }
 
 // ---------- Formulários de página inteira (novo/editar usuário etc.) ----------
 .form-card {
@@ -239,16 +416,15 @@ html.dark .el-button--primary {
   margin: 0 auto;
   padding: 28px 32px 12px;
   background: var(--nx-surface);
-  border: 1px solid var(--nx-border);
-  border-radius: 12px;
-  box-shadow: 0 1px 2px rgba(13, 0, 53, 0.06);
+  border-radius: var(--nx-radius-card);
+  box-shadow: var(--nx-shadow-card);
 
   .el-form-item__label {
     width: 170px !important; // evita quebrar "Nome de exibição" em duas linhas
-    font-weight: 600;
   }
   .el-form-item__content { min-width: 0; }
 }
+
 // ---------- Tela de login ----------
 #app .login-container {
   position: relative;
@@ -279,10 +455,11 @@ html.dark .el-button--primary {
     position: relative;
     z-index: 1;
     background-color: var(--nx-neutral);
-    border-radius: 20px;
+    border-radius: 24px;
     padding: 44px 40px;
     border: 1px solid rgba(13, 0, 53, 0.10);
     box-shadow: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 24px 48px -12px rgba(13, 0, 53, 0.18);
+
     // troca o logo sem alterar o componente
     .login-logo {
       content: url('./assets/logo-dark.png');
@@ -291,37 +468,17 @@ html.dark .el-button--primary {
       margin-bottom: 28px;
     }
 
-    .el-form-item__label {
-      color: var(--nx-text);
-      font-weight: 600;
-    }
-    .el-input .el-input__wrapper {
-      background: #fff;
-      border: 1px solid #B9B4D3;
-      box-shadow: none;
-      min-height: 40px;
-    }
+    .el-form-item__label { color: var(--nx-text); font-size: 13px; }
+    .el-input .el-input__wrapper { background: #fff; border: 1px solid #D9D6E8; min-height: 42px; }
     .el-input .el-input__wrapper.is-focus,
-    .el-input .el-input__wrapper:focus-within {
-      border-color: var(--nx-accent);
-      box-shadow: 0 0 0 3px rgba(92, 80, 255, 0.25);
-    }
-    .el-input input {
-      color: var(--nx-text);
-    }
+    .el-input .el-input__wrapper:focus-within { border-color: var(--nx-accent); }
+    .el-input input { color: var(--nx-text); }
     .divider {
       color: var(--nx-text-muted);
       &::before, &::after { background-color: var(--nx-border); }
     }
-    .login-button {
-      height: 42px;
-      font-size: 15px;
-    }
-    .oidc-btn {
-      color: var(--nx-text);
-      border-color: var(--nx-border);
-      box-shadow: none;
-    }
+    .login-button { height: 44px; font-size: 15px; }
+    .oidc-btn { color: var(--nx-text); border-color: var(--nx-border); box-shadow: none; }
   }
 }
 html.dark #app .login-container .login-card {
@@ -336,11 +493,11 @@ html.dark #app .login-container .login-card {
   #app .app-left:has(.menus.el-menu--collapse) { width: 0 !important; overflow: hidden; }
   #app .app-left:not(:has(.menus.el-menu--collapse)) {
     position: fixed; left: 0; top: 0; bottom: 0; z-index: 2000;
-    box-shadow: 8px 0 32px rgba(13, 0, 53, 0.25);
+    box-shadow: 8px 0 32px rgba(13, 0, 53, 0.35);
   }
-  #app .header-tags { flex-wrap: nowrap; overflow-x: auto; }
+  #app .app-header.el-header { padding: 0 12px; height: 56px; }
+  #app .header-tags { flex-wrap: nowrap; overflow-x: auto; padding: 8px 12px 0; }
   #app .app-main { padding: 12px; }
-  #app .app-header.el-header .header-logo .title { display: none; }
   .list-query .el-input,
   .list-query .el-select { --el-input-width: 100%; --el-select-width: 100%; }
   .el-dialog { --el-dialog-width: 92% !important; width: 92% !important; }

@@ -11,6 +11,7 @@ import { router } from '@/router'
 import { pinia } from '@/store'
 import { useAppStore } from '@/store/app'
 import { useUserStore } from '@/store/user'
+import { T } from '@/utils/i18n'
 
 // Tema claro por padrão (o escuro continua disponível no botão do cabeçalho)
 try {
@@ -60,4 +61,10 @@ const mobile = window.matchMedia('(max-width: 768px)')
 if (mobile.matches) appStore.setting.sideIsCollapse = true
 router.afterEach(() => {
   if (mobile.matches) appStore.setting.sideIsCollapse = true
+})
+
+// 5. Título da página na topbar (lido pelo CSS em --nx-page-title)
+router.afterEach((to) => {
+  const title = to.meta?.title ? T(to.meta.title) : ''
+  document.documentElement.style.setProperty('--nx-page-title', JSON.stringify(title))
 })

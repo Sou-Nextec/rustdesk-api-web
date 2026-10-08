@@ -240,5 +240,12 @@
   "NxSkipToContent": { "One": "Pular para o conteúdo" },
   "NxLoginSubtitle": { "One": "Acesso remoto Nextec" },
   "NxToggleTheme": { "One": "Alternar tema claro e escuro" },
-  "NxToggleMenu": { "One": "Abrir ou fechar o menu" }
+  "NxToggleMenu": { "One": "Abrir ou fechar o menu" },
+  "NxServerData": { "One": "Dados do servidor" },
+  "NxServerDataTitle": { "One": "Use estes dados para conectar os clientes" },
+  "NxIdServer": { "One": "Servidor de ID" },
+  "NxRelayServer": { "One": "Servidor de relay" },
+  "NxApiServer": { "One": "Servidor de API" },
+  "NxPublicKey": { "One": "Chave pública" },
+  "NxCopy": { "One": "Copiar" }
 }
