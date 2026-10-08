@@ -123,6 +123,13 @@ function translate (root) {
     el.textContent = (FORM_LABELS[base] || base) + ':'
   })
   replaceExact(root, '.el-form-item__label', FORM_LABELS)
+  // "Grupo" muda de sentido conforme a tela: em dispositivos é o cliente, em usuários é a equipe
+  const hash = location.hash
+  const groupAs = /^#\/(user|my)\/peer/.test(hash) ? 'Cliente'
+    : /^#\/user\/(index|add|edit)/.test(hash) ? 'Equipe' : null
+  if (groupAs) {
+    replaceExact(root, '.el-table th .cell, .el-form-item__label', { Grupo: groupAs })
+  }
   replaceExact(root, '.el-select-dropdown__item span', OPTIONS)
   translateInputs(root)
   titleUntitledDialogs(root)
