@@ -368,6 +368,12 @@ html.dark #app .app-header.el-header {
     line-height: 1.45;
   }
 }
+// carregando: esconde o "Sem dados" atrás do indicador, para não parecer lista vazia
+.el-table:has(> .el-loading-mask) .el-table__empty-text { visibility: hidden; }
+.el-loading-mask { background-color: rgba(255, 255, 255, 0.7); }
+.el-loading-spinner .path { stroke: var(--nx-accent); }
+html.dark .el-loading-mask { background-color: rgba(23, 16, 74, 0.7); }
+
 html.dark .el-table {
   --el-table-header-bg-color: #211A66;
   --el-table-bg-color: #17104A;
