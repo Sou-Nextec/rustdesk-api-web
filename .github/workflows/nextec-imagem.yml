@@ -1,20 +1,32 @@
-# Publica a imagem Nextec no GitHub Container Registry:
-#   ghcr.io/sou-nextec/rustdesk-nextec:<versão> e :latest
-# Dispara ao criar uma tag v* (ex.: v1.0.0) ou manualmente em Actions > Imagem Nextec > Run workflow.
+# Publica a imagem Nextec no GitHub Container Registry: ghcr.io/sou-nextec/rustdesk-nextec
+#   - a cada push na master:  :latest  e  :master-<commit>
+#   - ao criar uma tag v*:    :<versão>  (ex.: v1.0.1 gera :1.0.1)  e  :latest
+#   - manualmente em Actions > Imagem Nextec > Run workflow
+# Antes de publicar, a imagem sobe num contêiner de teste e o painel precisa responder. Se não responder, nada é publicado.
 name: Imagem Nextec
 
 on:
   push:
+    branches: [master]
     tags: ['v*']
+    paths-ignore:
+      - '**.md'
+      - 'nextec/deploy/**'
+      - 'nextec/atualizacao/**'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Versão da imagem (ex.: 1.0.0). Vazio = só latest'
+        description: 'Versão extra para marcar (ex.: 1.0.1). Vazio = só latest'
         required: false
 
 permissions:
   contents: read
   packages: write
+
+# uma execução por vez em cada ref; um push novo cancela o build anterior que ainda não terminou
+concurrency:
+  group: imagem-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   IMAGE: ghcr.io/sou-nextec/rustdesk-nextec
@@ -27,12 +39,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Versão
+      - name: Marcas da imagem
         id: v
         run: |
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then V="${GITHUB_REF_NAME#v}"; else V="${{ github.event.inputs.version }}"; fi
           TAGS="${IMAGE}:latest"
-          [ -n "$V" ] && TAGS="${TAGS},${IMAGE}:${V}"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            TAGS="${TAGS},${IMAGE}:${GITHUB_REF_NAME#v}"
+          elif [ "${GITHUB_REF_NAME}" = "master" ]; then
+            TAGS="${TAGS},${IMAGE}:master-${GITHUB_SHA::7}"
+          fi
+          [ -n "${{ github.event.inputs.version }}" ] && TAGS="${TAGS},${IMAGE}:${{ github.event.inputs.version }}"
           echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
@@ -43,7 +59,37 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/build-push-action@v6
+      # 1) constrói e carrega localmente, sem publicar
+      - name: Construir para teste
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: nextec/docker/Dockerfile
+          platforms: linux/amd64
+          build-args: BASE_TAG=${{ env.BASE_TAG }}
+          load: true
+          tags: rustdesk-nextec:teste
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # 2) teste de fumaça: o painel e a API precisam responder
+      - name: Teste de fumaça
+        run: |
+          docker run -d --name teste -p 21114:21114 -e RELAY=teste.local:21117 rustdesk-nextec:teste
+          ok=0
+          for i in $(seq 1 40); do
+            a=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:21114/_admin/ || true)
+            b=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:21114/api/admin/config/app || true)
+            if [ "$a" = "200" ] && [ "$b" = "200" ]; then ok=1; break; fi
+            sleep 3
+          done
+          docker logs teste | tail -20
+          docker rm -f teste >/dev/null
+          [ "$ok" = "1" ] || { echo "Painel ou API não responderam: imagem NÃO publicada."; exit 1; }
+
+      # 3) publica (usa o cache do passo 1, sem reconstruir)
+      - name: Publicar
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: nextec/docker/Dockerfile
@@ -52,3 +98,4 @@ jobs:
           push: true
           tags: ${{ steps.v.outputs.tags }}
           labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          cache-from: type=gha

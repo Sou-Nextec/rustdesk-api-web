@@ -70,3 +70,17 @@ A pasta de dados não é alterada de forma incompatível; o servidor antigo volt
 
 - A porta 21114 expõe o painel. O ideal é publicá-la atrás de um proxy com HTTPS (ex.: `https://acesso.seudominio`) e liberar só 21115 a 21119 direto. Com HTTPS, ajuste `RUSTDESK_API_RUSTDESK_API_SERVER` para o endereço https.
 - Para usar outra chave já existente, troque os dois arquivos `id_ed25519` e `id_ed25519.pub` na pasta de dados e reinicie. Nunca só o `.pub`.
+
+## Atualização automática
+
+A imagem é publicada sozinha a cada push na `master` (depois de um teste de fumaça: o painel e a API precisam responder). No servidor:
+
+```bash
+cd /opt/rustdesk-nextec
+curl -fsSLO https://raw.githubusercontent.com/Sou-Nextec/rustdesk-api-web/master/nextec/deploy/atualizar-servidor.sh
+chmod +x atualizar-servidor.sh && ./atualizar-servidor.sh
+(crontab -l 2>/dev/null; echo '30 3 * * * /opt/rustdesk-nextec/atualizar-servidor.sh >> /var/log/rustdesk-atualizacao.log 2>&1') | crontab -
+```
+
+O script confere se há imagem nova, faz backup, atualiza, espera o contêiner ficar saudável e volta para a versão anterior se não ficar. O compose precisa usar `:latest`.
+Reiniciar derruba as sessões de acesso remoto em andamento por cerca de 30 segundos, por isso o horário é de madrugada. Para atualizar na hora: `./atualizar-servidor.sh`.
