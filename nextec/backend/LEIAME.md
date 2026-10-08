@@ -1,4 +1,9 @@
-# Proposta de correção na API (não aplicada na imagem)
+# Correção na API enviada ao projeto original
+
+PR: https://github.com/lejianwen/rustdesk-api/pull/540 (branch `fix/admin-update-empty-fields` no fork `Sou-Nextec/rustdesk-api`).
+Quando for aceito e sair numa nova versão da imagem `lejianwen/rustdesk-server-s6`, basta atualizar a imagem base; o patch abaixo deixa de ser necessário.
+
+## Histórico: proposta original (não aplicada na imagem)
 
 A imagem Nextec mantém a API original da lejianwen, como definido no projeto. Este patch fica aqui
 como proposta, para decidir se vale aplicar na imagem ou enviar como PR para o upstream.
