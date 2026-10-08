@@ -88,8 +88,11 @@ Para fixar a versão do motor: `--build-arg BASE_TAG=<tag>`.
 
 No `docker-compose.yml`, troque `image:` por `nextec/rustdesk-server-s6:dev` e defina `RUSTDESK_API_LANG=pt-BR` para que as mensagens do backend e os dados criados na primeira execução (como "Grupo padrão") saiam em português. Em bancos já criados, os nomes dos grupos padrão continuam como foram gravados e podem ser renomeados no painel.
 
-## Limitações conhecidas do motor (backend)
+## Correção na API (aplicada na imagem)
 
-* Campos de texto esvaziados na edição (ex.: apagar o apelido de um dispositivo) não são gravados: o servidor ignora valores vazios. Para trocar, digite o novo valor.
-* O servidor aceita cadastros com campos obrigatórios vazios. O painel Nextec bloqueia isso na tela (`required-guard.js`), mas chamadas diretas à API continuam aceitas.
-* Há um patch proposto para os dois pontos em `nextec/backend/` (veja o LEIAME), ainda não aplicado na imagem.
+A imagem recompila a API (v2.6.29) com `nextec/backend/0001-admin-grava-campos-vazios.patch`, o mesmo enviado ao projeto original em https://github.com/lejianwen/rustdesk-api/pull/540:
+
+* campos esvaziados nas telas de administração passam a ser gravados (antes o servidor mantinha o valor antigo);
+* a API exige o ID no cadastro de dispositivo.
+
+O cliente RustDesk e o LDAP continuam com o comportamento original. Quando o PR for aceito e publicado na imagem base, faça o build com `--build-arg NEXTEC_API_PATCH=0` (ou remova o estágio `api` do Dockerfile). Ao atualizar a imagem base, ajuste `API_TAG` para a versão dela: o build falha se as duas não baterem.

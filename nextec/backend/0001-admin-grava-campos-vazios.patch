@@ -1,3 +1,27 @@
+From 816ba0f4828761b468957fa6cec22376e546a72b Mon Sep 17 00:00:00 2001
+From: leonam-daris <daris.leonam@gmail.com>
+Date: Thu, 8 Oct 2026 00:06:54 -0300
+Subject: [PATCH] fix(admin): allow clearing fields on update and require peer
+ id
+
+Updates(struct) skips zero values, so the admin panel could not clear a field
+(e.g. a device alias, a user email or remark, an OAuth issuer or scopes).
+Admin update handlers now update the form columns explicitly via UpdateFields.
+The client API and LDAP sync keep the partial-update behavior.
+
+Also require the peer id when creating a device from the admin panel.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ http/controller/admin/deviceGroup.go |  2 +-
+ http/controller/admin/group.go       |  2 +-
+ http/controller/admin/oauth.go       | 12 +++++++++++-
+ http/controller/admin/peer.go        |  2 +-
+ http/controller/admin/user.go        |  6 +++++-
+ http/request/admin/peer.go           |  2 +-
+ service/service.go                   |  7 +++++++
+ 7 files changed, 27 insertions(+), 6 deletions(-)
+
 diff --git a/http/controller/admin/deviceGroup.go b/http/controller/admin/deviceGroup.go
 index 3d3a884..2adac4e 100644
 --- a/http/controller/admin/deviceGroup.go
@@ -25,15 +49,21 @@ index bf70ca9..8960c05 100644
  		response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
  		return
 diff --git a/http/controller/admin/oauth.go b/http/controller/admin/oauth.go
-index 811fabb..c5c6641 100644
+index 811fabb..467663c 100644
 --- a/http/controller/admin/oauth.go
 +++ b/http/controller/admin/oauth.go
-@@ -251,7 +251,11 @@ func (o *Oauth) Update(c *gin.Context) {
+@@ -251,7 +251,17 @@ func (o *Oauth) Update(c *gin.Context) {
  		return
  	}
  	u := f.ToOauth()
 -	err := service.AllService.OauthService.Update(u)
-+	fields := []string{"op", "oauth_type", "issuer", "scopes", "client_id", "auto_register", "pkce_enable", "pkce_method"}
++	fields := []string{"op", "oauth_type", "issuer", "scopes", "client_id", "pkce_method"}
++	if u.AutoRegister != nil {
++		fields = append(fields, "auto_register")
++	}
++	if u.PkceEnable != nil {
++		fields = append(fields, "pkce_enable")
++	}
 +	if u.ClientSecret != "" {
 +		fields = append(fields, "client_secret")
 +	}
@@ -72,7 +102,7 @@ index 963b1cd..af8eb9f 100644
  		response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
  		return
 diff --git a/http/request/admin/peer.go b/http/request/admin/peer.go
-index 88db2c0..2678fd4 100644
+index 88db2c0..8cb50aa 100644
 --- a/http/request/admin/peer.go
 +++ b/http/request/admin/peer.go
 @@ -4,7 +4,7 @@ import "github.com/lejianwen/rustdesk-api/v2/model"
@@ -80,23 +110,25 @@ index 88db2c0..2678fd4 100644
  type PeerForm struct {
  	RowId    uint   `json:"row_id" `
 -	Id       string `json:"id"`
-+	Id       string `json:"id" validate:"required"` // patch Nextec: ID obrigatório no cadastro
++	Id       string `json:"id" validate:"required"`
  	Cpu      string `json:"cpu"`
  	Hostname string `json:"hostname"`
  	Memory   string `json:"memory"`
 diff --git a/service/service.go b/service/service.go
-index b5fb1bf..316aab8 100644
+index b5fb1bf..f665cdd 100644
 --- a/service/service.go
 +++ b/service/service.go
-@@ -70,3 +70,11 @@ func CommonEnable() func(db *gorm.DB) *gorm.DB {
+@@ -70,3 +70,10 @@ func CommonEnable() func(db *gorm.DB) *gorm.DB {
  		return db.Where("status = ?", model.COMMON_STATUS_ENABLE)
  	}
  }
 +
-+// UpdateFields grava os campos listados mesmo quando vazios (zero value).
-+// Updates(struct) do GORM ignora valores vazios, o que impedia apagar um campo pela tela de administração
-+// (ex.: o apelido de um dispositivo). Usado só pelos controladores de administração; o cliente RustDesk
-+// e o LDAP continuam com o comportamento original, que envia dados parciais. (patch Nextec)
++// UpdateFields updates only the given columns, including zero values.
++// Updates(struct) skips zero values, so admins could not clear a field (e.g. a device alias).
++// Used only by the admin controllers; the client API and LDAP sync keep the partial-update behavior.
 +func UpdateFields(m interface{}, fields ...string) error {
 +	return DB.Model(m).Select(fields).Updates(m).Error
 +}
+-- 
+2.55.0.windows.3
+
