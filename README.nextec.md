@@ -21,6 +21,7 @@ Tudo que é da Nextec fica em arquivos próprios:
 | `src/nextec/required-guard.js` | Bloqueia o envio de formulários com campo obrigatório vazio (o upstream não valida) |
 | `nextec/conf/hello.html` | Boas-vindas de Meus dados em pt-BR (o padrão do upstream é em chinês) |
 | `src/nextec/views/Home.vue` | Tela inicial com resumo |
+| `src/nextec/views/ClientAccess.vue` | Permissões por cliente: uma lista `Cliente: <nome>` por cliente, compartilhada só com as equipes e pessoas escolhidas |
 | `src/nextec/assets/` | Logo e símbolo (PNG) |
 | `src/nextec/fonts/` | Fontes Visby CF (`.woff2`, não versionadas) |
 | `src/utils/i18n/pt_BR.json` | Tradução do painel |
@@ -39,6 +40,22 @@ Arquivos do upstream que recebem edição mínima (qualquer merge futuro só pre
 | `src/views/peer/index.vue` | correção: opção "Sem grupo" no campo Grupo (antes mostrava "0") |
 | `src/views/login/login.vue` | correção: exibe o código de verificação quando o servidor passa a exigi-lo após tentativas erradas (candidata a PR no upstream) |
 | `package.json` e `package-lock.json` | dependência `@fontsource/open-sans` |
+
+## Permissões por cliente
+
+Menu Acesso e segurança > Permissões por cliente (só admin). Para cada cliente (grupo de dispositivos), o painel:
+
+1. cria uma lista de acessos do admin chamada `Cliente: <nome do cliente>`;
+2. coloca nela todos os dispositivos daquele cliente (botão Sincronizar traz os que entraram depois);
+3. compartilha a lista só com as equipes e pessoas escolhidas (ver e conectar, ou também editar a lista).
+
+No app RustDesk, cada técnico vê em Lista de endereços apenas os clientes liberados para ele. Isso controla a **visibilidade**: o servidor aberto não bloqueia uma conexão feita por quem já sabe o ID e a senha (esse bloqueio só existe no RustDesk Server Pro). Por isso, use senha permanente forte nas máquinas e guarde a senha só nas listas.
+
+Tudo é feito com as APIs de listas e regras de compartilhamento do upstream, sem mudança no backend. Renomear a lista fora desta tela faz ela deixar de ser reconhecida.
+
+## Cliente web (acesso pelo navegador)
+
+Liga e desliga pela variável `RUSTDESK_API_APP_WEB_CLIENT` no `docker-compose.yml` (`1` ligado, padrão; `0` desligado) e `docker compose up -d`. Desligado, somem os botões de abrir e compartilhar pelo navegador e os endereços `/webclient` deixam de responder. A tela Ajustes do servidor mostra o estado atual e o passo a passo. O cliente web é o oficial do RustDesk e não recebe a marca Nextec.
 
 ## Desenvolvimento
 

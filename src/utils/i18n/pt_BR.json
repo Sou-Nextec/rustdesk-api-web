@@ -268,6 +268,8 @@
   "NxHintLoginLog": { "One": "Histórico de logins no painel e no app RustDesk." },
   "NxHintAuditConn": { "One": "Histórico das conexões remotas entre dispositivos." },
   "NxHintAuditFile": { "One": "Histórico das transferências de arquivos feitas durante os acessos." },
+  "NxClientAccess": { "One": "Permissões por cliente" },
+  "NxHintNxClientAccess": { "One": "Escolha quais equipes e pessoas enxergam os dispositivos de cada cliente no app RustDesk." },
   "NxHintServerCmd": { "One": "Configurações do servidor de ID (hbbs) e do relay (hbbr) da Nextec." },
   "NxHintMyInfo": { "One": "Seus dados de acesso e os logins externos vinculados à sua conta." },
   "NxHintMyPeer": { "One": "Dispositivos em que você entrou com a sua conta." },

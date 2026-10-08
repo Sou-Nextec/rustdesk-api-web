@@ -132,6 +132,31 @@
             </div>
             <p class="nx-env">Permanente: arquivos <code>blocklist.txt</code> e <code>blacklist.txt</code> na pasta de dados do relay, um IP por linha.</p>
           </div>
+
+          <!-- Cliente web -->
+          <div class="nx-card nx-wide">
+            <div class="nx-card-head nx-head-row">
+              <div>
+                <h2>Acesso pelo navegador (cliente web)</h2>
+                <p>Permite abrir um dispositivo direto no navegador, sem instalar o app RustDesk. Usa o cliente web oficial do RustDesk, com a marca dele.</p>
+              </div>
+              <el-tag :type="webClient ? 'success' : 'info'" size="large">{{ webClient ? 'Ligado' : 'Desligado' }}</el-tag>
+            </div>
+            <p class="nx-help">
+              {{ webClient
+                ? 'Hoje aparecem as opções "Abrir no navegador" e "Compartilhar pelo navegador" nas listas. Para desligar:'
+                : 'As opções de abrir pelo navegador estão escondidas e os endereços /webclient estão desativados. Para ligar:' }}
+            </p>
+            <ol class="nx-steps">
+              <li>No servidor, abra o <code>docker-compose.yml</code> e, no serviço do RustDesk, em <code>environment</code>, deixe a linha
+                <code class="nx-copy">RUSTDESK_API_APP_WEB_CLIENT={{ webClient ? 0 : 1 }}</code>
+                <el-button size="small" link type="primary" @click="copyEnv">Copiar</el-button>
+              </li>
+              <li>Aplique com <code>docker compose up -d</code> (o contêiner é recriado e volta em alguns segundos).</li>
+              <li>Recarregue esta página: o estado acima muda para {{ webClient ? 'Desligado' : 'Ligado' }}.</li>
+            </ol>
+            <p class="nx-env">A mudança não pode ser feita por aqui de propósito: vale para todos os usuários e exige reiniciar o serviço.</p>
+          </div>
         </div>
       </el-tab-pane>
 
@@ -144,15 +169,28 @@
 </template>
 
 <script setup>
-  import { onMounted, reactive, ref } from 'vue'
+  import { computed, onMounted, reactive, ref } from 'vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { sendCmd } from '@/api/rustdesk'
   import UpstreamControl from '@/views/rustdesk/control.vue'
+  import { useAppStore } from '@/store/app'
 
   const ID = '21115'
   const RELAY = '21117'
 
   const tab = ref('simple')
+
+  const appStore = useAppStore()
+  const webClient = computed(() => !!appStore.setting.appConfig?.web_client)
+  const copyEnv = async () => {
+    const line = `RUSTDESK_API_APP_WEB_CLIENT=${webClient.value ? 0 : 1}`
+    try {
+      await navigator.clipboard.writeText(line)
+      ElMessage.success('Linha copiada.')
+    } catch {
+      ElMessage.info(line)
+    }
+  }
   const idOk = ref(null)
   const relayOk = ref(null)
   const canMustLogin = ref(false)
@@ -351,6 +389,8 @@
   }
   .nx-switch-field { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
   .nx-help { margin: 0 0 8px; font-size: 12px; line-height: 1.5; color: var(--nx-text-muted); }
+  .nx-steps { margin: 8px 0 0; padding-left: 20px; font-size: 13px; line-height: 1.7; color: var(--nx-text);
+    code { font-size: 12px; background: var(--nx-field); padding: 1px 6px; border-radius: 6px; } .nx-copy { font-weight: 600; } }
   .nx-env { margin: 6px 0 0; font-size: 11px; color: var(--nx-text-subtle); code { font-size: 11px; background: var(--nx-field); padding: 1px 6px; border-radius: 6px; } }
   .nx-row { display: flex; gap: 8px; .el-input { flex: 1; } }
   .nx-unit { margin-left: 8px; font-size: 12px; color: var(--nx-text-muted); }

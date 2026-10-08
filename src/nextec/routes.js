@@ -11,7 +11,7 @@ const GROUPS = [
   { name: 'NxGroupDevices', title: 'NxGroupDevices', icon: 'Monitor', children: ['Peer', 'DeviceGroup'] },
   { name: 'NxGroupPeople', title: 'NxGroupPeople', icon: 'UserFilled', children: ['UserList', 'UserAdd', 'UserEdit', 'UserGroup'] },
   { name: 'NxGroupAddressBook', title: 'NxGroupAddressBook', icon: 'Notebook', children: ['UserAddressBookName', 'UserAddressBook', 'UserTag'] },
-  { name: 'NxGroupAccess', title: 'NxGroupAccess', icon: 'Lock', children: ['Oauth', 'UserToken', 'ShareRecord'] },
+  { name: 'NxGroupAccess', title: 'NxGroupAccess', icon: 'Lock', children: ['NxClientAccess', 'Oauth', 'UserToken', 'ShareRecord'] },
   { name: 'NxGroupAudit', title: 'NxGroupAudit', icon: 'Tickets', children: ['LoginLog', 'AuditConn', 'AuditFile'] },
   { name: 'NxGroupServer', title: 'NxGroupServer', icon: 'Setting', children: ['ServerCmd'] },
 ]
@@ -20,6 +20,13 @@ export function applyNextecRoutes () {
   const system = asyncRoutes.find(r => r.name === 'User')
   if (!system) return // estrutura do upstream mudou: mantém o menu original
 
+  // Permissões por cliente: tela nova da Nextec (só admin; usa as APIs de listas e regras do upstream)
+  system.children.push({
+    path: '/user/clientAccess',
+    name: 'NxClientAccess',
+    meta: { title: 'NxClientAccess', icon: 'Key' },
+    component: () => import('./views/ClientAccess.vue'),
+  })
   const byName = new Map(system.children.map(c => [c.name, c]))
   const used = new Set()
   const groups = GROUPS.map(g => {
