@@ -13,7 +13,11 @@ Tudo que é da Nextec fica em arquivos próprios:
 | --- | --- |
 | `src/nextec/index.js` | Ponto de entrada da personalização (1 import em `src/main.js`) |
 | `src/nextec/theme.scss` | Cores, fontes, menu, cabeçalho, login e ajustes do Element Plus |
-| `src/nextec/routes.js` | Agrupamento do menu (sem editar `src/router/index.js`) |
+| `src/nextec/routes.js` | Agrupamento do menu e títulos de Minha conta (sem editar `src/router/index.js`) |
+| `src/nextec/labels.js` | Tradução de textos fixos no upstream (colunas, rótulos, mensagens de validação do servidor) |
+| `src/nextec/table-column.js` | Limita a largura da coluna Ações, que no upstream espreme as outras colunas |
+| `src/nextec/required-guard.js` | Bloqueia o envio de formulários com campo obrigatório vazio (o upstream não valida) |
+| `nextec/conf/hello.html` | Boas-vindas de Meus dados em pt-BR (o padrão do upstream é em chinês) |
 | `src/nextec/views/Home.vue` | Tela inicial com resumo |
 | `src/nextec/assets/` | Logo e símbolo (PNG) |
 | `src/nextec/fonts/` | Fontes Visby CF (`.woff2`, não versionadas) |
@@ -26,10 +30,11 @@ Arquivos do upstream que recebem edição mínima (qualquer merge futuro só pre
 
 | Arquivo | Mudança |
 | --- | --- |
-| `src/main.js` | locale do Element Plus em pt-BR e `import '@/nextec'` |
+| `src/main.js` | locale do Element Plus em pt-BR, `import nextec from '@/nextec'` e `app.use(nextec)` |
 | `src/utils/i18n.js` | registra `pt-BR` e usa o pt-BR como reserva de chave |
 | `src/store/app.js` | idioma padrão `pt-BR`, locale do Element Plus, título `Nextec` |
 | `index.html` | idioma, título, favicon |
+| `src/views/login/login.vue` | correção: exibe o código de verificação quando o servidor passa a exigi-lo após tentativas erradas (candidata a PR no upstream) |
 | `package.json` e `package-lock.json` | dependência `@fontsource/open-sans` |
 
 ## Desenvolvimento

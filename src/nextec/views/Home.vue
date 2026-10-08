@@ -35,7 +35,7 @@
       </router-link>
     </div>
 
-    <div class="nx-cols">
+    <div class="nx-cols" :class="{ 'is-single': !isAdmin }">
       <div class="nx-card">
         <div class="nx-card-head">
           <h2 class="nx-h2">{{ T('NxRecentConnections') }}</h2>
@@ -45,7 +45,7 @@
         </div>
 
         <div v-if="loading && !loaded" class="nx-pad"><el-skeleton animated :rows="4"/></div>
-        <el-empty v-else-if="!recent.length" :description="T('NxRecentEmpty')">
+        <el-empty v-else-if="!recent.length" :image-size="72" :description="T('NxRecentEmpty')">
           <p class="nx-empty-hint">{{ T('NxRecentEmptyHint') }}</p>
         </el-empty>
         <el-table v-else :data="recent" :aria-label="T('NxRecentConnections')">
@@ -69,7 +69,7 @@
         </el-table>
       </div>
 
-      <aside class="nx-highlight" :aria-label="T('NxServerData')">
+      <aside v-if="isAdmin" class="nx-highlight" :aria-label="T('NxServerData')">
         <div class="nx-eyebrow">{{ T('NxServerData') }}</div>
         <div class="nx-hl-title">{{ T('NxServerDataTitle') }}</div>
         <dl class="nx-kv">
@@ -79,7 +79,7 @@
               <code>{{ item.value || '-' }}</code>
               <button v-if="item.value" type="button" class="nx-copy" :aria-label="T('NxCopy') + ' ' + item.label"
                       @click="copy(item.value)">
-                <el-icon><el-icon-Document/></el-icon>
+                <el-icon><el-icon-CopyDocument/></el-icon>
               </button>
             </dd>
           </template>
@@ -95,12 +95,15 @@
   import { T } from '@/utils/i18n'
   import { timeAgo } from '@/utils/time'
   import { useAppStore } from '@/store/app'
+  import { useUserStore } from '@/store/user'
   import { list as peerList } from '@/api/peer'
   import { list as userList } from '@/api/user'
   import { list as connList } from '@/api/audit'
 
   const ONLINE_WINDOW_S = 60
   const appStore = useAppStore()
+  // dados de conexão do servidor (inclui a chave) só para administradores
+  const isAdmin = computed(() => (useUserStore().route_names || []).includes('*'))
 
   const loading = ref(false)
   const loaded = ref(false)
@@ -205,13 +208,16 @@
     display: block; padding: 20px 22px;
     background: var(--nx-surface); border-radius: var(--nx-radius-card); box-shadow: var(--nx-shadow-card);
     text-decoration: none; color: inherit; transition: transform .15s, box-shadow .15s;
-    &:hover { transform: translateY(-2px); box-shadow: 0 8px 28px rgba(92, 80, 255, .14); }
+    &:hover { transform: translateY(-2px); box-shadow: 0 8px 28px rgba(97, 60, 179, .14); }
   }
   .nx-stat-icon {
     width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; margin-bottom: 12px;
     &.is-accent { background: var(--nx-accent); color: #fff; }
-    &.is-soft { background: var(--nx-tint); color: var(--nx-support); }
+    &.is-soft { background: var(--nx-tint); color: var(--nx-accent); }
     &.is-support { background: #E3DFFF; color: var(--nx-support); }
+  }
+  html.dark .nx-stat-icon {
+    &.is-soft, &.is-support { background: var(--nx-tint); color: #D8C2FF; }
   }
   .nx-stat-value { font-family: var(--nx-font-title); font-size: 36px; font-weight: 700; line-height: 1; color: var(--nx-text); }
   .nx-stat-hint { font-size: 11px; color: var(--nx-text-subtle); margin-top: 6px; }
@@ -227,8 +233,8 @@
 
   .nx-highlight {
     padding: 22px 24px; border-radius: var(--nx-radius-card); color: #fff;
-    background: linear-gradient(135deg, #5C50FF, #4901FA);
-    box-shadow: 0 8px 24px rgba(92, 80, 255, .28);
+    background: linear-gradient(135deg, #613CB3, #4230E6);
+    box-shadow: 0 8px 24px rgba(97, 60, 179, .25);
   }
   .nx-eyebrow { font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; opacity: .85; margin-bottom: 8px; }
   .nx-hl-title { font-family: var(--nx-font-title); font-size: 18px; font-weight: 700; margin-bottom: 14px; }
@@ -244,6 +250,7 @@
     &:focus-visible { outline-color: #fff; }
   }
 
+  .nx-cols.is-single { grid-template-columns: 1fr; }
   @media (max-width: 1100px) { .nx-cols { grid-template-columns: 1fr; } }
   @media (max-width: 1024px) { .nx-stats { grid-template-columns: repeat(2, 1fr); } }
   @media (max-width: 560px) { .nx-stats { grid-template-columns: 1fr; } .nx-h1 { font-size: 22px; } }

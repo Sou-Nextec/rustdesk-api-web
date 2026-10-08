@@ -60,5 +60,16 @@ export function applyNextecRoutes () {
 
   // Início, administração agrupada e, por último, Minha conta (único grupo do usuário comum)
   const my = asyncRoutes.find(r => r.name === 'My')
+  // em Minha conta, títulos no possessivo para não confundir com as telas de administração
+  const MY_TITLES = {
+    MyAddressBookCollection: 'NxMyCatalogs',
+    MyAddressBookList: 'NxMyAddresses',
+    MyTagList: 'NxMyTags',
+    MyShareRecordList: 'NxMyShares',
+    MyLoginLog: 'NxMyLogins',
+  }
+  my?.children?.forEach(c => {
+    if (MY_TITLES[c.name]) c.meta = { ...c.meta, title: MY_TITLES[c.name] }
+  })
   asyncRoutes.splice(0, asyncRoutes.length, home, ...groups.filter(g => g.children.length), ...(my ? [my] : []))
 }

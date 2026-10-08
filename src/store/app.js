@@ -18,7 +18,7 @@ const langs = {
   'ru': { name: 'Русский', value: ru, sideBarWidth: '250px' },
   'es': { name: 'Español', value: es, sideBarWidth: '280px' },
   'zh-TW': { name: '中文繁体', value: zhTw, sideBarWidth: '210px' },
-  'pt-BR': { name: 'Português (Brasil)', value: ptBr, sideBarWidth: '230px' },
+  'pt-BR': { name: 'Português (Brasil)', value: ptBr, sideBarWidth: '248px' },
 }
 const defaultLang = localStorage.getItem('lang') || 'pt-BR'
 export const useAppStore = defineStore({
