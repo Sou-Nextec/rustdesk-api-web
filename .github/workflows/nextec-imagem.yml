@@ -2,6 +2,7 @@
 #   - a cada push na master:  :latest  e  :master-<commit>
 #   - ao criar uma tag v*:    :<versão>  (ex.: v1.0.1 gera :1.0.1)  e  :latest
 #   - manualmente em Actions > Imagem Nextec > Run workflow
+# Na master, depois de publicar, aciona o webhook do Portainer (segredo PORTAINER_WEBHOOK_URL).
 # Antes de publicar, a imagem sobe num contêiner de teste e o painel precisa responder. Se não responder, nada é publicado.
 name: Imagem Nextec
 
@@ -99,3 +100,19 @@ jobs:
           tags: ${{ steps.v.outputs.tags }}
           labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
           cache-from: type=gha
+
+      # 4) avisa o Portainer para refazer a stack e baixar a imagem nova (só na master).
+      #    O endereço do webhook é segredo do repositório. Falha aqui não reprova o build:
+      #    a imagem já foi publicada e o Portainer pode ser acionado de novo à mão.
+      - name: Atualizar servidor (Portainer)
+        if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+        continue-on-error: true
+        env:
+          PORTAINER_WEBHOOK_URL: ${{ secrets.PORTAINER_WEBHOOK_URL }}
+        run: |
+          [ -n "$PORTAINER_WEBHOOK_URL" ] || { echo "Sem PORTAINER_WEBHOOK_URL: pulando."; exit 0; }
+          # certificado do Portainer é autoassinado (acesso por IP), por isso -k
+          code=$(curl -ksS -o /dev/null -w '%{http_code}' -X POST --max-time 60 "$PORTAINER_WEBHOOK_URL")
+          echo "Portainer respondeu HTTP $code"
+          [ "$code" = "204" ] || [ "$code" = "200" ]
+
