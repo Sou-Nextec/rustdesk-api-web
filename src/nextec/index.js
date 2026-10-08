@@ -75,16 +75,37 @@ if (notFound) notFound.components.default = () => import('./views/NotFound.vue')
 // Clicar em "Meus dados" (que também usa o caminho /) continua abrindo a tela original.
 const routeStore = useRouteStore(pinia)
 const addRoutes = routeStore.addRoutes
+// Usuário comum só tem a Minha área: em vez de um grupo que precisa ser aberto (e que vira um ícone
+// solto com o menu recolhido), cada tela aparece direto no menu, com o próprio ícone.
+function flattenMyMenu () {
+  const i = asyncRoutes.findIndex(r => r.name === 'My')
+  if (i < 0) return
+  const my = asyncRoutes[i]
+  const singles = my.children.map(child => ({
+    path: my.path,
+    name: 'NxMy_' + child.name,
+    meta: { ...child.meta },
+    component: my.component,
+    children: [child],
+  }))
+  asyncRoutes.splice(i, 1, ...singles)
+}
 routeStore.addRoutes = (names = []) => {
   const admin = names.includes('*')
   // Clientes liberados não faz sentido para o admin, que já vê tudo em Dispositivos
   const shared = asyncRoutes.find(r => r.name === 'My')?.children?.find(c => c.name === 'NxMyShared')
   if (shared) shared.meta = { ...shared.meta, hide: admin }
+  if (!admin) flattenMyMenu()
   return addRoutes.call(routeStore, admin ? names : [...names, 'NxHome', 'NxMyShared'])
 }
 router.beforeEach((to, from) => {
   const entering = !from.name || from.path === '/login' || from.path.startsWith('/oauth')
   if (to.path === '/' && entering && useUserStore(pinia).route_names.length) {
+    return { path: '/home', replace: true }
+  }
+  // o login volta para a tela em que a sessão anterior terminou (?redirect=). Se quem entrou agora
+  // não tem acesso a ela (ex.: tela de admin e login de técnico), vai para o Início em vez do 404.
+  if (to.path === '/404' && entering && useUserStore(pinia).route_names.length) {
     return { path: '/home', replace: true }
   }
 })
