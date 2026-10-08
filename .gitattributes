@@ -1,3 +1,5 @@
 # patches e Dockerfile da Nextec sempre com LF (o git apply no build Linux falha com CRLF)
 nextec/backend/*.patch text eol=lf
 nextec/docker/Dockerfile text eol=lf
+nextec/deploy/*.sh text eol=lf
+.github/workflows/*.yml text eol=lf
