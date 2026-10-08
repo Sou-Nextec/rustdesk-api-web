@@ -136,10 +136,12 @@
     try {
       const res = await loginOptions().catch(_ => false)
       if (!res || !res.data) return console.error('No valid response received')
-      res.data.ops.map(option => (options.push({ name: option }))) // 创建新的对象数组
-      if (res.data.auto_oidc) {
+      // a API devolve ops = null quando não há provedor (ou a consulta falha): trata como lista vazia
+      const ops = res.data.ops || []
+      ops.forEach(option => options.push({ name: option }))
+      if (res.data.auto_oidc && ops.length) {
         // 如果有自动OIDC登录选项，直接调用第一个
-        handleOIDCLogin(res.data.ops[0])
+        handleOIDCLogin(ops[0])
       }
       disablePwd.value = res.data.disable_pwd
       allowRegister.value = res.data.register
