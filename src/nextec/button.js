@@ -34,6 +34,9 @@ const NextecButton = {
       if (text === T('Add') && props.type === 'danger') props.type = 'primary'
       else if (text === T('Submit') && props.type === 'success') props.type = 'primary' // cadastro
       else if (isNeutral(props.type, text)) props.type = ''
+      // comandos avançados: "Enviar To Id" e "Enviar To Relay" vêm meio em inglês
+      if (text === T('Send') + ' To Id') children = { ...slots, default: () => 'Enviar ao servidor de ID' }
+      if (text === T('Send') + ' To Relay') children = { ...slots, default: () => 'Enviar ao relay' }
       else if (text === T('Logout') && route?.name === 'UserToken') {
         children = { ...slots, default: () => T('NxEndSession') }
       }

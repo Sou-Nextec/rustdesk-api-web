@@ -43,6 +43,10 @@ export function applyNextecRoutes () {
 
   groups[0].redirect = '/user/peer'
 
+  // Ajustes do servidor: tela própria da Nextec (a original segue disponível na aba Comandos avançados)
+  const serverCmd = byName.get('ServerCmd')
+  if (serverCmd) serverCmd.component = () => import('./views/ServerSettings.vue')
+
   const home = {
     path: '/home',
     name: 'NxHomeRoot',
