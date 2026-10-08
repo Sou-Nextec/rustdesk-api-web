@@ -26,6 +26,7 @@ Tudo que é da Nextec fica em arquivos próprios:
 | `src/nextec/views/MyDevices.vue` e `MySaved.vue` | Meus dispositivos e Meus acessos salvos no padrão da tela Dispositivos |
 | `src/nextec/list-page.scss` | Estilos compartilhados dessas listas |
 | `src/nextec/views/MyShared.vue` | Clientes liberados: dispositivos das listas compartilhadas com o técnico, com situação online (patch 0003) |
+| `src/nextec/views/ProfilePhoto.vue` | Foto de perfil (menu do usuário): recorta, reduz e envia; o app RustDesk mostra no lugar da inicial (patch 0004) |
 | `src/nextec/api.js` | Endpoints que só existem com os patches da Nextec (chave do cliente web) |
 | `src/nextec/assets/` | Logo e símbolo (PNG) |
 | `src/nextec/fonts/` | Fontes Visby CF (`.woff2`, não versionadas) |
@@ -44,8 +45,9 @@ Arquivos do upstream que recebem edição mínima (qualquer merge futuro só pre
 | `index.html` | idioma, título, favicon |
 | `src/views/peer/index.vue` | correção: opção "Sem grupo" no campo Grupo (antes mostrava "0") |
 | `src/views/login/login.vue` | correção: exibe o código de verificação quando o servidor passa a exigi-lo após tentativas erradas (candidata a PR no upstream) |
+| `src/views/oauth/index.vue` | Login externo: segredo sempre mascarado (vazio ao editar mantém o atual) e botão que preenche o modelo Microsoft Entra ID |
 | `src/layout/components/header.vue` | inclui o `Topbar.vue` da Nextec (1 import e 1 tag) |
-| `src/layout/components/setting/index.vue` | menu do usuário ganha Meus dados e Meus acessos ao painel |
+| `src/layout/components/setting/index.vue` | menu do usuário ganha Foto de perfil, Meus dados e Meus acessos ao painel; foto ao lado do nome |
 | `package.json` e `package-lock.json` | dependência `@fontsource/open-sans` |
 
 ## Permissões por cliente
@@ -63,6 +65,15 @@ Tudo é feito com as APIs de listas e regras de compartilhamento do upstream, se
 ## Cliente web (acesso pelo navegador)
 
 Ajustes do servidor > Acesso pelo navegador: um interruptor liga e desliga na hora, para todos. A escolha fica gravada em `/app/data/nextec-settings.json` (volume de dados) e vale também depois de reiniciar ou recriar o contêiner, por cima de `RUSTDESK_API_APP_WEB_CLIENT`. Isso vem do patch `nextec/backend/0002-chaveador-cliente-web.patch` (endpoint `POST /api/admin/nextec/web-client`). Em servidor sem o patch, a tela mostra como fazer pela variável. O cliente web é o oficial do RustDesk e não recebe a marca Nextec.
+
+## Login com Microsoft (login externo)
+
+Em Segurança > Login externo > Adicionar > OIDC, o botão **Preencher para Microsoft Entra ID** pede a ID do diretório e preenche emissor, escopos e PKCE. Você informa a ID do aplicativo (Client ID) e o segredo. O segredo **nunca volta ao navegador** (patch 0004): ao editar, deixar em branco mantém o atual.
+URI de redirecionamento no Entra: `https://<endereço do painel>/api/oidc/callback`. Com o Cloudflare Access na frente, esse caminho fica fora das rotas protegidas (`/_admin` e `/api/admin`). Para esconder o login por senha, `RUSTDESK_API_APP_DISABLE_PWD_LOGIN=true` no compose.
+
+## Foto de perfil
+
+No menu do usuário, **Foto de perfil**. A API (patch 0004) envia `display_name` e `avatar` (data URI) no login do app, e o RustDesk 1.4.x/1.5 mostra a foto na janela de permissão da sessão, no lugar da inicial. A foto exibida vem da conta logada na máquina de **quem conecta**.
 
 ## O que o técnico vê
 

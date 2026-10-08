@@ -22,3 +22,8 @@ export function sharedAddressBooks (params) {
 export function sharedStatus (data) {
   return request({ url: '/my/shared/status', method: 'post', data })
 }
+
+// patch 0004: foto de perfil do próprio usuário (data URL png/jpeg/webp de até 150 KB; vazio remove)
+export function setAvatar (avatar) {
+  return request({ url: '/my/profile/avatar', method: 'post', data: { avatar } })
+}

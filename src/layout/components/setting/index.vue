@@ -34,7 +34,10 @@
     </el-dropdown>
     <el-dropdown class="menu-item">
       <div class="title">
-        <!--        <el-image class="avatar" :src="user.avatar"></el-image>-->
+        <span class="nx-avatar" aria-hidden="true">
+          <img v-if="user.avatar" :src="user.avatar" alt="">
+          <template v-else>{{ String(user.nickname || user.username || '?').trim().charAt(0).toUpperCase() }}</template>
+        </span>
         <span class="nickname">{{ user.username }}</span>
         <el-icon>
           <el-icon-arrow-down/>
@@ -44,6 +47,7 @@
 
       <template #dropdown>
         <el-dropdown-menu>
+          <el-dropdown-item @click="photoVisible = true">Foto de perfil</el-dropdown-item>
           <el-dropdown-item @click="$router.push('/')">{{ T('Userinfo') }}</el-dropdown-item>
           <el-dropdown-item @click="$router.push('/my/loginLog')">{{ T('NxMyLogins') }}</el-dropdown-item>
           <el-dropdown-item @click="showChangePwd">{{ T('ChangePassword') }}</el-dropdown-item>
@@ -52,6 +56,7 @@
       </template>
     </el-dropdown>
     <changePwdDialog v-model:visible="changePwdVisible"></changePwdDialog>
+    <ProfilePhoto v-model="photoVisible"/>
   </div>
 </template>
 
@@ -59,6 +64,7 @@
   import { useUserStore } from '@/store/user'
   import { useAppStore } from '@/store/app'
   import changePwdDialog from '@/components/changePwdDialog.vue'
+  import ProfilePhoto from '@/nextec/views/ProfilePhoto.vue'
   import { ref } from 'vue'
   import { T } from '@/utils/i18n'
   import { useDark } from '@vueuse/core'
@@ -74,6 +80,7 @@
   }
 
   const changePwdVisible = ref(false)
+  const photoVisible = ref(false)
   const showChangePwd = () => {
     changePwdVisible.value = true
   }
