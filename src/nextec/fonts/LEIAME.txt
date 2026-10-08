@@ -1,0 +1,3 @@
+Coloque aqui os arquivos da Visby CF (woff2): VisbyCF-Medium.woff2, VisbyCF-Bold.woff2 e VisbyCF-ExtraBold.woff2.
+O build detecta e empacota sozinho. Sem eles, os titulos usam Open Sans.
+A licenca da Visby CF e da Nextec, entao os arquivos nao sao versionados (veja .gitignore).

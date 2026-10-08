@@ -1,0 +1,304 @@
+// Tema Nextec. Tudo da identidade visual fica neste arquivo, sem mexer nas telas do upstream.
+// Proporção de uso: #0D0035 base (~58%), #F4F4F4 neutro (~15%), #5C50FF destaque (~13%),
+// #4901FA apoio (~9%), branco (~5%). Cores fortes só em pontos de destaque, nunca em áreas grandes.
+
+:root {
+  --nx-base: #0D0035;
+  --nx-neutral: #F4F4F4;
+  --nx-accent: #5C50FF;
+  --nx-support: #4901FA;
+  --nx-white: #FFFFFF;
+
+  --nx-bg: #F4F4F4;
+  --nx-surface: #FFFFFF;
+  --nx-text: #0D0035;
+  --nx-text-muted: #4B4566; // 8,2:1 sobre branco
+  --nx-border: #D9D6E8;
+  --nx-focus: #4901FA;
+
+  --nx-font-title: 'Visby CF', 'Open Sans', system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+  --nx-font-body: 'Open Sans', system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+
+  // Element Plus
+  --el-color-primary: #5C50FF; // 5,2:1 sobre branco
+  --el-color-primary-light-3: #8D85FF;
+  --el-color-primary-light-5: #AEA8FF;
+  --el-color-primary-light-7: #CECBFF;
+  --el-color-primary-light-8: #DEDCFF;
+  --el-color-primary-light-9: #EEEDFF;
+  --el-color-primary-dark-2: #4901FA;
+  --el-color-success: #157347;
+  --el-color-warning: #9A5B00;
+  --el-color-danger: #B42318;
+  --el-color-info: #4B4566;
+  --el-bg-color: #FFFFFF;
+  --el-bg-color-page: var(--nx-bg);
+  --el-text-color-primary: var(--nx-text);
+  --el-text-color-regular: #2A2347;
+  --el-text-color-secondary: var(--nx-text-muted);
+  --el-text-color-placeholder: #6B6585;
+  --el-border-color: var(--nx-border);
+  --el-border-radius-base: 8px;
+  --el-font-family: var(--nx-font-body);
+  --tag-bg-color: #ECEAF6;
+  --primaryColor: #5C50FF;
+}
+
+html.dark {
+  --nx-bg: #0D0035;
+  --nx-surface: #17104A;
+  --nx-text: #F4F4F4;
+  --nx-text-muted: #C4C0DC;
+  --nx-border: #342C73;
+  --nx-focus: #B8B2FF;
+
+  --el-color-primary: #8F86FF;
+  --el-color-primary-light-3: #6F65FF;
+  --el-color-primary-light-5: #4F44D6;
+  --el-color-primary-light-7: #352D96;
+  --el-color-primary-light-8: #2A2380;
+  --el-color-primary-light-9: #211A66;
+  --el-color-primary-dark-2: #B8B2FF;
+  --el-color-success: #4CC38A;
+  --el-color-warning: #F0B24A;
+  --el-color-danger: #FF8A80;
+  --el-color-info: #C4C0DC;
+  --el-bg-color: #17104A;
+  --el-bg-color-overlay: #17104A;
+  --el-bg-color-page: #0D0035;
+  --el-fill-color-blank: #17104A;
+  --el-text-color-primary: #F4F4F4;
+  --el-text-color-regular: #E3E0F3;
+  --el-text-color-secondary: #C4C0DC;
+  --el-text-color-placeholder: #A39EC4;
+  --el-border-color: #342C73;
+  --el-border-color-light: #2A2380;
+  --el-border-color-lighter: #241D70;
+  --tag-bg-color: #241D70;
+}
+
+// ---------- Tipografia ----------
+body {
+  font-family: var(--nx-font-body);
+  background: var(--nx-bg);
+  color: var(--nx-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6,
+.nx-title,
+.el-dialog__title,
+.el-card__header,
+.el-descriptions__title,
+.el-drawer__header {
+  font-family: var(--nx-font-title);
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+// ---------- Foco visível (WCAG 2.4.7) ----------
+:focus-visible {
+  outline: 3px solid var(--nx-focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+// ---------- Estrutura (menu lateral, cabeçalho) ----------
+#app {
+  .app-left .scroll-sidebar {
+    background-color: var(--nx-base);
+  }
+
+  .app-header.el-header {
+    background-color: var(--nx-base);
+    color: var(--nx-white);
+    height: 56px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+
+    .header-logo .title {
+      font-family: var(--nx-font-title);
+      font-weight: 800;
+      font-size: 18px;
+      letter-spacing: 0.01em;
+    }
+    .header-logo .logo {
+      width: auto;
+      height: 30px;
+      border-radius: 6px;
+    }
+    .ex-icon {
+      border-radius: 6px;
+      padding: 0 6px;
+    }
+  }
+
+  .el-menu.menus {
+    --el-menu-bg-color: #0D0035 !important;
+    --el-menu-text-color: #E3E0F3 !important;
+    --el-menu-active-color: #FFFFFF !important;
+    --el-menu-hover-bg-color: rgba(255, 255, 255, 0.08) !important;
+    --el-menu-hover-text-color: #FFFFFF !important;
+    background-color: var(--nx-base) !important;
+    padding: 8px;
+
+    .el-menu-item,
+    .el-sub-menu__title {
+      border-radius: 8px;
+      margin-bottom: 2px;
+      height: 44px;
+      line-height: 44px;
+      font-weight: 600;
+      color: #E3E0F3 !important;
+
+      &:hover {
+        background-color: rgba(255, 255, 255, 0.08) !important;
+        color: #fff !important;
+      }
+    }
+    .el-menu-item.is-active {
+      background-color: rgba(92, 80, 255, 0.32) !important;
+      color: #fff !important;
+      box-shadow: inset 3px 0 0 #8F86FF; // marcador do item atual (não depende só da cor)
+    }
+    .el-sub-menu .el-menu {
+      background: transparent;
+    }
+    .el-sub-menu .el-menu-item {
+      font-weight: 500;
+    }
+    .el-sub-menu__title .el-sub-menu__icon-arrow {
+      color: #C4C0DC;
+    }
+  }
+
+  .setting .title {
+    color: #fff;
+    border-radius: 6px;
+    padding: 4px 8px;
+  }
+
+  .header-tags {
+    background: var(--nx-surface);
+    border-bottom: 1px solid var(--nx-border);
+    padding: 8px 12px;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .app-main {
+    background: var(--nx-bg);
+    padding: 20px 24px;
+  }
+}
+
+// ---------- Cartões, tabelas e formulários ----------
+.el-card {
+  border-radius: 12px;
+  border-color: var(--nx-border);
+  box-shadow: 0 1px 2px rgba(13, 0, 53, 0.06);
+}
+
+.el-table {
+  --el-table-header-bg-color: #ECEAF6;
+  --el-table-header-text-color: var(--nx-text);
+  --el-table-row-hover-bg-color: var(--el-color-primary-light-9);
+  border-radius: 10px;
+  th.el-table__cell {
+    font-weight: 700;
+  }
+}
+html.dark .el-table {
+  --el-table-header-bg-color: #211A66;
+  --el-table-bg-color: #17104A;
+  --el-table-tr-bg-color: #17104A;
+}
+
+.el-button {
+  font-weight: 600;
+  min-height: 32px;
+}
+.el-button--primary {
+  --el-button-hover-bg-color: #4901FA;
+  --el-button-hover-border-color: #4901FA;
+  --el-button-active-bg-color: #3A00D0;
+  --el-button-active-border-color: #3A00D0;
+}
+html.dark .el-button--primary {
+  --el-button-text-color: #0D0035;
+  --el-button-hover-text-color: #0D0035;
+}
+
+.el-tag {
+  font-weight: 600;
+}
+
+// ---------- Tela de login ----------
+#app .login-container {
+  background-color: var(--nx-base);
+  background-image: radial-gradient(60% 50% at 85% 0%, rgba(92, 80, 255, 0.28) 0%, rgba(13, 0, 53, 0) 70%);
+
+  .login-card {
+    background-color: #fff;
+    border-radius: 16px;
+    padding: 40px 36px;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35);
+
+    // troca o logo sem alterar o componente
+    .login-logo {
+      content: url('./assets/logo-dark.svg');
+      width: 190px;
+      height: auto;
+      margin-bottom: 28px;
+    }
+
+    .el-form-item__label {
+      color: var(--nx-text);
+      font-weight: 600;
+    }
+    .el-input .el-input__wrapper {
+      background: #fff;
+      border: 1px solid #B9B4D3;
+      box-shadow: none;
+      min-height: 40px;
+    }
+    .el-input .el-input__wrapper.is-focus,
+    .el-input .el-input__wrapper:focus-within {
+      border-color: var(--nx-accent);
+      box-shadow: 0 0 0 3px rgba(92, 80, 255, 0.25);
+    }
+    .el-input input {
+      color: var(--nx-text);
+    }
+    .divider {
+      color: var(--nx-text-muted);
+      &::before, &::after { background-color: var(--nx-border); }
+    }
+    .login-button {
+      height: 42px;
+      font-size: 15px;
+    }
+    .oidc-btn {
+      color: var(--nx-text);
+      border-color: var(--nx-border);
+      box-shadow: none;
+    }
+  }
+}
+html.dark #app .login-container .login-card {
+  background-color: #17104A;
+  .el-input .el-input__wrapper { background: #0D0035; border-color: #4B4290; }
+  .oidc-btn { background: #0D0035; color: #F4F4F4; }
+}
+
+// ---------- Responsivo ----------
+@media (max-width: 768px) {
+  #app .app-main { padding: 12px; }
+  #app .app-header.el-header .header-logo .title { display: none; }
+  .list-query .el-input,
+  .list-query .el-select { --el-input-width: 100%; --el-select-width: 100%; }
+  .el-dialog { --el-dialog-width: 92% !important; width: 92% !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
+}

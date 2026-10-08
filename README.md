@@ -1,3 +1,5 @@
+> **Fork Nextec:** personalização visual, pt-BR e imagem Docker documentadas em [README.nextec.md](README.nextec.md).
+
 # RustDesk API Web
 # 基于 Vue3 + Element Plus 的后台, 适用于 [RustDesk API](https://github.com/lejianwen/rustdesk-api)
 
