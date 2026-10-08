@@ -127,6 +127,8 @@
         </el-form-item>
         <el-form-item :label="T('Group')" prop="group_id">
           <el-select v-model="formData.group_id">
+            <!-- dispositivo sem grupo vem com group_id 0; sem esta opção o campo mostrava "0" -->
+            <el-option :label="T('NxNoGroup')" :value="0"></el-option>
             <el-option
                 v-for="item in groupListRes.list"
                 :key="item.id"

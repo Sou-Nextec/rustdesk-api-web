@@ -18,6 +18,8 @@ FROM lejianwen/rustdesk-server-s6:${BASE_TAG}
 RUN rm -rf /app/resources/admin
 COPY --from=panel /src/dist/ /app/resources/admin/
 COPY nextec/i18n/pt_BR.toml /app/resources/i18n/pt_BR.toml
+# mensagem de boas-vindas da tela "Meus dados" (o padrão do upstream é em chinês)
+COPY nextec/conf/hello.html /app/conf/admin/hello.html
 LABEL org.opencontainers.image.title="Nextec RustDesk Server" \
       org.opencontainers.image.description="lejianwen/rustdesk-server-s6 com painel Nextec e pt-BR" \
       org.opencontainers.image.source="https://github.com/Sou-Nextec/rustdesk-api-web"

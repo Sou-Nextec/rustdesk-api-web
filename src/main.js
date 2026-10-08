@@ -9,11 +9,12 @@ import { pinia } from '@/store'
 import '@/permission'
 import 'element-plus/theme-chalk/dark/css-vars.css'
 import '@/styles/style.scss'
-import '@/nextec'
+import nextec from '@/nextec'
 import * as ElementIcons from '@element-plus/icons'
 
 const app = createApp(App)
 app.use(ElementPlus, { locale: ptBr })
+app.use(nextec)
 app.use(pinia)
 app.use(router)
 for (let icon in ElementIcons){

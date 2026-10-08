@@ -93,6 +93,11 @@
     if (res.code === 110) {
       // need captcha
       loadCaptcha()
+    } else {
+      // o servidor passa a exigir captcha depois de N falhas, mas responde com código genérico;
+      // consulta de novo para exibir o campo (senão o usuário fica sem como entrar)
+      const opts = await loginOptions().catch(_ => false)
+      if (opts?.data?.need_captcha) loadCaptcha()
     }
   }
 
