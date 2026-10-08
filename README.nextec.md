@@ -25,6 +25,7 @@ Tudo que é da Nextec fica em arquivos próprios:
 | `src/nextec/views/Topbar.vue` | Topo: pesquisa global de dispositivos (Ctrl+K), + Conectar por ID e botão de ajuda da tela (chaves `NxHelp<Rota>`) |
 | `src/nextec/views/MyDevices.vue` e `MySaved.vue` | Meus dispositivos e Meus acessos salvos no padrão da tela Dispositivos |
 | `src/nextec/list-page.scss` | Estilos compartilhados dessas listas |
+| `src/nextec/views/MyShared.vue` | Clientes liberados: dispositivos das listas compartilhadas com o técnico, com situação online (patch 0003) |
 | `src/nextec/api.js` | Endpoints que só existem com os patches da Nextec (chave do cliente web) |
 | `src/nextec/assets/` | Logo e símbolo (PNG) |
 | `src/nextec/fonts/` | Fontes Visby CF (`.woff2`, não versionadas) |
@@ -62,6 +63,10 @@ Tudo é feito com as APIs de listas e regras de compartilhamento do upstream, se
 ## Cliente web (acesso pelo navegador)
 
 Ajustes do servidor > Acesso pelo navegador: um interruptor liga e desliga na hora, para todos. A escolha fica gravada em `/app/data/nextec-settings.json` (volume de dados) e vale também depois de reiniciar ou recriar o contêiner, por cima de `RUSTDESK_API_APP_WEB_CLIENT`. Isso vem do patch `nextec/backend/0002-chaveador-cliente-web.patch` (endpoint `POST /api/admin/nextec/web-client`). Em servidor sem o patch, a tela mostra como fazer pela variável. O cliente web é o oficial do RustDesk e não recebe a marca Nextec.
+
+## O que o técnico vê
+
+Em Minha área > Clientes liberados, o técnico vê os dispositivos dos clientes liberados para ele ou para a equipe dele, com a situação online. O Início dele mostra esses clientes e os acessos salvos com online/offline. Isso vem do patch `nextec/backend/0003-listas-compartilhadas-no-painel.patch`, que só devolve o que a pessoa já enxerga no app e nunca a senha salva.
 
 ## Subgrupos de cliente
 

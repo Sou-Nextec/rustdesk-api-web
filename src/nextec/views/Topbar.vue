@@ -19,7 +19,7 @@
           <el-icon v-else class="nx-gs-icon" aria-hidden="true"><el-icon-Monitor/></el-icon>
           <div class="nx-gs-text">
             <div class="nx-gs-name">{{ r.name || r.id }}</div>
-            <div class="nx-gs-sub">{{ [r.id, r.sub].filter(Boolean).join(' · ') }}</div>
+            <div class="nx-gs-sub">{{ [r.name ? r.id : '', r.sub].filter(Boolean).join(' · ') || 'Dispositivo' }}</div>
           </div>
           <el-button size="small" type="primary" @click="connect(r.id)">Conectar</el-button>
         </div>
@@ -66,6 +66,7 @@
   import { list as deviceGroups } from '@/api/device_group'
   import { list as myPeers } from '@/api/my/peer'
   import { list as myAddressBook } from '@/api/my/address_book'
+  import { sharedAddressBooks, sharedCollections, sharedStatus } from '@/nextec/api'
 
   const route = useRoute()
   const router = useRouter()
@@ -90,7 +91,7 @@
   const box = ref()
   let loadedAt = 0
 
-  const isOnline = t => t && (Date.now() / 1000 - t) < 60
+  const isOnline = t => !!(t && (Date.now() / 1000 - t) < 60)
   const load = async () => {
     if (loading.value || Date.now() - loadedAt < 60000) return
     loading.value = true
@@ -107,20 +108,24 @@
         text: [p.id, p.alias, p.hostname, p.username, gName(p.group_id)].join(' '),
       }))
     } else {
-      const [peers, saved] = await Promise.all([all(myPeers), all(myAddressBook)])
+      const [peers, saved, shared] = await Promise.all([
+        all(myPeers), all(myAddressBook),
+        sharedAddressBooks({ collection_id: 0 }).then(r => r.data.list || []).catch(() => []),
+      ])
+      // situação dos acessos salvos (patch 0003); sem ela, mostra o ícone em vez da bolinha
+      const st = saved.length ? await sharedStatus({ ids: saved.map(a => a.id) }).then(r => r.data.list || []).catch(() => null) : []
+      const seen = st ? Object.fromEntries(st.map(x => [x.id, x.last_online_time])) : null
       const map = new Map()
-      saved.forEach(a => map.set(a.id, {
-        key: 'a' + a.row_id, id: a.id, name: a.alias || a.hostname, online: null, // o servidor não informa a situação dos acessos salvos
-        sub: a.username || '', text: [a.id, a.alias, a.hostname, a.username, ...(a.tags || [])].join(' '),
-      }))
-      peers.forEach(p => {
-        if (!map.has(p.id)) {
-          map.set(p.id, {
-            key: 'p' + p.row_id, id: p.id, name: p.alias || p.hostname, online: isOnline(p.last_online_time),
-            sub: p.username || '', text: [p.id, p.alias, p.hostname, p.username].join(' '),
-          })
-        }
-      })
+      const add = (key, a, sub, online) => {
+        if (map.has(a.id)) return
+        map.set(a.id, { key, id: a.id, name: a.alias || a.hostname, online, sub,
+          text: [a.id, a.alias, a.hostname, a.username, sub, ...(a.tags || [])].join(' ') })
+      }
+      saved.forEach(a => add('a' + a.row_id, a, a.username || '', seen ? isOnline(seen[a.id]) : null))
+      const sharedCols = await sharedCollections().then(r => r.data.list || []).catch(() => [])
+      const clientOf = id => String(sharedCols.find(c => c.id === id)?.name || '').replace(/^Cliente:\s*/, '')
+      shared.forEach(a => add('s' + a.collection_id + '-' + a.row_id, a, [clientOf(a.collection_id), a.username].filter(Boolean).join(' · '), isOnline(a.last_online_time)))
+      peers.forEach(p => add('p' + p.row_id, p, p.username || '', isOnline(p.last_online_time)))
       items.value = [...map.values()]
     }
     loadedAt = Date.now()
@@ -154,7 +159,7 @@
     close()
     q.value = ''
     input.value?.blur()
-    router.push({ path: isAdmin.value ? '/user/peer' : '/my/address_book', query: { q: term } })
+    router.push({ path: isAdmin.value ? '/user/peer' : '/my/shared', query: { q: term } })
   }
 
   const onDocClick = (e) => { if (box.value && !box.value.contains(e.target)) close() }

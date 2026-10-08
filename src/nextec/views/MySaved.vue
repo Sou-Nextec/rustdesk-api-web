@@ -170,7 +170,8 @@
   import { list, create, update, remove, batchUpdateTags } from '@/api/my/address_book'
   import { list as collectionList } from '@/api/my/address_book_collection'
   import { list as tagList } from '@/api/my/tag'
-  import { simpleData, list as peerList } from '@/api/peer'
+  import { list as peerList } from '@/api/peer'
+  import { sharedStatus } from '@/nextec/api'
   import { useUserStore } from '@/store/user'
   import { useAppStore } from '@/store/app'
   import { timeAgo } from '@/utils/time'
@@ -181,7 +182,8 @@
 
   const appStore = useAppStore()
   const isAdmin = computed(() => (useUserStore().route_names || []).includes('*'))
-  const hasStatus = computed(() => all.value.some(r => r.peer?.last_online_time))
+  // a coluna aparece quando o servidor informa a situação (admin ou API com o patch 0003)
+  const hasStatus = ref(false)
   const all = ref([])
   const collections = ref([])
   const loading = ref(false)
@@ -193,13 +195,14 @@
     ])
     if (cols) collections.value = cols.data.list || []
     const rows = ab ? (ab.data.list || []) : []
-    // situação online vem do cadastro de dispositivos (só o admin lê o cadastro completo;
-    // para os demais o servidor não informa a última conexão e a coluna fica oculta)
+    // situação online: o admin lê o cadastro de dispositivos; os demais usam /my/shared/status (patch 0003),
+    // que só responde pelos IDs que a pessoa enxerga. Sem o patch, a coluna fica oculta.
     const ids = rows.map(r => r.id)
     if (ids.length) {
       const sd = isAdmin.value
         ? await peerList({ page: 1, page_size: 10000 }).catch(() => false)
-        : await simpleData({ ids }).catch(() => false)
+        : await sharedStatus({ ids }).catch(() => false)
+      hasStatus.value = !!sd
       const peers = sd ? (sd.data.list || []) : []
       rows.forEach(r => { r.peer = peers.find(p => p.id === r.id) })
     }

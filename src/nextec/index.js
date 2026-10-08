@@ -10,7 +10,7 @@ import { translateHardcodedHeaders } from './labels'
 import tableColumn from './table-column'
 import button from './button'
 import { guardRequiredFields } from './required-guard'
-import { router } from '@/router'
+import { router, asyncRoutes } from '@/router'
 import { pinia } from '@/store'
 import { useAppStore } from '@/store/app'
 import { useUserStore } from '@/store/user'
@@ -71,11 +71,17 @@ const notFound = router.getRoutes().find(r => r.path === '/404')
 if (notFound) notFound.components.default = () => import('./views/NotFound.vue')
 
 // 3. Todos aterrissam no Início ao entrar (após o login ou ao abrir o painel); a tela muda conforme o perfil.
-// O servidor só libera para usuário comum as rotas de Minha conta; o Início é acrescentado aqui.
+// O servidor só libera para usuário comum as rotas de Minha conta; o Início e Clientes liberados são acrescentados aqui.
 // Clicar em "Meus dados" (que também usa o caminho /) continua abrindo a tela original.
 const routeStore = useRouteStore(pinia)
 const addRoutes = routeStore.addRoutes
-routeStore.addRoutes = (names = []) => addRoutes.call(routeStore, names.includes('*') ? names : [...names, 'NxHome'])
+routeStore.addRoutes = (names = []) => {
+  const admin = names.includes('*')
+  // Clientes liberados não faz sentido para o admin, que já vê tudo em Dispositivos
+  const shared = asyncRoutes.find(r => r.name === 'My')?.children?.find(c => c.name === 'NxMyShared')
+  if (shared) shared.meta = { ...shared.meta, hide: admin }
+  return addRoutes.call(routeStore, admin ? names : [...names, 'NxHome', 'NxMyShared'])
+}
 router.beforeEach((to, from) => {
   const entering = !from.name || from.path === '/login' || from.path.startsWith('/oauth')
   if (to.path === '/' && entering && useUserStore(pinia).route_names.length) {

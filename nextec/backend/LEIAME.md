@@ -48,3 +48,13 @@ ordem dos nomes. Origem: branch `nextec/web-client-toggle` do fork `Sou-Nextec/r
    de forma atômica. Na inicialização esse arquivo tem prioridade sobre o `config.yaml` e sobre a variável
    `RUSTDESK_API_APP_WEB_CLIENT`. Sem o arquivo, vale a configuração original. Para voltar ao controle
    pela variável, apague o arquivo e reinicie o contêiner.
+
+## Patch 0003: listas compartilhadas no painel
+
+O app RustDesk já mostra ao técnico as listas compartilhadas com ele, mas o painel não tinha como ler isso. O patch acrescenta, para o usuário logado (sem exigir admin):
+
+- `GET /api/admin/my/shared/collections`: listas compartilhadas com ele (por pessoa ou equipe), com dono, nível e quantidade.
+- `GET /api/admin/my/shared/address_book/list?collection_id=`: dispositivos dessas listas, sem senha nem hash, com a última comunicação.
+- `POST /api/admin/my/shared/status` com `{"ids": [...]}`: última comunicação só dos IDs que ele enxerga (listas próprias, compartilhadas ou computadores dele).
+
+Branch `nextec/web-client-toggle` do fork da API (commit seguinte ao 0002). Não vai para o projeto original.

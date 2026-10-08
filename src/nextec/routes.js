@@ -90,7 +90,14 @@ export function applyNextecRoutes () {
   if (my) {
     // Meus dados e Meus logins ficam no menu do usuário (canto superior direito); o menu lateral
     // fica só com o que se usa no dia a dia, na ordem de uso
-    const ORDER = ['MyPeer', 'MyAddressBookList', 'MyAddressBookCollection', 'MyTagList', 'MyShareRecordList']
+    // clientes que o admin liberou para a pessoa (patch 0003 da API); só usuário comum, o admin vê tudo em Dispositivos
+    my.children.push({
+      path: 'shared',
+      name: 'NxMyShared',
+      meta: { title: 'NxMyShared', icon: 'OfficeBuilding' },
+      component: () => import('./views/MyShared.vue'),
+    })
+    const ORDER = ['NxMyShared', 'MyPeer', 'MyAddressBookList', 'MyAddressBookCollection', 'MyTagList', 'MyShareRecordList']
     my.meta = { ...my.meta, title: 'NxGroupMine' }
     my.children.forEach(c => {
       if (c.name === 'MyInfo' || c.name === 'MyLoginLog') c.meta = { ...c.meta, hide: true }

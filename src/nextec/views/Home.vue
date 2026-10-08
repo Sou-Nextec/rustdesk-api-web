@@ -108,6 +108,26 @@
         </div>
       </form>
 
+      <div class="nx-card nx-clients-card">
+        <div class="nx-card-head">
+          <h2 class="nx-h2">Clientes liberados para você</h2>
+          <router-link to="/my/shared" class="nx-link">{{ T('NxViewAll') }}
+            <el-icon><el-icon-ArrowRight/></el-icon>
+          </router-link>
+        </div>
+        <div v-if="loading && !loaded" class="nx-pad"><el-skeleton animated :rows="2"/></div>
+        <el-empty v-else-if="!clientCards.length" :image-size="64" description="Nenhum cliente liberado para você ainda.">
+          <p class="nx-empty-hint">O administrador libera os clientes em Permissões por cliente.</p>
+        </el-empty>
+        <div v-else class="nx-client-grid">
+          <router-link v-for="c in clientCards" :key="c.id" :to="{ path: '/my/shared', query: { list: String(c.id) } }" class="nx-client-tile">
+            <strong>{{ c.name }}</strong>
+            <span>{{ c.total }} {{ c.total === 1 ? 'dispositivo' : 'dispositivos' }}</span>
+            <span class="nx-client-online"><span class="nx-dot" :class="c.online ? 'is-on' : 'is-off'" aria-hidden="true"></span>{{ c.online }} online</span>
+          </router-link>
+        </div>
+      </div>
+
       <div class="nx-cols">
         <div class="nx-card">
           <div class="nx-card-head">
@@ -118,14 +138,14 @@
           </div>
           <div v-if="loading && !loaded" class="nx-pad"><el-skeleton animated :rows="4"/></div>
           <el-empty v-else-if="!saved.length" :image-size="72" description="Você ainda não salvou nenhum acesso.">
-            <p class="nx-empty-hint">Os clientes liberados pela Nextec aparecem no app RustDesk, na aba Lista de endereços.</p>
+            <p class="nx-empty-hint">Salve em Meus acessos salvos as máquinas que você usa com frequência.</p>
           </el-empty>
           <ul v-else class="nx-plist">
             <li v-for="s in saved.slice(0, 8)" :key="s.row_id">
-              <el-icon class="nx-plist-icon" aria-hidden="true"><el-icon-Monitor/></el-icon>
+              <span class="nx-dot" :class="isOnlineT(status[s.id]) ? 'is-on' : 'is-off'" aria-hidden="true"></span>
               <span class="nx-plist-text">
                 <strong>{{ s.alias || s.hostname || s.id }}</strong>
-                <span>{{ [s.id, s.username].filter(Boolean).join(' · ') }}</span>
+                <span>{{ [s.id, isOnlineT(status[s.id]) ? 'online agora' : (status[s.id] ? timeAgo(status[s.id] * 1000) : '')].filter(Boolean).join(' · ') }}</span>
               </span>
               <el-button size="small" type="primary" @click="connectByClient(s.id)">Conectar</el-button>
             </li>
@@ -172,6 +192,7 @@
   import { list as ruleList } from '@/api/address_book_collection_rule'
   import { list as myPeerList } from '@/api/my/peer'
   import { list as myAbList } from '@/api/my/address_book'
+  import { sharedCollections, sharedAddressBooks, sharedStatus } from '@/nextec/api'
 
   const ONLINE_WINDOW_S = 60
   const CLIENT_PREFIX = 'Cliente: '
@@ -260,10 +281,27 @@
   }
   const saved = ref([])
   const mine = ref([])
+  // clientes liberados e situação online vêm do patch 0003 da API; sem ele, os cartões ficam vazios
+  const clientCards = ref([])
+  const status = ref({})
+  const isOnlineT = t => !!(t && (Date.now() / 1000 - t) < ONLINE_WINDOW_S)
   const loadUser = async () => {
-    const [ab, my] = await Promise.all([all(myAbList), all(myPeerList)])
-    saved.value = ab.sort((a, b) => String(a.alias || a.hostname || a.id).localeCompare(String(b.alias || b.hostname || b.id), 'pt-BR'))
+    const [ab, my, cols, shared] = await Promise.all([
+      all(myAbList), all(myPeerList),
+      sharedCollections().then(r => r.data.list || []).catch(() => []),
+      sharedAddressBooks({ collection_id: 0 }).then(r => r.data.list || []).catch(() => []),
+    ])
+    const st = ab.length ? await sharedStatus({ ids: ab.map(a => a.id) }).then(r => r.data.list || []).catch(() => []) : []
+    status.value = Object.fromEntries(st.map(x => [x.id, x.last_online_time]))
+    saved.value = ab.sort((a, b) => Number(isOnlineT(status.value[b.id])) - Number(isOnlineT(status.value[a.id])) ||
+      String(a.alias || a.hostname || a.id).localeCompare(String(b.alias || b.hostname || b.id), 'pt-BR'))
     mine.value = my.sort((a, b) => (b.last_online_time || 0) - (a.last_online_time || 0))
+    clientCards.value = cols.map(c => ({
+      id: c.id,
+      name: String(c.name).replace(/^Cliente:\s*/, ''),
+      total: c.total,
+      online: shared.filter(e => e.collection_id === c.id && isOnlineT(e.last_online_time)).length,
+    })).sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'))
   }
 
   const load = async () => {
@@ -351,6 +389,15 @@
     strong { font-size: 14px; color: var(--nx-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     span { font-size: 12px; color: var(--nx-text-muted); } }
   .nx-plist-icon { flex: none; color: var(--nx-text-subtle); }
+  .nx-clients-card { margin-bottom: 16px; }
+  .nx-client-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; padding: 16px 20px 20px; }
+  .nx-client-tile {
+    display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border-radius: 14px; text-decoration: none;
+    background: var(--nx-bg); color: var(--nx-text-muted); font-size: 12px; transition: background .15s;
+    strong { font-size: 14px; color: var(--nx-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    &:hover { background: var(--nx-tint); }
+  }
+  .nx-client-online { display: inline-flex; align-items: center; gap: 6px; }
   .nx-dot {
     flex: none; width: 8px; height: 8px; border-radius: 50%;
     &.is-on { background: #0F7B55; box-shadow: 0 0 0 3px #D1FAE5; }
