@@ -1,0 +1,31 @@
+# Servidor RustDesk Nextec: hbbs + hbbr + API + painel em um contêiner.
+# Troque SEU_HOST pelo IP ou domínio público do servidor (o mesmo que os apps usam hoje).
+services:
+  rustdesk:
+    image: ghcr.io/sou-nextec/rustdesk-server:latest
+    container_name: rustdesk
+    restart: unless-stopped
+    ports:
+      - "21114:21114"      # painel e API (http://SEU_HOST:21114/_admin)
+      - "21115:21115"
+      - "21116:21116"
+      - "21116:21116/udp"
+      - "21117:21117"
+      - "21118:21118"
+      - "21119:21119"
+    environment:
+      - TZ=America/Sao_Paulo
+      - RELAY=SEU_HOST:21117
+      - ENCRYPTED_ONLY=1
+      - MUST_LOGIN=N
+      - RUSTDESK_API_LANG=pt-BR
+      - RUSTDESK_API_RUSTDESK_ID_SERVER=SEU_HOST:21116
+      - RUSTDESK_API_RUSTDESK_RELAY_SERVER=SEU_HOST:21117
+      - RUSTDESK_API_RUSTDESK_API_SERVER=http://SEU_HOST:21114
+      - RUSTDESK_API_KEY_FILE=/data/id_ed25519.pub
+      - RUSTDESK_API_RUSTDESK_KEY_FILE=/data/id_ed25519.pub
+    volumes:
+      # a MESMA pasta de dados do servidor atual: traz a chave (id_ed25519 e .pub) e o cadastro de IDs
+      - ../rustdesk-antigo/data:/data
+      # banco do painel (usuários, listas, permissões, ajustes)
+      - ./api:/app/data

@@ -1,0 +1,54 @@
+# Publica a imagem Nextec no GitHub Container Registry:
+#   ghcr.io/sou-nextec/rustdesk-server:<versão> e :latest
+# Dispara ao criar uma tag v* (ex.: v1.0.0) ou manualmente em Actions > Imagem Nextec > Run workflow.
+name: Imagem Nextec
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Versão da imagem (ex.: 1.0.0). Vazio = só latest'
+        required: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/sou-nextec/rustdesk-server
+  # imagem base lejianwen/rustdesk-server-s6 fixa; a API dela precisa bater com API_TAG do Dockerfile
+  BASE_TAG: v0.1.2
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Versão
+        id: v
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then V="${GITHUB_REF_NAME#v}"; else V="${{ github.event.inputs.version }}"; fi
+          TAGS="${IMAGE}:latest"
+          [ -n "$V" ] && TAGS="${TAGS},${IMAGE}:${V}"
+          echo "tags=${TAGS}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: nextec/docker/Dockerfile
+          platforms: linux/amd64
+          build-args: BASE_TAG=${{ env.BASE_TAG }}
+          push: true
+          tags: ${{ steps.v.outputs.tags }}
+          labels: org.opencontainers.image.source=https://github.com/${{ github.repository }}
