@@ -44,6 +44,10 @@ export function applyNextecRoutes () {
   groups[0].redirect = '/user/peer'
 
   // Ajustes do servidor: tela própria da Nextec (a original segue disponível na aba Comandos avançados)
+  // Dispositivos: tela própria da Nextec (busca geral, filtro por cliente, colunas enxutas)
+  const peer = byName.get('Peer')
+  if (peer) peer.component = () => import('./views/Devices.vue')
+
   const serverCmd = byName.get('ServerCmd')
   if (serverCmd) serverCmd.component = () => import('./views/ServerSettings.vue')
 

@@ -253,7 +253,7 @@
   "NxMyTags": { "One": "Minhas etiquetas" },
   "NxMyShares": { "One": "Meus links" },
   "NxMyLogins": { "One": "Meus logins" },
-  "NxHintPeer": { "One": "Computadores que já se conectaram a este servidor. Use Editar para dar um apelido ou vincular a um cliente." },
+  "NxHintPeer": { "One": "Computadores que usam o app RustDesk com este servidor. Busque por qualquer dado, filtre por cliente e use Conectar para acessar." },
   "NxHintDeviceGroup": { "One": "Organize os dispositivos por cliente. No app RustDesk, eles aparecem agrupados em Dispositivos acessíveis." },
   "NxHintUserList": { "One": "Pessoas que entram no painel e no app RustDesk com login." },
   "NxHintUserAdd": { "One": "Preencha os dados de acesso. Campos com * são obrigatórios." },
