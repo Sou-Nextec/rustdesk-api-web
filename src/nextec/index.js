@@ -8,6 +8,7 @@ import markUrl from './assets/mark.png'
 import { applyNextecRoutes } from './routes'
 import { translateHardcodedHeaders } from './labels'
 import tableColumn from './table-column'
+import button from './button'
 import { guardRequiredFields } from './required-guard'
 import { router } from '@/router'
 import { pinia } from '@/store'
@@ -64,6 +65,10 @@ guardRequiredFields()
 // 2. Menu agrupado e tela inicial
 applyNextecRoutes()
 
+// 2b. Página 404 da Nextec no lugar do "404" sem estilo do upstream (mesma rota, só troca o componente)
+const notFound = router.getRoutes().find(r => r.path === '/404')
+if (notFound) notFound.components.default = () => import('./views/NotFound.vue')
+
 // 3. Administradores aterrissam na visão geral ao entrar (após o login ou ao abrir o painel).
 // Clicar em "Meus dados" (que também usa o caminho /) continua abrindo a tela original.
 router.beforeEach((to, from) => {
@@ -87,6 +92,8 @@ mobile.addEventListener('change', e => { appStore.setting.sideIsCollapse = e.mat
 // 5. Título da página na topbar (lido pelo CSS em --nx-page-title)
 router.afterEach((to) => {
   const title = to.meta?.title ? T(to.meta.title) : ''
+  // rotas sem título (ex.: 404) deixavam "undefined - Nextec" na aba do navegador
+  if (!title) document.title = (to.path === '/404' ? 'Página não encontrada - ' : '') + appStore.setting.title
   document.documentElement.style.setProperty('--nx-page-title', JSON.stringify(title))
   // frase de ajuda da tela (chave NxHint<NomeDaRota> no pt_BR.json); vazia se não houver
   const key = 'NxHint' + String(to.name || '')
@@ -98,5 +105,6 @@ router.afterEach((to) => {
 export default {
   install (app) {
     app.use(tableColumn)
+    app.use(button)
   },
 }

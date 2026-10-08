@@ -16,6 +16,8 @@ Tudo que é da Nextec fica em arquivos próprios:
 | `src/nextec/routes.js` | Agrupamento do menu e títulos de Minha conta (sem editar `src/router/index.js`) |
 | `src/nextec/labels.js` | Tradução de textos fixos no upstream (colunas, rótulos, mensagens de validação do servidor) |
 | `src/nextec/table-column.js` | Limita a largura da coluna Ações, que no upstream espreme as outras colunas |
+| `src/nextec/button.js` | Ajusta botões do upstream: Adicionar como ação principal, Filtrar e Importar neutros, Encerrar sessão em Sessões ativas |
+| `src/nextec/views/NotFound.vue` | Página de endereço não encontrado da Nextec |
 | `src/nextec/required-guard.js` | Bloqueia o envio de formulários com campo obrigatório vazio (o upstream não valida) |
 | `nextec/conf/hello.html` | Boas-vindas de Meus dados em pt-BR (o padrão do upstream é em chinês) |
 | `src/nextec/views/Home.vue` | Tela inicial com resumo |
@@ -34,6 +36,7 @@ Arquivos do upstream que recebem edição mínima (qualquer merge futuro só pre
 | `src/utils/i18n.js` | registra `pt-BR` e usa o pt-BR como reserva de chave |
 | `src/store/app.js` | idioma padrão `pt-BR`, locale do Element Plus, título `Nextec` |
 | `index.html` | idioma, título, favicon |
+| `src/views/peer/index.vue` | correção: opção "Sem grupo" no campo Grupo (antes mostrava "0") |
 | `src/views/login/login.vue` | correção: exibe o código de verificação quando o servidor passa a exigi-lo após tentativas erradas (candidata a PR no upstream) |
 | `package.json` e `package-lock.json` | dependência `@fontsource/open-sans` |
 
@@ -84,3 +87,8 @@ docker build -f nextec/docker/Dockerfile -t nextec/rustdesk-server-s6:dev .
 Para fixar a versão do motor: `--build-arg BASE_TAG=<tag>`.
 
 No `docker-compose.yml`, troque `image:` por `nextec/rustdesk-server-s6:dev` e defina `RUSTDESK_API_LANG=pt-BR` para que as mensagens do backend e os dados criados na primeira execução (como "Grupo padrão") saiam em português. Em bancos já criados, os nomes dos grupos padrão continuam como foram gravados e podem ser renomeados no painel.
+
+## Limitações conhecidas do motor (backend)
+
+* Campos de texto esvaziados na edição (ex.: apagar o apelido de um dispositivo) não são gravados: o servidor ignora valores vazios. Para trocar, digite o novo valor.
+* O servidor aceita cadastros com campos obrigatórios vazios. O painel Nextec bloqueia isso na tela (`required-guard.js`), mas chamadas diretas à API continuam aceitas.

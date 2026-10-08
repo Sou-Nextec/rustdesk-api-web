@@ -126,6 +126,12 @@ function translate (root) {
   replaceExact(root, '.el-select-dropdown__item span', OPTIONS)
   translateInputs(root)
   titleUntitledDialogs(root)
+  // em Sessões ativas, "Sair" encerra a sessão de outra pessoa (o botão já foi renomeado em button.js)
+  if (location.hash.startsWith('#/userToken')) {
+    root.querySelectorAll('.el-message-box__message p').forEach(el => {
+      if (el.textContent.trim() === 'Confirmar ação: Sair?') el.textContent = 'Encerrar esta sessão? A pessoa precisará entrar de novo.'
+    })
+  }
 }
 
 export function translateHardcodedHeaders () {

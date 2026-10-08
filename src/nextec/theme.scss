@@ -260,6 +260,11 @@ html.dark #app .app-header.el-header {
   }
 }
 
+// Troca de tela sem animação: o fade "out-in" do upstream só termina quando o navegador pinta um quadro;
+// com a aba em segundo plano a tela antiga ficava presa. Sem transição o Vue troca na hora.
+#app .app-main .el-fade-in-linear-enter-active,
+#app .app-main .el-fade-in-linear-leave-active { transition: none !important; }
+
 // Barra de progresso no topo durante a troca de tela (NProgress do upstream), na cor da marca
 #nprogress .bar { background: var(--nx-accent) !important; height: 3px !important; }
 #nprogress .peg { box-shadow: 0 0 10px var(--nx-accent), 0 0 5px var(--nx-accent) !important; }

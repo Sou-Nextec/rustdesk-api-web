@@ -27,6 +27,7 @@ const NextecTableColumn = {
 
 export default {
   install (app) {
+    delete app._context.components.ElTableColumn // evita o aviso de componente já registrado
     app.component('ElTableColumn', NextecTableColumn)
   },
 }
