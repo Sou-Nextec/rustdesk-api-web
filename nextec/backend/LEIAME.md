@@ -64,3 +64,7 @@ Branch `nextec/web-client-toggle` do fork da API (commit seguinte ao 0002). Não
 - O login do app (`/api/login`) passa a incluir `display_name` e `avatar` do usuário.
 - `POST /api/admin/my/profile/avatar` grava ou remove a foto do usuário logado (data URL png/jpeg/webp, até 150 KB).
 - As respostas de listar e detalhar login externo não incluem mais o `client_secret`; ao editar, deixar o segredo vazio mantém o atual.
+
+## Patch 0005: SQLite em modo WAL
+
+O banco do painel abria no modo padrão do SQLite: uma escrita lenta bloqueava todas as leituras e a espera era de 5 s, gerando `database is locked` (usuário deslogado, botão do login externo sumindo, atualização de dispositivos de 57 s). Agora abre com WAL, `busy_timeout` de 30 s e transações imediatas. Para copiar o banco com o servidor ligado, copie também os arquivos `-wal` e `-shm` (ou use `sqlite3 .backup`).
