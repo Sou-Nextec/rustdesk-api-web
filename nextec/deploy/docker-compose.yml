@@ -2,7 +2,7 @@
 # Troque SEU_HOST pelo IP ou domínio público do servidor (o mesmo que os apps usam hoje).
 services:
   rustdesk:
-    image: ghcr.io/sou-nextec/rustdesk-server:latest
+    image: ghcr.io/sou-nextec/rustdesk-nextec:latest
     container_name: rustdesk
     restart: unless-stopped
     ports:

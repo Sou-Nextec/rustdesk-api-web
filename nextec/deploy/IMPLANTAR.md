@@ -4,7 +4,7 @@ A imagem Nextec roda hbbs, hbbr, a API e o painel em um contêiner só. A migra�
 
 ## 0. Antes
 
-- A imagem `ghcr.io/sou-nextec/rustdesk-server` precisa estar publicada (GitHub Actions "Imagem Nextec", disparado por uma tag `v*`).
+- A imagem `ghcr.io/sou-nextec/rustdesk-nextec` precisa estar publicada (GitHub Actions "Imagem Nextec", disparado por uma tag `v*`).
 - Se o pacote no GHCR estiver privado, rode no servidor `docker login ghcr.io` com um token do GitHub com permissão `read:packages`.
 - Escolha um horário de baixo uso: o acesso remoto fica fora do ar por cerca de um minuto.
 
