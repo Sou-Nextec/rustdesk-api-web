@@ -134,6 +134,8 @@ function translate (root) {
     el.textContent = (FORM_LABELS[base] || base) + ':'
   })
   replaceExact(root, '.el-form-item__label', FORM_LABELS)
+  // "Salvar em uma lista": no formulário reaproveitado do upstream, o "Responsável" é o dono da lista
+  replaceExact(root, '.nx-ab-dialog .el-form-item__label', { Responsável: 'Dono da lista', Catálogo: 'Lista' })
   // "Grupo" muda de sentido conforme a tela: em dispositivos é o cliente, em usuários é a equipe
   const hash = location.hash
   const groupAs = /^#\/(user|my)\/peer/.test(hash) ? 'Cliente'
