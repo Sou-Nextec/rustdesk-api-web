@@ -2,6 +2,14 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.2.0
+
+- Início: novo bloco **Acesso rápido**, com Favoritos e Recentes. Conecte em uma máquina com um clique.
+- Dispositivos: estrela para favoritar, filtro Favoritos e ordenação (online primeiro, visto há menos tempo, cliente, nome).
+- Dispositivos: **Ver detalhes** abre a ficha da máquina (sistema, processador, memória, versão do app, último IP).
+- Dispositivos: **Mover para um cliente** em vários dispositivos de uma vez.
+- Favoritos e recentes ficam guardados neste navegador, por usuário.
+
 ## 2.1.0
 
 - Tema escuro novo, em grafite (sem o azul), com o roxo da Nextec só como destaque.

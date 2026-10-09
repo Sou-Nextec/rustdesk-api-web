@@ -37,6 +37,8 @@
         </router-link>
       </div>
 
+      <QuickAccess :labels="labels" :status="statusMap"/>
+
       <div class="nx-cols">
         <div class="nx-card">
           <div class="nx-card-head">
@@ -107,6 +109,8 @@
           <el-button type="primary" size="large" native-type="submit" :disabled="!quickId.trim()">Conectar</el-button>
         </div>
       </form>
+
+      <QuickAccess :labels="labels" :status="statusMap"/>
 
       <div class="nx-card nx-clients-card">
         <div class="nx-card-head">
@@ -184,6 +188,8 @@
   import { timeAgo } from '@/utils/time'
   import { useUserStore } from '@/store/user'
   import { connectDevice as connectByClient } from '@/nextec/connect'
+  import QuickAccess from '@/nextec/views/QuickAccess.vue'
+  import { useQuickAccess } from '@/nextec/quick-access'
   import { list as peerList } from '@/api/peer'
   import { list as userList } from '@/api/user'
   import { list as connList } from '@/api/audit'
@@ -248,6 +254,18 @@
     return res.data.list || []
   }
 
+  // nomes e situação para o Acesso rápido (administrador: todos os dispositivos; técnico: o que ele enxerga)
+  const labels = computed(() => {
+    const m = {}
+    for (const p of [...mine.value, ...saved.value, ...peers.value]) m[p.id] = p.alias || p.hostname || p.id
+    return m
+  })
+  const statusMap = computed(() => {
+    const m = { ...status.value }
+    for (const p of peers.value) if (p.last_online_time) m[p.id] = p.last_online_time
+    return m
+  })
+
   const loadAdmin = async () => {
     const [p, u, c, dg, cols] = await Promise.all([
       all(peerList), userList({ page: 1, page_size: 1 }), connList({ page: 1, page_size: 100 }),
@@ -291,7 +309,10 @@
       sharedCollections().then(r => r.data.list || []).catch(() => []),
       sharedAddressBooks({ collection_id: 0 }).then(r => r.data.list || []).catch(() => []),
     ])
-    const st = ab.length ? await sharedStatus({ ids: ab.map(a => a.id) }).then(r => r.data.list || []).catch(() => []) : []
+    // situação dos acessos salvos e também dos favoritos e recentes
+    const qa = useQuickAccess().state
+    const ids = [...new Set([...ab.map(a => a.id), ...qa.favorites.map(f => f.id), ...qa.recents.map(r => r.id)])]
+    const st = ids.length ? await sharedStatus({ ids }).then(r => r.data.list || []).catch(() => []) : []
     status.value = Object.fromEntries(st.map(x => [x.id, x.last_online_time]))
     saved.value = ab.sort((a, b) => Number(isOnlineT(status.value[b.id])) - Number(isOnlineT(status.value[a.id])) ||
       String(a.alias || a.hostname || a.id).localeCompare(String(b.alias || b.hostname || b.id), 'pt-BR'))
