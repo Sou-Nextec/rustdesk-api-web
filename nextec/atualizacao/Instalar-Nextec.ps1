@@ -12,6 +12,10 @@
   Endereço da atualização (padrão: o painel, https://painel-remoto.nex.tec.br/api/nextec/update).
   Serve também qualquer site com versao.json e o MSI lado a lado.
 
+.PARAMETER GrupoId
+  ID do cliente no painel. Junto com -ChaveCliente (ambos vêm do comando gerado em Dispositivos > Clientes > Comando de instalação),
+  coloca esta máquina no cliente certo. Só vale para máquina que ainda não tem cliente.
+
 .PARAMETER Forcar
   Reinstala mesmo que a versão instalada já seja a atual.
 
@@ -24,6 +28,8 @@
 [CmdletBinding()]
 param(
   [string]$UrlBase = 'https://painel-remoto.nex.tec.br/api/nextec/update',
+  [int]$GrupoId = 0,
+  [string]$ChaveCliente = '',
   [switch]$Forcar,
   [switch]$SoVerificar,
   [switch]$Silencioso
@@ -42,6 +48,44 @@ function Escrever([string]$msg) {
   if (-not $Silencioso) { Write-Host $linha }
 }
 
+function IdDoRustDesk {
+  try {
+    $svc = Get-CimInstance Win32_Service -ErrorAction Stop | Where-Object { $_.PathName -match '--service' -and $_.PathName -match 'Program Files' } | Select-Object -First 1
+    if ($svc -and $svc.PathName -match '^"([^"]+)"') {
+      $saida = & $Matches[1] --get-id 2>&1 | Out-String
+      if ($saida -match '(\d{6,})') { return $Matches[1] }
+    }
+  } catch { }
+  return ''
+}
+
+# coloca a máquina no cliente do comando (depois de instalar, o ID demora alguns segundos para existir)
+function Atribuir {
+  if ($GrupoId -le 0 -or -not $ChaveCliente) { return }
+  $painel = $UrlBase -replace '/api/nextec/update$', ''
+  for ($i = 0; $i -lt 12; $i++) {
+    $meuId = IdDoRustDesk
+    if ($meuId) { break }
+    Start-Sleep -Seconds 5
+  }
+  if (-not $meuId) { Escrever 'Não consegui ler o ID do RustDesk para colocar a máquina no cliente. Rode o comando de novo depois que o app abrir.'; return }
+  try {
+    $corpo = @{ id = $meuId; group = $GrupoId; token = $ChaveCliente } | ConvertTo-Json -Compress
+    $r = Invoke-WebRequest -Uri "$painel/api/nextec/install/assign" -Method Post -ContentType 'application/json' -Body $corpo -UseBasicParsing -TimeoutSec 30
+    $estado = ([Text.Encoding]::UTF8.GetString($r.RawContentStream.ToArray()) | ConvertFrom-Json).state
+    switch ($estado) {
+      'assigned' { Escrever "Máquina colocada no cliente (ID $meuId)." }
+      'pending'  { Escrever "Máquina ainda não registrada no painel: será colocada no cliente assim que aparecer (ID $meuId)." }
+      'kept'     { Escrever 'Esta máquina já tem cliente no painel; nada foi alterado.' }
+      default    { Escrever "Resposta inesperada do painel: $estado" }
+    }
+  } catch {
+    $code = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { 0 }
+    if ($code -eq 401) { Escrever 'Chave do cliente recusada (comando antigo ou invalidado). Gere o comando de novo no painel.' }
+    else { Escrever "Não foi possível colocar a máquina no cliente: $($_.Exception.Message)" }
+  }
+}
+
 try {
   # precisa de administrador para instalar o serviço
   $id = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -55,14 +99,7 @@ try {
   $instalada = $null
   if (Test-Path $ChaveReg) { $instalada = (Get-ItemProperty $ChaveReg -ErrorAction SilentlyContinue).Versao }
   if ($instalada) { Escrever "Versão instalada: $instalada" } else { Escrever 'Nada instalado por este script ainda.' }
-  $meuId = ''
-  try {
-    $svc = Get-CimInstance Win32_Service -ErrorAction Stop | Where-Object { $_.PathName -match '--service' -and $_.PathName -match 'Program Files' } | Select-Object -First 1
-    if ($svc -and $svc.PathName -match '^"([^"]+)"') {
-      $saida = & $Matches[1] --get-id 2>&1 | Out-String
-      if ($saida -match '(\d{6,})') { $meuId = $Matches[1] }
-    }
-  } catch { }
+  $meuId = IdDoRustDesk
 
   # 2. versão publicada para esta máquina
   $consulta = "t=$([DateTime]::UtcNow.Ticks)"
@@ -123,4 +160,7 @@ catch {
   Escrever "ERRO: $($_.Exception.Message)"
   if (-not $Silencioso) { Write-Host "ERRO: $($_.Exception.Message)" -ForegroundColor Red }
   exit 1
+}
+finally {
+  if (-not $SoVerificar) { Atribuir }
 }

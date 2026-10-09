@@ -106,3 +106,19 @@ Entrega o app de suporte a quem ainda não tem nada instalado, sem o cliente pre
 - `GET /api/admin/my/support/waiting` (qualquer usuário logado) lista dispositivos novos (cadastrados nas últimas 24 h), sem cliente nem dono e vistos nos últimos 10 minutos. Quem recebe a conexão decide no app (aprovação por clique), então a lista não concede acesso.
 - Rotas de admin: `GET /api/admin/nextec/support`, `POST .../support/upload`, `POST .../support/delete`.
 - Rollback: o patch não altera tabelas; remover a imagem nova desativa as páginas.
+
+## Patch 0011: instalação por cliente
+
+Cada cliente (grupo de dispositivos) tem uma chave de instalação própria: HMAC-SHA256 do id do cliente com a chave do cofre, mais um número de "época" guardado em `data/nextec-settings.json` (`assign_epoch`). `GET /api/admin/nextec/install-token?group_id=` devolve a chave; `POST .../install-token/revoke` soma 1 à época e invalida todas as antigas. O script de instalação chama `POST /api/nextec/install/assign {id, group, token}` (público, com limite de 10 tentativas erradas por IP em 10 minutos): a máquina entra no cliente se ainda não tiver cliente; se ainda não se registrou, fica pendente (tabela `nextec_pending_assigns`, 24 h) e é atribuída quando enviar o sysinfo. Nunca move uma máquina que já tem cliente.
+
+## Patch 0012: políticas do app e conexões ativas
+
+O app RustDesk manda um heartbeat ao servidor da API com os IDs das conexões abertas (`conns`) e o carimbo da última política recebida (`modified_at`). A resposta passa a poder trazer `strategy.config_options` e `disconnect`. Só se atende o heartbeat de quem prova ser o dispositivo (uuid igual ao cadastrado no sysinfo).
+
+- Política (`nextec_app_policies`): por cliente ou por máquina; a da máquina vale mais; subgrupo ("Cliente / Sub") herda a do cliente. Lista fechada de opções: `enable-keyboard`, `-clipboard`, `-file-transfer`, `-audio`, `-camera`, `-terminal`, `-tunnel`, `-remote-restart`, `-record-session`, `-block-input`, `-remote-printer` (Y ou N) e `access-mode` (`view`). A estratégia é declarativa: todas as opções gerenciadas vão a cada mudança e as não definidas voltam ao padrão, então remover a regra devolve o app ao normal. Aprovação e senha continuam com o cofre de senhas.
+- Conexões ativas: o servidor guarda em memória as conexões vivas por máquina (somem em 90 s sem heartbeat). Desconectar coloca a ordem na fila e ela é entregue uma vez, no próximo heartbeat. Detalhes de quem conectou vêm da auditoria de conexões.
+- Login obrigatório para conectar não é do painel: é a variável `MUST_LOGIN=Y` do servidor (hbbs) na stack. Ligue só depois de todos os técnicos entrarem na conta Nextec no app.
+
+## Patch 0013: chamado na conexão e relatório mensal
+
+`nextec_connect_notes` guarda o chamado informado ao clicar em Conectar no painel. O relatório `GET /api/admin/nextec/report?month=AAAA-MM&group_id=` junta a auditoria de conexões do mês (fuso America/Sao_Paulo) com a última anotação da mesma máquina feita até 5 minutos antes da conexão. Modo do pedido de chamado (`off`, `optional`, `required`) e endereço base do Jira ficam em `data/nextec-settings.json`.

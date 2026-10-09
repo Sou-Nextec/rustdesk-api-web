@@ -36,6 +36,7 @@
                   <el-dropdown-menu>
                     <el-dropdown-item v-if="!row.isSub" command="subs">Adicionar subgrupos</el-dropdown-item>
                     <el-dropdown-item command="devices">Ver dispositivos</el-dropdown-item>
+                    <el-dropdown-item command="install">Comando de instalação</el-dropdown-item>
                     <el-dropdown-item command="delete" divided><span class="nx-danger-text">Excluir</span></el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
@@ -85,6 +86,21 @@
       <template #footer>
         <el-button @click="rn.visible = false">Cancelar</el-button>
         <el-button type="primary" :loading="rn.saving" :disabled="!rn.name.trim()" @click="saveRename">Salvar</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- comando de instalação do cliente -->
+    <el-dialog v-model="ins.visible" class="nx-dlg" :title="`Instalar em ${ins.name}`" width="min(680px, 92vw)">
+      <p class="nx-help nx-help-top">Rode como administrador (PowerShell) na máquina do cliente. O script instala a versão publicada do app e coloca a máquina neste cliente sozinho.</p>
+      <div v-loading="ins.loading" class="nx-cmd">
+        <code>{{ ins.cmd || 'Gerando o comando...' }}</code>
+        <el-button size="small" :disabled="!ins.cmd" @click="copyCmd"><el-icon><el-icon-CopyDocument/></el-icon><span>Copiar comando</span></el-button>
+      </div>
+      <p class="nx-help">A máquina só é colocada neste cliente se ainda não tiver cliente. Antes do primeiro uso, publique uma versão do app em Dispositivos &gt; Atualizações do app.</p>
+      <p class="nx-help">Se este comando vazou ou foi para a pessoa errada, invalide: todos os comandos de instalação antigos deixam de valer (os novos se geram aqui de novo).</p>
+      <template #footer>
+        <el-button @click="revokeInstall"><span class="nx-danger-text">Invalidar comandos antigos</span></el-button>
+        <el-button type="primary" @click="ins.visible = false">Fechar</el-button>
       </template>
     </el-dialog>
 
@@ -169,7 +185,7 @@
   import { create as ruleCreate } from '@/api/address_book_collection_rule'
   import { loadAllUsers } from '@/global'
   import { useUserStore } from '@/store/user'
-  import { getClientTemplates, saveClientTemplates } from '@/nextec/api'
+  import { getClientTemplates, saveClientTemplates, installToken, installRevoke } from '@/nextec/api'
   import AccessFields from './AccessFields.vue'
 
   // mesmas convenções de Permissões por cliente: lista "Cliente: <grupo>" e subgrupos "Cliente / Subgrupo"
@@ -346,9 +362,31 @@
     load()
   }
 
+  // ---------- comando de instalação ----------
+  const SCRIPT_URL = 'https://raw.githubusercontent.com/Sou-Nextec/rustdesk-api-web/master/nextec/atualizacao/Instalar-Nextec.ps1'
+  const ins = reactive({ visible: false, loading: false, name: '', cmd: '' })
+  const openInstall = async (row) => {
+    Object.assign(ins, { visible: true, loading: true, name: row.name, cmd: '' })
+    const res = await installToken(row.id).catch(() => false)
+    ins.loading = false
+    if (!res) { ins.visible = false; return }
+    ins.cmd = `$a="$env:TEMP\\Instalar-Nextec.ps1"; Invoke-WebRequest -UseBasicParsing "${SCRIPT_URL}" -OutFile $a; powershell -NoProfile -ExecutionPolicy Bypass -File $a -UrlBase "${window.location.origin}/api/nextec/update" -GrupoId ${row.id} -ChaveCliente "${res.data.token}"`
+  }
+  const copyCmd = async () => {
+    try { await navigator.clipboard.writeText(ins.cmd); ElMessage.success('Comando copiado.') } catch (e) { ElMessage.error('Não foi possível copiar.') }
+  }
+  const revokeInstall = async () => {
+    const c = await ElMessageBox.confirm('Invalidar todos os comandos de instalação já gerados? Quem ainda não rodou o comando precisará de um novo.', 'Invalidar comandos',
+      { confirmButtonText: 'Invalidar', cancelButtonText: 'Cancelar', type: 'warning' }).catch(() => false)
+    if (!c) return
+    const res = await installRevoke().catch(() => false)
+    if (res) { ElMessage.success('Comandos antigos invalidados.'); ins.visible = false }
+  }
+
   // ---------- ações da linha ----------
   const onRow = async (cmd, row) => {
     if (cmd === 'subs') Object.assign(sb, { visible: true, parent: row, text: '', access: { teams: [], users: [], rule: 1 } })
+    if (cmd === 'install') openInstall(row)
     if (cmd === 'devices') router.push({ path: '/user/peer', query: { client: String(row.id) } })
     if (cmd === 'delete') {
       const subs = row.isSub ? [] : row.children
