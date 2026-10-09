@@ -122,3 +122,7 @@ O app RustDesk manda um heartbeat ao servidor da API com os IDs das conexões ab
 ## Patch 0013: chamado na conexão e relatório mensal
 
 `nextec_connect_notes` guarda o chamado informado ao clicar em Conectar no painel. O relatório `GET /api/admin/nextec/report?month=AAAA-MM&group_id=` junta a auditoria de conexões do mês (fuso America/Sao_Paulo) com a última anotação da mesma máquina feita até 5 minutos antes da conexão. Modo do pedido de chamado (`off`, `optional`, `required`) e endereço base do Jira ficam em `data/nextec-settings.json`.
+
+## Patch 0014: quem vê a fila Aguardando atendimento
+
+Configuração `waiting_visibility` em `data/nextec-settings.json`: `off`, `admins` (padrão quando não definida) ou `all`. `GET /api/admin/my/support/waiting` aplica a regra no servidor: sem permissão devolve `enabled:false` e lista vazia. O admin muda em `POST /api/admin/nextec/support/settings {waiting_mode}` (registrado na auditoria como `support_settings`).
