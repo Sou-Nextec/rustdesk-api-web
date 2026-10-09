@@ -72,3 +72,7 @@ O banco do painel abria no modo padrão do SQLite: uma escrita lenta bloqueava t
 ## Patch 0006: foto do Microsoft 365
 
 No login externo com Microsoft Entra ID, a API busca a foto em `graph.microsoft.com/v1.0/me/photos/96x96/$value` e grava como avatar do usuário **se ele ainda não tem foto** (a escolhida por ele no painel nunca é sobrescrita). Requer o escopo `User.Read` no provedor (o botão "Preencher para Microsoft Entra ID" já inclui). Quem não tem foto no Microsoft 365 continua com a inicial.
+
+## Patch 0007: modelos de cliente
+
+`GET` e `POST /api/admin/nextec/client-templates` (somente admin) guardam a lista de modelos de cliente (subgrupos e quem acessa cada um) em `data/nextec-settings.json`, junto com as demais configurações. A tela Clientes usa isso para criar um cliente já com os subgrupos e as permissões do modelo.

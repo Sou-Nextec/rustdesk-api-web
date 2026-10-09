@@ -1,0 +1,116 @@
+diff --git a/global/nextec.go b/global/nextec.go
+index 53c6b4d..f9ae1be 100644
+--- a/global/nextec.go
++++ b/global/nextec.go
+@@ -52,6 +52,32 @@ func SetWebClient(enabled bool) error {
+ 	return nil
+ }
+ 
++// NextecClientTemplates devolve os modelos de cliente (lista JSON) guardados no servidor; vazio se não houver.
++func NextecClientTemplates() (json.RawMessage, error) {
++	nextecSettingsMu.Lock()
++	defer nextecSettingsMu.Unlock()
++	s, err := readNextecSettings()
++	if err != nil {
++		return nil, err
++	}
++	if v, ok := s["client_templates"]; ok {
++		return v, nil
++	}
++	return json.RawMessage("[]"), nil
++}
++
++// SetNextecClientTemplates grava os modelos de cliente (lista JSON) no mesmo arquivo das demais configurações.
++func SetNextecClientTemplates(v json.RawMessage) error {
++	nextecSettingsMu.Lock()
++	defer nextecSettingsMu.Unlock()
++	s, err := readNextecSettings()
++	if err != nil {
++		return err
++	}
++	s["client_templates"] = v
++	return writeNextecSettings(s)
++}
++
+ func readNextecSettings() (map[string]json.RawMessage, error) {
+ 	s := map[string]json.RawMessage{}
+ 	b, err := os.ReadFile(NextecSettingsFile)
+diff --git a/http/controller/admin/nextec.go b/http/controller/admin/nextec.go
+index 949cfdc..5b1ff18 100644
+--- a/http/controller/admin/nextec.go
++++ b/http/controller/admin/nextec.go
+@@ -1,6 +1,8 @@
+ package admin
+ 
+ import (
++	"encoding/json"
++
+ 	"github.com/gin-gonic/gin"
+ 	"github.com/lejianwen/rustdesk-api/v2/global"
+ 	"github.com/lejianwen/rustdesk-api/v2/http/response"
+@@ -39,3 +41,52 @@ func (n *Nextec) WebClient(c *gin.Context) {
+ 		"web_client": global.Config.App.WebClient,
+ 	})
+ }
++
++type nextecTemplatesForm struct {
++	Templates json.RawMessage `json:"templates" binding:"required"`
++}
++
++const nextecTemplatesMaxBytes = 256 * 1024
++
++// ClientTemplates devolve os modelos de cliente
++// @Tags ADMIN
++// @Summary Modelos de cliente (subgrupos e permissões)
++// @Produce  json
++// @Success 200 {object} response.Response
++// @Router /admin/nextec/client-templates [get]
++// @Security token
++func (n *Nextec) ClientTemplates(c *gin.Context) {
++	v, err := global.NextecClientTemplates()
++	if err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
++		return
++	}
++	response.Success(c, &gin.H{"templates": v})
++}
++
++// SaveClientTemplates grava os modelos de cliente (lista JSON, até 256 KB)
++// @Tags ADMIN
++// @Summary Salva os modelos de cliente
++// @Accept  json
++// @Produce  json
++// @Success 200 {object} response.Response
++// @Router /admin/nextec/client-templates [post]
++// @Security token
++func (n *Nextec) SaveClientTemplates(c *gin.Context) {
++	f := &nextecTemplatesForm{}
++	if err := c.ShouldBindJSON(f); err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError")+err.Error())
++		return
++	}
++	var list []json.RawMessage
++	if len(f.Templates) > nextecTemplatesMaxBytes || json.Unmarshal(f.Templates, &list) != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError"))
++		return
++	}
++	if err := global.SetNextecClientTemplates(f.Templates); err != nil {
++		global.Logger.Error("save nextec templates: ", err)
++		response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
++		return
++	}
++	response.Success(c, nil)
++}
+diff --git a/http/router/admin.go b/http/router/admin.go
+index f4126f0..bb8ea07 100644
+--- a/http/router/admin.go
++++ b/http/router/admin.go
+@@ -67,6 +67,8 @@ func NextecBind(adg *gin.RouterGroup) {
+ 	cont := &admin.Nextec{}
+ 	rg := adg.Group("/nextec").Use(middleware.AdminPrivilege())
+ 	rg.POST("/web-client", cont.WebClient)
++	rg.GET("/client-templates", cont.ClientTemplates)
++	rg.POST("/client-templates", cont.SaveClientTemplates)
+ }
+ func LoginBind(rg *gin.RouterGroup) {
+ 	cont := &admin.Login{}

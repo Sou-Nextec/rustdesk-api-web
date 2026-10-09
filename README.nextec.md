@@ -26,6 +26,8 @@ Tudo que é da Nextec fica em arquivos próprios:
 | `src/nextec/views/MyDevices.vue` e `MySaved.vue` | Meus dispositivos e Meus acessos salvos no padrão da tela Dispositivos |
 | `src/nextec/list-page.scss` | Estilos compartilhados dessas listas |
 | `src/nextec/views/MyShared.vue` | Clientes liberados: dispositivos das listas compartilhadas com o técnico, com situação online (patch 0003) |
+| `src/nextec/views/Clients.vue` e `AccessFields.vue` | Clientes: árvore com subgrupos, subgrupos em lote, renomear em cascata e modelos de cliente (patch 0007) |
+| `src/nextec/enter-submit.js` | Enter envia os diálogos (menos em textarea e seletores) |
 | `src/nextec/views/ProfilePhoto.vue` | Foto de perfil (menu do usuário): recorta, reduz e envia; o app RustDesk mostra no lugar da inicial (patch 0004) |
 | `src/nextec/api.js` | Endpoints que só existem com os patches da Nextec (chave do cliente web) |
 | `src/nextec/assets/` | Logo e símbolo (PNG) |

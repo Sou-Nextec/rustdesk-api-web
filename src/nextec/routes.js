@@ -56,6 +56,10 @@ export function applyNextecRoutes () {
   const peer = byName.get('Peer')
   if (peer) peer.component = () => import('./views/Devices.vue')
 
+  // Clientes: tela própria (subgrupos em lote e modelos de cliente)
+  const deviceGroup = byName.get('DeviceGroup')
+  if (deviceGroup) deviceGroup.component = () => import('./views/Clients.vue')
+
   const serverCmd = byName.get('ServerCmd')
   if (serverCmd) serverCmd.component = () => import('./views/ServerSettings.vue')
 
