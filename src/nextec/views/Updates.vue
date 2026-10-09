@@ -100,7 +100,7 @@
             <strong class="nx-mcard-title">{{ row.name }}</strong>
             <span class="nx-small"><span class="nx-dot" :class="'is-' + row.state.tone" aria-hidden="true"></span>{{ row.state.label }}</span>
           </div>
-          <div class="nx-small nx-muted nx-mono">{{ row.peer_id }}{{ row.client ? ' · ' + row.client : '' }}</div>
+          <div class="nx-small nx-muted nx-mono">{{ fmtId(row.peer_id) }}{{ row.client ? ' · ' + row.client : '' }}</div>
           <div class="nx-small">Instalada: <span class="nx-ver">{{ row.version || 'não informou' }}</span> · Oferecida: <span class="nx-ver">{{ row.target || 'nenhuma' }}</span></div>
           <div class="nx-small nx-muted">Checou {{ ago(row.seen_at) }}</div>
         </li>
@@ -109,7 +109,7 @@
         <el-table-column label="Máquina" min-width="190">
           <template #default="{ row }">
             <div class="nx-name">{{ row.name }}</div>
-            <div class="nx-muted nx-small nx-mono">{{ row.peer_id }}</div>
+            <div class="nx-muted nx-small nx-mono">{{ fmtId(row.peer_id) }}</div>
           </template>
         </el-table-column>
         <el-table-column label="Cliente" min-width="150">
@@ -209,6 +209,7 @@
 
 <script setup>
   import { computed, onMounted, reactive, ref, watch } from 'vue'
+  import { fmtId, rawId } from '@/nextec/id'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { useMediaQuery } from '@vueuse/core'
   import { list as peerList } from '@/api/peer'
@@ -274,7 +275,7 @@
   const inPilot = (row) => rollout.value.peers.includes(row.peer_id) || (!!row.group_id && rollout.value.groups.includes(row.group_id))
   const rows = computed(() => installs.value.map(i => {
     const p = peers.value.find(x => x.id === i.peer_id)
-    const row = { ...i, name: p ? (p.alias || p.hostname || i.peer_id) : i.peer_id, group_id: p ? p.group_id : 0, client: p ? groupName(p.group_id) : '' }
+    const row = { ...i, name: p ? (p.alias || p.hostname || fmtId(i.peer_id)) : fmtId(i.peer_id), group_id: p ? p.group_id : 0, client: p ? groupName(p.group_id) : '' }
     let state = { label: 'Sem versão publicada', tone: 'off' }
     if (active.value) {
       if (i.version && i.version === rollout.value.version) state = { label: 'Atualizada', tone: 'on' }

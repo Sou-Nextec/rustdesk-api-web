@@ -18,7 +18,7 @@
           <span v-if="r.online !== null" class="nx-dot" :class="r.online ? 'is-on' : 'is-off'" aria-hidden="true"></span>
           <el-icon v-else class="nx-gs-icon" aria-hidden="true"><el-icon-Monitor/></el-icon>
           <div class="nx-gs-text">
-            <div class="nx-gs-name">{{ r.name || r.id }}</div>
+            <div class="nx-gs-name">{{ r.name || fmtId(r.id) }}</div>
             <div class="nx-gs-sub">{{ [r.name ? r.id : '', r.sub].filter(Boolean).join(' · ') || 'Dispositivo' }}</div>
           </div>
           <el-button size="small" type="primary" @click="connect(r.id)">Conectar</el-button>
@@ -38,7 +38,7 @@
       </template>
       <form class="nx-quick" @submit.prevent="quickConnect">
         <label for="nx-quick-id">ID do dispositivo</label>
-        <el-input id="nx-quick-id" ref="quickInput" v-model="quick.id" placeholder="ex.: 123456789" inputmode="numeric"/>
+        <el-input id="nx-quick-id" ref="quickInput" v-model="quick.id" :formatter="fmtId" :parser="rawId" placeholder="ex.: 123 456 789" inputmode="numeric"/>
         <p>Abre o app RustDesk instalado neste computador.</p>
         <el-button type="primary" native-type="submit" :disabled="!quick.id.trim()">Conectar</el-button>
       </form>
@@ -58,6 +58,7 @@
 
 <script setup>
   import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+  import { fmtId, rawId } from '@/nextec/id'
   import { useRoute, useRouter } from 'vue-router'
   import { T } from '@/utils/i18n'
   import { useUserStore } from '@/store/user'

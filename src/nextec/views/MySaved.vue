@@ -39,7 +39,7 @@
         <el-table-column type="selection" width="44" reserve-selection/>
         <el-table-column label="ID" min-width="140">
           <template #default="{ row }">
-            <span class="nx-id">{{ row.id }}</span>
+            <span class="nx-id">{{ fmtId(row.id) }}</span>
             <button type="button" class="nx-copy" :aria-label="'Copiar ID ' + row.id" @click="copy(row.id)">
               <el-icon><el-icon-CopyDocument/></el-icon>
             </button>
@@ -165,6 +165,7 @@
 
 <script setup>
   import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
+  import { fmtId, rawId } from '@/nextec/id'
   import { useRoute } from 'vue-router'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { list, create, update, remove, batchUpdateTags } from '@/api/my/address_book'

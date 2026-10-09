@@ -12,7 +12,7 @@
             <strong class="nx-mcard-title">{{ name(s) }}</strong>
             <el-tag v-if="s.pending" type="warning" disable-transitions>Desconectando</el-tag>
           </div>
-          <div class="nx-small nx-muted">{{ s.peer_id }}{{ client(s) ? ' · ' + client(s) : '' }}</div>
+          <div class="nx-small nx-muted">{{ fmtId(s.peer_id) }}{{ client(s) ? ' · ' + client(s) : '' }}</div>
           <div class="nx-small">{{ who(s) }} · {{ kind(s.type) }}{{ s.started_at ? ' · desde ' + ago(s.started_at) : '' }}</div>
           <el-button size="small" type="danger" :disabled="s.pending" @click="drop(s)">Desconectar</el-button>
         </li>
@@ -21,7 +21,7 @@
         <el-table-column label="Máquina" min-width="200">
           <template #default="{ row }">
             <div class="nx-name">{{ name(row) }}</div>
-            <div class="nx-small nx-muted nx-mono">{{ row.peer_id }}</div>
+            <div class="nx-small nx-muted nx-mono">{{ fmtId(row.peer_id) }}</div>
           </template>
         </el-table-column>
         <el-table-column label="Cliente" min-width="150">
@@ -51,6 +51,7 @@
 
 <script setup>
   import { onBeforeUnmount, onMounted, ref } from 'vue'
+  import { fmtId, rawId } from '@/nextec/id'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { useMediaQuery } from '@vueuse/core'
   import { list as groupList } from '@/api/device_group'
@@ -79,7 +80,7 @@
   })
   onBeforeUnmount(() => clearInterval(timer))
 
-  const name = (s) => s.alias || s.hostname || s.peer_id
+  const name = (s) => s.alias || s.hostname || fmtId(s.peer_id)
   const client = (s) => (s.group_id ? groups.value.find(g => g.id === s.group_id)?.name || '' : '')
   const who = (s) => [s.from_name, s.from_peer ? `ID ${s.from_peer}` : ''].filter(Boolean).join(' · ') || 'Não identificado'
   const kind = (t) => ({ 0: 'Controle remoto', 1: 'Transferência de arquivos', 2: 'Túnel de portas', 3: 'Câmera', 4: 'Terminal' })[t] || 'Conexão'

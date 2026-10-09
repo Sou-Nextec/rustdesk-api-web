@@ -29,7 +29,7 @@
       <el-table :data="pageRows" v-loading="loading" row-key="key" aria-label="Clientes liberados" empty-text=" ">
         <el-table-column label="ID" min-width="140">
           <template #default="{ row }">
-            <span class="nx-id">{{ row.id }}</span>
+            <span class="nx-id">{{ fmtId(row.id) }}</span>
             <button type="button" class="nx-copy" :aria-label="'Copiar ID ' + row.id" @click="copy(row.id)">
               <el-icon><el-icon-CopyDocument/></el-icon>
             </button>
@@ -78,6 +78,7 @@
 
 <script setup>
   import { computed, onActivated, onMounted, ref, watch } from 'vue'
+  import { fmtId, rawId } from '@/nextec/id'
   import { useRoute } from 'vue-router'
   import { ElMessage } from 'element-plus'
   import { sharedCollections, sharedAddressBooks } from '@/nextec/api'

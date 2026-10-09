@@ -1,0 +1,221 @@
+diff --git a/cmd/apimain.go b/cmd/apimain.go
+index 28369bb..905508e 100644
+--- a/cmd/apimain.go
++++ b/cmd/apimain.go
+@@ -223,6 +223,8 @@ func InitGlobal() {
+ 	if err := global.DB.AutoMigrate(&model.NextecAppRelease{}, &model.NextecAppInstall{}, &model.NextecPendingAssign{}, &model.NextecAppPolicy{}, &model.NextecConnectNote{}); err != nil {
+ 		global.Logger.Error("migrate nextec updates: ", err)
+ 	}
++	// Nextec: IDs gravados com espaço passam a ser salvos sem espaço
++	service.NextecNormalizeIds()
+ }
+ 
+ func DatabaseAutoUpdate() {
+diff --git a/http/controller/admin/peer.go b/http/controller/admin/peer.go
+index 0fc117e..d9f4184 100644
+--- a/http/controller/admin/peer.go
++++ b/http/controller/admin/peer.go
+@@ -148,6 +148,7 @@ func (ct *Peer) Update(c *gin.Context) {
+ 		return
+ 	}
+ 	u := f.ToPeer()
++	u.Id = service.NextecCleanId(u.Id) // ID sem espaços
+ 	err := service.UpdateFields(u, "id", "cpu", "hostname", "memory", "os", "username", "uuid", "version", "group_id", "alias")
+ 	if err != nil {
+ 		response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
+diff --git a/service/addressBook.go b/service/addressBook.go
+index 978c792..ca50c8d 100644
+--- a/service/addressBook.go
++++ b/service/addressBook.go
+@@ -63,6 +63,7 @@ func (s *AddressBookService) UpdateAddressBook(abs []*model.AddressBook, userId
+ 	//2.1 获取peers中的id
+ 	aBIds := make(map[string]*model.AddressBook)
+ 	for _, ab := range abs {
++		ab.Id = NextecCleanId(ab.Id)
+ 		aBIds[ab.Id] = ab
+ 	}
+ 	//2.2 获取数据库中的id
+@@ -128,6 +129,7 @@ func (s *AddressBookService) FromPeer(peer *model.Peer) (a *model.AddressBook) {
+ 
+ // Create 创建
+ func (s *AddressBookService) Create(u *model.AddressBook) error {
++	u.Id = NextecCleanId(u.Id)
+ 	res := DB.Create(u).Error
+ 	return res
+ }
+@@ -137,6 +139,7 @@ func (s *AddressBookService) Delete(u *model.AddressBook) error {
+ 
+ // Update 更新
+ func (s *AddressBookService) Update(u *model.AddressBook) error {
++	u.Id = NextecCleanId(u.Id)
+ 	return DB.Model(u).Updates(u).Error
+ }
+ 
+@@ -147,6 +150,7 @@ func (s *AddressBookService) UpdateByMap(u *model.AddressBook, data map[string]i
+ 
+ // UpdateAll 更新
+ func (s *AddressBookService) UpdateAll(u *model.AddressBook) error {
++	u.Id = NextecCleanId(u.Id)
+ 	return DB.Model(u).Select("*").Omit("created_at").Updates(u).Error
+ }
+ 
+diff --git a/service/nextec_ids.go b/service/nextec_ids.go
+new file mode 100644
+index 0000000..b3eb25f
+--- /dev/null
++++ b/service/nextec_ids.go
+@@ -0,0 +1,64 @@
++package service
++
++import (
++	"regexp"
++	"strings"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++)
++
++// ID do RustDesk sem espaços (Nextec): o painel mostra "268 304 385", mas o ID de verdade é "268304385".
++// IDs digitados à mão com espaço nunca casavam com o que o app envia; aqui eles são normalizados ao gravar
++// e uma vez na inicialização para o que já estava gravado.
++
++var nextecIdSpaces = regexp.MustCompile(`[\s\x{00a0}]+`)
++
++// NextecCleanId tira espaços (inclusive o sem quebra) do ID.
++func NextecCleanId(id string) string {
++	return nextecIdSpaces.ReplaceAllString(strings.TrimSpace(id), "")
++}
++
++// NextecNormalizeIds corrige IDs já gravados com espaço (dispositivos e acessos salvos) quando não há conflito.
++func NextecNormalizeIds() {
++	var peers []*model.Peer
++	DB.Where("id LIKE '% %' OR id LIKE ?", "%\u00a0%").Find(&peers)
++	fixed, skipped := 0, 0
++	for _, p := range peers {
++		nid := NextecCleanId(p.Id)
++		if nid == "" || nid == p.Id {
++			continue
++		}
++		var n int64
++		DB.Model(&model.Peer{}).Where("id = ?", nid).Count(&n)
++		if n > 0 {
++			skipped++
++			Logger.Warn("nextec: ID com espaço não corrigido por conflito: ", p.Id)
++			continue
++		}
++		if err := DB.Model(&model.Peer{}).Where("row_id = ?", p.RowId).Update("id", nid).Error; err != nil {
++			Logger.Warn("nextec: falha ao corrigir ID: ", err)
++			continue
++		}
++		fixed++
++	}
++	var abs []*model.AddressBook
++	DB.Where("id LIKE '% %' OR id LIKE ?", "%\u00a0%").Find(&abs)
++	for _, a := range abs {
++		nid := NextecCleanId(a.Id)
++		if nid == "" || nid == a.Id {
++			continue
++		}
++		var n int64
++		DB.Model(&model.AddressBook{}).Where("id = ? AND user_id = ? AND collection_id = ?", nid, a.UserId, a.CollectionId).Count(&n)
++		if n > 0 {
++			skipped++
++			continue
++		}
++		if err := DB.Model(&model.AddressBook{}).Where("row_id = ?", a.RowId).Update("id", nid).Error; err == nil {
++			fixed++
++		}
++	}
++	if fixed > 0 || skipped > 0 {
++		Logger.Info("nextec: IDs com espaço corrigidos: ", fixed, ", ignorados por conflito: ", skipped)
++	}
++}
+diff --git a/service/nextec_ids_test.go b/service/nextec_ids_test.go
+new file mode 100644
+index 0000000..126fd3b
+--- /dev/null
++++ b/service/nextec_ids_test.go
+@@ -0,0 +1,65 @@
++package service
++
++import (
++	"io"
++	"testing"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	log "github.com/sirupsen/logrus"
++	"gorm.io/driver/sqlite"
++	"gorm.io/gorm"
++)
++
++func TestNextecCleanId(t *testing.T) {
++	cases := map[string]string{
++		"268 304 385":           "268304385",
++		" 268304385 ":           "268304385",
++		"268\u00a0304\u00a0385": "268304385",
++		"abc def":               "abcdef",
++		"":                      "",
++	}
++	for in, want := range cases {
++		if got := NextecCleanId(in); got != want {
++			t.Fatalf("NextecCleanId(%q) = %q, quero %q", in, got, want)
++		}
++	}
++}
++
++func TestNextecNormalizeIds(t *testing.T) {
++	db, err := gorm.Open(sqlite.Open("file:ids?mode=memory&cache=shared"), &gorm.Config{})
++	if err != nil {
++		t.Skip("sqlite indisponível: ", err)
++	}
++	DB = db
++	l := log.New()
++	l.SetOutput(io.Discard)
++	Logger = l
++	if err := db.AutoMigrate(&model.Peer{}, &model.AddressBook{}); err != nil {
++		t.Fatal(err)
++	}
++	db.Create(&model.Peer{Id: "536 822 159", Uuid: "a"})
++	db.Create(&model.Peer{Id: "111 222 333", Uuid: "b"})
++	db.Create(&model.Peer{Id: "111222333", Uuid: "c"}) // conflito: não pode ser sobrescrito
++	db.Create(&model.Peer{Id: "999000111", Uuid: "d"})
++	db.Create(&model.AddressBook{Id: "700 800 900", UserId: 1})
++
++	NextecNormalizeIds()
++
++	var n int64
++	db.Model(&model.Peer{}).Where("id = ?", "536822159").Count(&n)
++	if n != 1 {
++		t.Fatalf("ID com espaço não foi corrigido")
++	}
++	db.Model(&model.Peer{}).Where("id = ?", "111 222 333").Count(&n)
++	if n != 1 {
++		t.Fatalf("ID em conflito deveria ficar como estava")
++	}
++	db.Model(&model.Peer{}).Where("id = ?", "111222333").Count(&n)
++	if n != 1 {
++		t.Fatalf("o ID já correto foi alterado")
++	}
++	db.Model(&model.AddressBook{}).Where("id = ?", "700800900").Count(&n)
++	if n != 1 {
++		t.Fatalf("acesso salvo com espaço não foi corrigido")
++	}
++}
+diff --git a/service/peer.go b/service/peer.go
+index cf96271..42f1100 100644
+--- a/service/peer.go
++++ b/service/peer.go
+@@ -105,6 +105,7 @@ func (ps *PeerService) ListFilterByUserId(page, pageSize uint, where func(tx *go
+ 
+ // Create 创建
+ func (ps *PeerService) Create(u *model.Peer) error {
++	u.Id = NextecCleanId(u.Id)
+ 	res := DB.Create(u).Error
+ 	return res
+ }
+@@ -149,5 +150,6 @@ func (ps *PeerService) BatchDelete(ids []uint) error {
+ 
+ // Update 更新
+ func (ps *PeerService) Update(u *model.Peer) error {
++	u.Id = NextecCleanId(u.Id)
+ 	return DB.Model(u).Updates(u).Error
+ }

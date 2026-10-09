@@ -106,7 +106,7 @@
           <p class="nx-muted">Digite o ID do RustDesk. O app instalado neste computador abre a conexão.</p>
         </div>
         <div class="nx-connect-row">
-          <el-input v-model="quickId" size="large" placeholder="ID do dispositivo (ex.: 123456789)" aria-label="ID do dispositivo" inputmode="numeric"/>
+          <el-input v-model="quickId" :formatter="fmtId" :parser="rawId" size="large" placeholder="ID do dispositivo (ex.: 123 456 789)" aria-label="ID do dispositivo" inputmode="numeric"/>
           <el-button type="primary" size="large" native-type="submit" :disabled="!quickId.trim()">Conectar</el-button>
         </div>
       </form>
@@ -150,8 +150,8 @@
             <li v-for="s in saved.slice(0, 8)" :key="s.row_id">
               <span class="nx-dot" :class="isOnlineT(status[s.id]) ? 'is-on' : 'is-off'" aria-hidden="true"></span>
               <span class="nx-plist-text">
-                <strong>{{ s.alias || s.hostname || s.id }}</strong>
-                <span>{{ [s.id, isOnlineT(status[s.id]) ? 'online agora' : (status[s.id] ? timeAgo(status[s.id] * 1000) : '')].filter(Boolean).join(' · ') }}</span>
+                <strong>{{ s.alias || s.hostname || fmtId(s.id) }}</strong>
+                <span>{{ [fmtId(s.id), isOnlineT(status[s.id]) ? 'online agora' : (status[s.id] ? timeAgo(status[s.id] * 1000) : '')].filter(Boolean).join(' · ') }}</span>
               </span>
               <el-button size="small" type="primary" @click="connectByClient(s.id)">Conectar</el-button>
             </li>
@@ -173,8 +173,8 @@
             <li v-for="p in mine.slice(0, 6)" :key="p.row_id">
               <span class="nx-dot" :class="isOnline(p) ? 'is-on' : 'is-off'" aria-hidden="true"></span>
               <span class="nx-plist-text">
-                <strong>{{ p.alias || p.hostname || p.id }}</strong>
-                <span>{{ p.id }} · {{ isOnline(p) ? 'online agora' : (p.last_online_time ? timeAgo(p.last_online_time * 1000) : 'nunca') }}</span>
+                <strong>{{ p.alias || p.hostname || fmtId(p.id) }}</strong>
+                <span>{{ fmtId(p.id) }} · {{ isOnline(p) ? 'online agora' : (p.last_online_time ? timeAgo(p.last_online_time * 1000) : 'nunca') }}</span>
               </span>
             </li>
           </ul>
@@ -186,6 +186,7 @@
 
 <script setup>
   import { computed, onMounted, ref } from 'vue'
+  import { fmtId, rawId } from '@/nextec/id'
   import { T } from '@/utils/i18n'
   import { timeAgo } from '@/utils/time'
   import { useUserStore } from '@/store/user'

@@ -23,6 +23,11 @@ A revisão de 09/10/2026 (v2.8.0) cobriu as 27 telas do painel no celular (390 p
 
 ## Funcionalidade
 
+- **"Online agora" é o aviso do app ao painel, não o registro no servidor de ID.** O painel marca online quando o app mandou o
+  batimento (heartbeat) nos últimos 60 s. Um app que fala com o painel (HTTPS) mas não consegue se registrar no servidor de ID
+  (porta errada, UDP bloqueado) aparece "online" e não aceita conexão. Para refletir o servidor de ID seria preciso consultar o
+  hbbs (mensagem OnlineRequest, que exige o aperto de mão seguro). Enquanto isso, o app mostra "Não está pronto" quando é isso.
+
 - **Chamado na conexão pelo app.** O pedido de chamado só vale para o botão Conectar do painel. Conexões abertas direto pelo app
   RustDesk não passam por ele (limite do app).
 - **Fila Aguardando atendimento e clientes novos.** A fila usa "dispositivo novo, sem cliente e sem dono, visto nos últimos 10
