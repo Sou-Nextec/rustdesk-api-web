@@ -15,6 +15,7 @@ function abrir (url) {
 }
 
 export async function connectDevice (id) {
+  id = String(id).replace(/\s+/g, '') // o painel mostra o ID em grupos (536 822 159); o link precisa dele sem espaços
   const plain = `rustdesk://${encodeURIComponent(id)}`
   try {
     const res = await fetch(`${import.meta.env.VITE_SERVER_API}/my/connect-link?id=${encodeURIComponent(id)}`, {
