@@ -38,6 +38,7 @@
       </div>
 
       <QuickAccess :labels="labels" :status="statusMap"/>
+      <WaitingList/>
 
       <div class="nx-cols">
         <div class="nx-card">
@@ -111,6 +112,7 @@
       </form>
 
       <QuickAccess :labels="labels" :status="statusMap"/>
+      <WaitingList/>
 
       <div class="nx-card nx-clients-card">
         <div class="nx-card-head">
@@ -189,6 +191,7 @@
   import { useUserStore } from '@/store/user'
   import { connectDevice as connectByClient } from '@/nextec/connect'
   import QuickAccess from '@/nextec/views/QuickAccess.vue'
+  import WaitingList from '@/nextec/views/WaitingList.vue'
   import { useQuickAccess } from '@/nextec/quick-access'
   import { list as peerList } from '@/api/peer'
   import { list as userList } from '@/api/user'
