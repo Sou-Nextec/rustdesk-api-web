@@ -27,6 +27,7 @@ Tudo que é da Nextec fica em arquivos próprios:
 | `src/nextec/list-page.scss` | Estilos compartilhados dessas listas |
 | `src/nextec/views/MyShared.vue` | Clientes liberados: dispositivos das listas compartilhadas com o técnico, com situação online (patch 0003) |
 | `src/nextec/views/Clients.vue` e `AccessFields.vue` | Clientes: árvore com subgrupos, subgrupos em lote, renomear em cascata e modelos de cliente (patch 0007) |
+| `src/nextec/views/Secrets.vue`, `connect.js` e `nextec/atualizacao/Agente-Senha-Nextec.ps1` | Cofre de senhas: troca automática da senha do RustDesk em servidores (regra por grupo ou máquina), "Conectar" com um clique, ver senha e auditoria (patch 0008) |
 | `src/nextec/enter-submit.js` | Enter envia os diálogos (menos em textarea e seletores) |
 | `src/nextec/views/ProfilePhoto.vue` | Foto de perfil (menu do usuário): recorta, reduz e envia; o app RustDesk mostra no lugar da inicial (patch 0004) |
 | `src/nextec/api.js` | Endpoints que só existem com os patches da Nextec (chave do cliente web) |

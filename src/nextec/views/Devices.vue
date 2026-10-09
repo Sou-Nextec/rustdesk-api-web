@@ -228,7 +228,7 @@
   import { loadAllUsers } from '@/global'
   import { useAppStore } from '@/store/app'
   import { timeAgo } from '@/utils/time'
-  import { connectByClient } from '@/utils/peer'
+  import { connectDevice as connectByClient } from '@/nextec/connect'
   import { toWebClientLink } from '@/utils/webclient'
   import { downBlob, jsonToCsv } from '@/utils/file'
   import createABForm from '@/views/peer/createABForm.vue'

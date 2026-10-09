@@ -36,3 +36,12 @@ export function getClientTemplates () {
 export function saveClientTemplates (templates) {
   return request({ url: '/nextec/client-templates', method: 'post', data: { templates } })
 }
+
+// patch 0008: cofre de senhas dos servidores (somente admin) e link de conexão
+export const secretsOverview = () => request({ url: '/nextec/secrets' })
+export const secretsPolicy = (data) => request({ url: '/nextec/secrets/policy', method: 'post', data })
+export const secretsRotate = (id) => request({ url: '/nextec/secrets/rotate', method: 'post', data: { id } })
+export const secretsReveal = (id) => request({ url: '/nextec/secrets/reveal', method: 'post', data: { id } })
+export const secretsUnenroll = (id) => request({ url: '/nextec/secrets/unenroll', method: 'post', data: { id } })
+export const secretsAgentKey = () => request({ url: '/nextec/secrets/agent-key', method: 'post', data: {} })
+export const secretsAudit = () => request({ url: '/nextec/secrets/audit' })

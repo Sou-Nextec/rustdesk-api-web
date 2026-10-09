@@ -12,7 +12,7 @@ const GROUPS = [
   { name: 'NxGroupPeople', title: 'NxGroupPeople', icon: 'UserFilled', children: ['UserList', 'UserAdd', 'UserEdit', 'UserGroup'] },
   // quem acessa o quê: permissões por cliente e as listas que aparecem no app RustDesk
   { name: 'NxGroupAddressBook', title: 'NxGroupAddressBook', icon: 'Key', children: ['NxClientAccess', 'UserAddressBookName', 'UserAddressBook', 'UserTag'] },
-  { name: 'NxGroupAccess', title: 'NxGroupAccess', icon: 'Lock', children: ['Oauth', 'UserToken', 'ShareRecord'] },
+  { name: 'NxGroupAccess', title: 'NxGroupAccess', icon: 'Lock', children: ['NxSecrets', 'Oauth', 'UserToken', 'ShareRecord'] },
   { name: 'NxGroupAudit', title: 'NxGroupAudit', icon: 'Tickets', children: ['LoginLog', 'AuditConn', 'AuditFile'] },
   { name: 'NxGroupServer', title: 'NxGroupServer', icon: 'Setting', children: ['ServerCmd'] },
 ]
@@ -27,6 +27,13 @@ export function applyNextecRoutes () {
     name: 'NxClientAccess',
     meta: { title: 'NxClientAccess', icon: 'Share' },
     component: () => import('./views/ClientAccess.vue'),
+  })
+  // Senhas dos servidores: cofre com troca automática da senha do RustDesk (só admin; patch 0008 da API)
+  system.children.push({
+    path: '/user/secrets',
+    name: 'NxSecrets',
+    meta: { title: 'NxSecrets', icon: 'Key' },
+    component: () => import('./views/Secrets.vue'),
   })
   const byName = new Map(system.children.map(c => [c.name, c]))
   const used = new Set()

@@ -175,7 +175,7 @@
   import { useUserStore } from '@/store/user'
   import { useAppStore } from '@/store/app'
   import { timeAgo } from '@/utils/time'
-  import { connectByClient } from '@/utils/peer'
+  import { connectDevice as connectByClient } from '@/nextec/connect'
   import { toWebClientLink } from '@/utils/webclient'
   import shareByWebClient from '@/views/address_book/components/shareByWebClient.vue'
   import '../list-page.scss'

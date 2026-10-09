@@ -83,7 +83,7 @@
   import { sharedCollections, sharedAddressBooks } from '@/nextec/api'
   import { useAppStore } from '@/store/app'
   import { timeAgo } from '@/utils/time'
-  import { connectByClient } from '@/utils/peer'
+  import { connectDevice as connectByClient } from '@/nextec/connect'
   import { toWebClientLink } from '@/utils/webclient'
   import '../list-page.scss'
 

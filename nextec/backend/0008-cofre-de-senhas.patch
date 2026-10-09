@@ -1,0 +1,1003 @@
+diff --git a/cmd/apimain.go b/cmd/apimain.go
+index 4d7fdb4..c072426 100644
+--- a/cmd/apimain.go
++++ b/cmd/apimain.go
+@@ -216,6 +216,10 @@ func InitGlobal() {
+ 	})
+ 	global.LoginLimiter.RegisterProvider(utils.B64StringCaptchaProvider{})
+ 	DatabaseAutoUpdate()
++	// Nextec: tabelas do cofre de senhas (criadas sempre, sem depender da versão do banco)
++	if err := global.DB.AutoMigrate(&model.NextecSecretPolicy{}, &model.NextecDeviceSecret{}, &model.NextecSecretAudit{}); err != nil {
++		global.Logger.Error("migrate nextec secrets: ", err)
++	}
+ }
+ 
+ func DatabaseAutoUpdate() {
+diff --git a/global/nextec.go b/global/nextec.go
+index f9ae1be..c2d5f17 100644
+--- a/global/nextec.go
++++ b/global/nextec.go
+@@ -127,3 +127,30 @@ func writeNextecSettings(s map[string]json.RawMessage) error {
+ 	}
+ 	return os.Rename(tmp.Name(), NextecSettingsFile)
+ }
++
++// NextecSettingGet lê uma chave de texto das configurações da Nextec (vazio se não existir).
++func NextecSettingGet(key string) string {
++	nextecSettingsMu.Lock()
++	defer nextecSettingsMu.Unlock()
++	s, err := readNextecSettings()
++	if err != nil {
++		return ""
++	}
++	var v string
++	if raw, ok := s[key]; ok {
++		_ = json.Unmarshal(raw, &v)
++	}
++	return v
++}
++
++// NextecSettingSet grava uma chave de texto nas configurações da Nextec.
++func NextecSettingSet(key, value string) error {
++	nextecSettingsMu.Lock()
++	defer nextecSettingsMu.Unlock()
++	s, err := readNextecSettings()
++	if err != nil {
++		return err
++	}
++	s[key], _ = json.Marshal(value)
++	return writeNextecSettings(s)
++}
+diff --git a/http/controller/admin/my/nextec_connect.go b/http/controller/admin/my/nextec_connect.go
+new file mode 100644
+index 0000000..2611a60
+--- /dev/null
++++ b/http/controller/admin/my/nextec_connect.go
+@@ -0,0 +1,39 @@
++package my
++
++import (
++	"net/url"
++
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/http/response"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++)
++
++// NextecConnect monta o link de conexão do RustDesk. Em máquinas com senha automática, o link já leva a senha vigente,
++// e só para quem pode acessar a máquina; cada uso fica registrado em auditoria.
++type NextecConnect struct{}
++
++// Link devolve rustdesk://<id>[?password=...]
++// @Router /admin/my/connect-link [get]
++func (ct *NextecConnect) Link(c *gin.Context) {
++	id := c.Query("id")
++	if id == "" || len(id) > 64 {
++		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError"))
++		return
++	}
++	u := service.AllService.UserService.CurUser(c)
++	pw, allowed := service.NextecConnectPassword(u, id)
++	if !allowed {
++		response.Fail(c, 403, response.TranslateMsg(c, "NoAccess"))
++		return
++	}
++	link := "rustdesk://" + url.PathEscape(id)
++	if pw != "" {
++		link += "?password=" + url.QueryEscape(pw)
++		ip := c.GetHeader("CF-Connecting-IP")
++		if ip == "" {
++			ip = c.ClientIP()
++		}
++		service.NextecSecretAuditAdd(u, id, "connect", ip, "")
++	}
++	response.Success(c, &gin.H{"url": link, "auto_password": pw != ""})
++}
+diff --git a/http/controller/admin/nextec_secret.go b/http/controller/admin/nextec_secret.go
+new file mode 100644
+index 0000000..6ec0b2d
+--- /dev/null
++++ b/http/controller/admin/nextec_secret.go
+@@ -0,0 +1,133 @@
++package admin
++
++import (
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/http/response"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++)
++
++// NextecSecret: telas de administração do cofre de senhas dos servidores (somente admin).
++type NextecSecret struct{}
++
++type nextecPolicyForm struct {
++	Kind     string `json:"kind" binding:"required"`
++	Ref      string `json:"ref" binding:"required"`
++	Enabled  bool   `json:"enabled"`
++	Interval int    `json:"interval_minutes"`
++	Remove   bool   `json:"remove"`
++}
++
++type nextecPeerForm struct {
++	Id string `json:"id" binding:"required"`
++}
++
++func nextecIP(c *gin.Context) string {
++	if ip := c.GetHeader("CF-Connecting-IP"); ip != "" {
++		return ip
++	}
++	return c.ClientIP()
++}
++
++// Overview devolve regras e máquinas do cofre
++// @Router /admin/nextec/secrets [get]
++func (n *NextecSecret) Overview(c *gin.Context) {
++	response.Success(c, &gin.H{
++		"agent_key_set": service.NextecAgentKeyIsSet(),
++		"policies":      service.NextecSecretPolicies(),
++		"devices":       service.NextecSecretDevices(),
++	})
++}
++
++// Policy cria, altera ou remove a regra de um grupo ou de uma máquina
++// @Router /admin/nextec/secrets/policy [post]
++func (n *NextecSecret) Policy(c *gin.Context) {
++	f := &nextecPolicyForm{}
++	if err := c.ShouldBindJSON(f); err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError")+err.Error())
++		return
++	}
++	u := service.AllService.UserService.CurUser(c)
++	if f.Remove {
++		if err := service.NextecSecretDeletePolicy(f.Kind, f.Ref); err != nil {
++			response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
++			return
++		}
++		service.NextecSecretAuditAdd(u, f.Ref, "policy_remove", nextecIP(c), f.Kind)
++		response.Success(c, nil)
++		return
++	}
++	p, err := service.NextecSecretUpsertPolicy(f.Kind, f.Ref, f.Enabled, f.Interval)
++	if err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError")+err.Error())
++		return
++	}
++	service.NextecSecretAuditAdd(u, f.Ref, "policy_set", nextecIP(c), f.Kind)
++	response.Success(c, p)
++}
++
++// RotateNow manda trocar a senha na próxima verificação do agente
++// @Router /admin/nextec/secrets/rotate [post]
++func (n *NextecSecret) RotateNow(c *gin.Context) {
++	f := &nextecPeerForm{}
++	if err := c.ShouldBindJSON(f); err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError")+err.Error())
++		return
++	}
++	if err := service.NextecSecretRotateNow(f.Id); err != nil {
++		response.Fail(c, 101, err.Error())
++		return
++	}
++	service.NextecSecretAuditAdd(service.AllService.UserService.CurUser(c), f.Id, "rotate_now", nextecIP(c), "")
++	response.Success(c, nil)
++}
++
++// Reveal mostra a senha vigente ao admin, com registro em auditoria
++// @Router /admin/nextec/secrets/reveal [post]
++func (n *NextecSecret) Reveal(c *gin.Context) {
++	f := &nextecPeerForm{}
++	if err := c.ShouldBindJSON(f); err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError")+err.Error())
++		return
++	}
++	r, err := service.NextecSecretReveal(f.Id)
++	if err != nil {
++		response.Fail(c, 101, err.Error())
++		return
++	}
++	service.NextecSecretAuditAdd(service.AllService.UserService.CurUser(c), f.Id, "reveal", nextecIP(c), "")
++	response.Success(c, r)
++}
++
++// Unenroll remove o agente da máquina e apaga as senhas guardadas
++// @Router /admin/nextec/secrets/unenroll [post]
++func (n *NextecSecret) Unenroll(c *gin.Context) {
++	f := &nextecPeerForm{}
++	if err := c.ShouldBindJSON(f); err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError")+err.Error())
++		return
++	}
++	if err := service.NextecSecretUnenroll(f.Id); err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
++		return
++	}
++	service.NextecSecretAuditAdd(service.AllService.UserService.CurUser(c), f.Id, "unenroll", nextecIP(c), "")
++	response.Success(c, nil)
++}
++
++// AgentKey gera uma chave de cadastro nova; ela aparece só desta vez
++// @Router /admin/nextec/secrets/agent-key [post]
++func (n *NextecSecret) AgentKey(c *gin.Context) {
++	key, err := service.NextecAgentKeyRotate()
++	if err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
++		return
++	}
++	service.NextecSecretAuditAdd(service.AllService.UserService.CurUser(c), "", "agent_key_new", nextecIP(c), "")
++	response.Success(c, &gin.H{"key": key})
++}
++
++// Audit lista os últimos eventos do cofre
++// @Router /admin/nextec/secrets/audit [get]
++func (n *NextecSecret) Audit(c *gin.Context) {
++	response.Success(c, &gin.H{"list": service.NextecSecretAuditList(300)})
++}
+diff --git a/http/controller/api/nextec_agent.go b/http/controller/api/nextec_agent.go
+new file mode 100644
+index 0000000..2d3500e
+--- /dev/null
++++ b/http/controller/api/nextec_agent.go
+@@ -0,0 +1,103 @@
++package api
++
++import (
++	"errors"
++	"net/http"
++
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++)
++
++// NextecAgent: endpoints chamados pelo agente instalado em cada máquina (autenticam por chave de cadastro e por token da máquina).
++type NextecAgent struct{}
++
++type nextecAgentForm struct {
++	Key      string `json:"key"`
++	Id       string `json:"id"`
++	Token    string `json:"token"`
++	Password string `json:"password"`
++}
++
++func agentIP(c *gin.Context) string {
++	if ip := c.GetHeader("CF-Connecting-IP"); ip != "" {
++		return ip
++	}
++	return c.ClientIP()
++}
++
++func agentFail(c *gin.Context, err error) {
++	switch {
++	case errors.Is(err, service.ErrNextecTooManyFails):
++		c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many failures"})
++	case errors.Is(err, service.ErrNextecAlreadyEnroll):
++		c.JSON(http.StatusConflict, gin.H{"error": "already enrolled"})
++	case errors.Is(err, service.ErrNextecBadPassword), errors.Is(err, service.ErrNextecNoPending):
++		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
++	case errors.Is(err, service.ErrNextecBadAgentAuth):
++		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
++	default:
++		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal error"})
++	}
++}
++
++// Enroll POST /api/nextec/agent/enroll {key, id}
++func (a *NextecAgent) Enroll(c *gin.Context) {
++	f := &nextecAgentForm{}
++	if err := c.ShouldBindJSON(f); err != nil {
++		c.JSON(http.StatusBadRequest, gin.H{"error": "bad request"})
++		return
++	}
++	token, err := service.NextecAgentEnroll(agentIP(c), f.Key, f.Id)
++	if err != nil {
++		agentFail(c, err)
++		return
++	}
++	c.JSON(http.StatusOK, gin.H{"token": token})
++}
++
++// Sync POST /api/nextec/agent/sync {id, token}
++func (a *NextecAgent) Sync(c *gin.Context) {
++	f := &nextecAgentForm{}
++	if err := c.ShouldBindJSON(f); err != nil {
++		c.JSON(http.StatusBadRequest, gin.H{"error": "bad request"})
++		return
++	}
++	s, err := service.NextecAgentSyncState(agentIP(c), f.Id, f.Token)
++	if err != nil {
++		agentFail(c, err)
++		return
++	}
++	c.JSON(http.StatusOK, gin.H{
++		"managed": s.Managed, "rotate": s.Rotate, "interval_minutes": s.Interval,
++		// ajustes que o agente aplica no RustDesk para entrar só com a senha, sem alguém aprovar
++		"approve_mode": "password", "verification_method": "use-permanent-password",
++	})
++}
++
++// Password POST /api/nextec/agent/password {id, token, password}: guarda a senha nova como pendente
++func (a *NextecAgent) Password(c *gin.Context) {
++	f := &nextecAgentForm{}
++	if err := c.ShouldBindJSON(f); err != nil {
++		c.JSON(http.StatusBadRequest, gin.H{"error": "bad request"})
++		return
++	}
++	if err := service.NextecAgentPropose(agentIP(c), f.Id, f.Token, f.Password); err != nil {
++		agentFail(c, err)
++		return
++	}
++	c.JSON(http.StatusOK, gin.H{"ok": true})
++}
++
++// Confirm POST /api/nextec/agent/confirm {id, token}: a senha pendente passa a valer
++func (a *NextecAgent) Confirm(c *gin.Context) {
++	f := &nextecAgentForm{}
++	if err := c.ShouldBindJSON(f); err != nil {
++		c.JSON(http.StatusBadRequest, gin.H{"error": "bad request"})
++		return
++	}
++	if err := service.NextecAgentConfirm(agentIP(c), f.Id, f.Token); err != nil {
++		agentFail(c, err)
++		return
++	}
++	c.JSON(http.StatusOK, gin.H{"ok": true})
++}
+diff --git a/http/router/admin.go b/http/router/admin.go
+index bb8ea07..f0479da 100644
+--- a/http/router/admin.go
++++ b/http/router/admin.go
+@@ -69,6 +69,15 @@ func NextecBind(adg *gin.RouterGroup) {
+ 	rg.POST("/web-client", cont.WebClient)
+ 	rg.GET("/client-templates", cont.ClientTemplates)
+ 	rg.POST("/client-templates", cont.SaveClientTemplates)
++
++	sec := &admin.NextecSecret{}
++	rg.GET("/secrets", sec.Overview)
++	rg.POST("/secrets/policy", sec.Policy)
++	rg.POST("/secrets/rotate", sec.RotateNow)
++	rg.POST("/secrets/reveal", sec.Reveal)
++	rg.POST("/secrets/unenroll", sec.Unenroll)
++	rg.POST("/secrets/agent-key", sec.AgentKey)
++	rg.GET("/secrets/audit", sec.Audit)
+ }
+ func LoginBind(rg *gin.RouterGroup) {
+ 	cont := &admin.Login{}
+@@ -314,6 +323,12 @@ func MyBind(rg *gin.RouterGroup) {
+ 		rg.POST("/my/shared/status", cont.Status)
+ 	}
+ 
++	{
++		// Nextec: link de conexão (com a senha automática, quando a máquina tem)
++		conn := &my.NextecConnect{}
++		rg.GET("/my/connect-link", conn.Link)
++	}
++
+ 	{
+ 		// Nextec: foto de perfil do próprio usuário
+ 		cont := &my.NextecProfile{}
+diff --git a/http/router/api.go b/http/router/api.go
+index 1965378..43a9ea8 100644
+--- a/http/router/api.go
++++ b/http/router/api.go
+@@ -31,6 +31,15 @@ func ApiInit(g *gin.Engine) {
+ 		frg.POST("/heartbeat", i.Heartbeat)
+ 	}
+ 
++	{
++		// Nextec: agente de senha automática instalado nas máquinas
++		ag := &api.NextecAgent{}
++		frg.POST("/nextec/agent/enroll", ag.Enroll)
++		frg.POST("/nextec/agent/sync", ag.Sync)
++		frg.POST("/nextec/agent/password", ag.Password)
++		frg.POST("/nextec/agent/confirm", ag.Confirm)
++	}
++
+ 	{
+ 		l := &api.Login{}
+ 		// 如果返回oidc则可以通过oidc登录
+diff --git a/model/nextec_secret.go b/model/nextec_secret.go
+new file mode 100644
+index 0000000..504b421
+--- /dev/null
++++ b/model/nextec_secret.go
+@@ -0,0 +1,39 @@
++package model
++
++// NextecSecretPolicy liga a senha automática para um grupo de dispositivos (Kind "group", Ref = id do grupo)
++// ou para uma máquina (Kind "peer", Ref = ID do RustDesk). A regra da máquina vale mais que a do grupo.
++type NextecSecretPolicy struct {
++	Id              uint   `gorm:"primaryKey" json:"id"`
++	Kind            string `gorm:"not null;index:idx_nx_policy,unique" json:"kind"`
++	Ref             string `gorm:"not null;index:idx_nx_policy,unique" json:"ref"`
++	Enabled         bool   `gorm:"not null;default:true" json:"enabled"`
++	IntervalMinutes int    `gorm:"not null;default:180" json:"interval_minutes"`
++	TimeModel
++}
++
++// NextecDeviceSecret é o estado da senha de uma máquina. As senhas ficam criptografadas (AES-GCM).
++type NextecDeviceSecret struct {
++	Id             uint   `gorm:"primaryKey" json:"id"`
++	PeerId         string `gorm:"not null;uniqueIndex" json:"peer_id"`
++	TokenHash      string `gorm:"not null;default:''" json:"-"`
++	ActiveEnc      string `gorm:"not null;default:''" json:"-"`
++	PendingEnc     string `gorm:"not null;default:''" json:"-"`
++	Version        int    `gorm:"not null;default:0" json:"version"`
++	ActiveAt       int64  `gorm:"not null;default:0" json:"active_at"`
++	NextRotationAt int64  `gorm:"not null;default:0" json:"next_rotation_at"`
++	ForceRotate    bool   `gorm:"not null;default:false" json:"force_rotate"`
++	LastSeenAt     int64  `gorm:"not null;default:0" json:"last_seen_at"`
++	TimeModel
++}
++
++// NextecSecretAudit registra quem viu, usou ou trocou senhas.
++type NextecSecretAudit struct {
++	Id       uint   `gorm:"primaryKey" json:"id"`
++	At       int64  `gorm:"not null;index" json:"at"`
++	UserId   uint   `gorm:"not null;default:0" json:"user_id"`
++	Username string `gorm:"not null;default:''" json:"username"`
++	PeerId   string `gorm:"not null;default:'';index" json:"peer_id"`
++	Action   string `gorm:"not null;default:''" json:"action"`
++	Ip       string `gorm:"not null;default:''" json:"ip"`
++	Detail   string `gorm:"not null;default:''" json:"detail"`
++}
+diff --git a/service/nextec_secret.go b/service/nextec_secret.go
+new file mode 100644
+index 0000000..31480c4
+--- /dev/null
++++ b/service/nextec_secret.go
+@@ -0,0 +1,556 @@
++package service
++
++import (
++	"crypto/aes"
++	"crypto/cipher"
++	"crypto/rand"
++	"crypto/sha256"
++	"crypto/subtle"
++	"encoding/base64"
++	"encoding/hex"
++	"errors"
++	"os"
++	"regexp"
++	"strconv"
++	"sync"
++	"time"
++
++	"github.com/lejianwen/rustdesk-api/v2/global"
++	"github.com/lejianwen/rustdesk-api/v2/model"
++)
++
++// Cofre de senhas dos servidores (Nextec): cada máquina marcada recebe uma senha permanente do RustDesk
++// que muda sozinha a cada N minutos. Um agente na máquina aplica a senha; quem tem acesso à máquina
++// conecta pelo painel sem digitar nada; o admin pode ver a senha (com registro em auditoria).
++
++const (
++	NextecSecretDefaultInterval = 180  // minutos (3 horas)
++	NextecSecretMinInterval     = 15   // minutos
++	NextecSecretMaxInterval     = 1440 // minutos (24 horas)
++	settingAgentKeyHash         = "agent_key_hash"
++	vaultKeyFile                = "./data/nextec-vault.key"
++)
++
++var (
++	ErrNextecBadAgentAuth   = errors.New("agent auth failed")
++	ErrNextecAlreadyEnroll  = errors.New("already enrolled")
++	ErrNextecBadPassword    = errors.New("invalid password format")
++	ErrNextecNoPending      = errors.New("no pending password")
++	ErrNextecTooManyFails   = errors.New("too many failures")
++	nextecPasswordPattern   = regexp.MustCompile(`^[A-Za-z0-9]{16,64}$`)
++	nextecVaultKeyOnce      sync.Once
++	nextecVaultKeyValue     []byte
++	nextecVaultKeyErr       error
++	nextecFailMu            sync.Mutex
++	nextecFailures          = map[string][]int64{}
++	nextecFailureWindowSecs = int64(600)
++	nextecFailureLimit      = 10
++)
++
++// ---------- criptografia ----------
++
++// vaultKey: variável NEXTEC_VAULT_KEY (base64 de 32 bytes) ou arquivo gerado na primeira vez no volume de dados.
++func vaultKey() ([]byte, error) {
++	nextecVaultKeyOnce.Do(func() {
++		if v := os.Getenv("NEXTEC_VAULT_KEY"); v != "" {
++			k, err := base64.StdEncoding.DecodeString(v)
++			if err != nil || len(k) != 32 {
++				nextecVaultKeyErr = errors.New("NEXTEC_VAULT_KEY deve ser base64 de 32 bytes")
++				return
++			}
++			nextecVaultKeyValue = k
++			return
++		}
++		if b, err := os.ReadFile(vaultKeyFile); err == nil {
++			k, err := base64.StdEncoding.DecodeString(string(trimNL(b)))
++			if err == nil && len(k) == 32 {
++				nextecVaultKeyValue = k
++				return
++			}
++		}
++		k := make([]byte, 32)
++		if _, err := rand.Read(k); err != nil {
++			nextecVaultKeyErr = err
++			return
++		}
++		if err := os.MkdirAll("./data", 0755); err != nil {
++			nextecVaultKeyErr = err
++			return
++		}
++		if err := os.WriteFile(vaultKeyFile, []byte(base64.StdEncoding.EncodeToString(k)+"\n"), 0600); err != nil {
++			nextecVaultKeyErr = err
++			return
++		}
++		nextecVaultKeyValue = k
++	})
++	return nextecVaultKeyValue, nextecVaultKeyErr
++}
++
++func trimNL(b []byte) []byte {
++	for len(b) > 0 && (b[len(b)-1] == '\n' || b[len(b)-1] == '\r' || b[len(b)-1] == ' ') {
++		b = b[:len(b)-1]
++	}
++	return b
++}
++
++func vaultEncrypt(plain string) (string, error) {
++	k, err := vaultKey()
++	if err != nil {
++		return "", err
++	}
++	block, err := aes.NewCipher(k)
++	if err != nil {
++		return "", err
++	}
++	gcm, err := cipher.NewGCM(block)
++	if err != nil {
++		return "", err
++	}
++	nonce := make([]byte, gcm.NonceSize())
++	if _, err := rand.Read(nonce); err != nil {
++		return "", err
++	}
++	return base64.StdEncoding.EncodeToString(gcm.Seal(nonce, nonce, []byte(plain), nil)), nil
++}
++
++func vaultDecrypt(enc string) (string, error) {
++	if enc == "" {
++		return "", nil
++	}
++	k, err := vaultKey()
++	if err != nil {
++		return "", err
++	}
++	raw, err := base64.StdEncoding.DecodeString(enc)
++	if err != nil {
++		return "", err
++	}
++	block, err := aes.NewCipher(k)
++	if err != nil {
++		return "", err
++	}
++	gcm, err := cipher.NewGCM(block)
++	if err != nil {
++		return "", err
++	}
++	if len(raw) < gcm.NonceSize() {
++		return "", errors.New("dados do cofre inválidos")
++	}
++	out, err := gcm.Open(nil, raw[:gcm.NonceSize()], raw[gcm.NonceSize():], nil)
++	if err != nil {
++		return "", err
++	}
++	return string(out), nil
++}
++
++func sha256Hex(s string) string {
++	h := sha256.Sum256([]byte(s))
++	return hex.EncodeToString(h[:])
++}
++
++func randomHex(nBytes int) string {
++	b := make([]byte, nBytes)
++	_, _ = rand.Read(b)
++	return hex.EncodeToString(b)
++}
++
++// ---------- chave de cadastro dos agentes ----------
++
++// NextecAgentKeyIsSet diz se já existe uma chave de cadastro.
++func NextecAgentKeyIsSet() bool { return global.NextecSettingGet(settingAgentKeyHash) != "" }
++
++// NextecAgentKeyRotate gera uma chave nova (devolvida só desta vez; no servidor fica apenas o hash).
++func NextecAgentKeyRotate() (string, error) {
++	key := randomHex(24)
++	if err := global.NextecSettingSet(settingAgentKeyHash, sha256Hex(key)); err != nil {
++		return "", err
++	}
++	return key, nil
++}
++
++func agentKeyOk(key string) bool {
++	want := global.NextecSettingGet(settingAgentKeyHash)
++	if want == "" || key == "" {
++		return false
++	}
++	return subtle.ConstantTimeCompare([]byte(sha256Hex(key)), []byte(want)) == 1
++}
++
++// ---------- limite de tentativas inválidas por IP ----------
++
++func nextecFailCheck(ip string) bool {
++	nextecFailMu.Lock()
++	defer nextecFailMu.Unlock()
++	now := time.Now().Unix()
++	kept := nextecFailures[ip][:0]
++	for _, t := range nextecFailures[ip] {
++		if now-t < nextecFailureWindowSecs {
++			kept = append(kept, t)
++		}
++	}
++	nextecFailures[ip] = kept
++	return len(kept) < nextecFailureLimit
++}
++
++func nextecFailAdd(ip string) {
++	nextecFailMu.Lock()
++	defer nextecFailMu.Unlock()
++	nextecFailures[ip] = append(nextecFailures[ip], time.Now().Unix())
++}
++
++// ---------- regras ----------
++
++// NextecSecretUpsertPolicy cria ou altera a regra de um grupo ou de uma máquina.
++func NextecSecretUpsertPolicy(kind, ref string, enabled bool, interval int) (*model.NextecSecretPolicy, error) {
++	if kind != "group" && kind != "peer" {
++		return nil, errors.New("kind inválido")
++	}
++	if ref == "" {
++		return nil, errors.New("ref inválido")
++	}
++	if interval == 0 {
++		interval = NextecSecretDefaultInterval
++	}
++	if interval < NextecSecretMinInterval || interval > NextecSecretMaxInterval {
++		return nil, errors.New("intervalo fora do limite")
++	}
++	p := &model.NextecSecretPolicy{}
++	DB.Where("kind = ? and ref = ?", kind, ref).First(p)
++	p.Kind, p.Ref, p.Enabled, p.IntervalMinutes = kind, ref, enabled, interval
++	if err := DB.Save(p).Error; err != nil {
++		return nil, err
++	}
++	return p, nil
++}
++
++func NextecSecretDeletePolicy(kind, ref string) error {
++	return DB.Where("kind = ? and ref = ?", kind, ref).Delete(&model.NextecSecretPolicy{}).Error
++}
++
++func NextecSecretPolicies() (res []*model.NextecSecretPolicy) {
++	DB.Order("kind, ref").Find(&res)
++	return res
++}
++
++// effectivePolicy: a regra da máquina vence a do grupo.
++func effectivePolicy(peerID string, groupID uint) (bool, int) {
++	p := &model.NextecSecretPolicy{}
++	if DB.Where("kind = ? and ref = ?", "peer", peerID).First(p).Error == nil {
++		return p.Enabled, p.IntervalMinutes
++	}
++	if groupID != 0 && DB.Where("kind = ? and ref = ?", "group", strconv.Itoa(int(groupID))).First(p).Error == nil {
++		return p.Enabled, p.IntervalMinutes
++	}
++	return false, 0
++}
++
++func peerGroup(peerID string) uint {
++	pr := &model.Peer{}
++	DB.Select("group_id").Where("id = ?", peerID).First(pr)
++	return pr.GroupId
++}
++
++// ---------- auditoria ----------
++
++func NextecSecretAuditAdd(u *model.User, peerID, action, ip, detail string) {
++	a := &model.NextecSecretAudit{At: time.Now().Unix(), PeerId: peerID, Action: action, Ip: ip, Detail: detail}
++	if u != nil {
++		a.UserId, a.Username = u.Id, u.Username
++	}
++	if err := DB.Create(a).Error; err != nil {
++		Logger.Warn("nextec audit: ", err)
++	}
++}
++
++func NextecSecretAuditList(limit int) (res []*model.NextecSecretAudit) {
++	if limit <= 0 || limit > 1000 {
++		limit = 200
++	}
++	DB.Order("id desc").Limit(limit).Find(&res)
++	return res
++}
++
++// ---------- agente ----------
++
++func agentAuth(ip, peerID, token string) (*model.NextecDeviceSecret, error) {
++	if !nextecFailCheck(ip) {
++		return nil, ErrNextecTooManyFails
++	}
++	d := &model.NextecDeviceSecret{}
++	if peerID == "" || token == "" || DB.Where("peer_id = ?", peerID).First(d).Error != nil || d.TokenHash == "" ||
++		subtle.ConstantTimeCompare([]byte(sha256Hex(token)), []byte(d.TokenHash)) != 1 {
++		nextecFailAdd(ip)
++		return nil, ErrNextecBadAgentAuth
++	}
++	return d, nil
++}
++
++// NextecAgentEnroll cadastra a máquina e devolve o token dela. Máquina já cadastrada só volta a cadastrar depois de o admin remover o agente.
++func NextecAgentEnroll(ip, key, peerID string) (string, error) {
++	if !nextecFailCheck(ip) {
++		return "", ErrNextecTooManyFails
++	}
++	if !agentKeyOk(key) || peerID == "" || len(peerID) > 32 {
++		nextecFailAdd(ip)
++		return "", ErrNextecBadAgentAuth
++	}
++	d := &model.NextecDeviceSecret{}
++	found := DB.Where("peer_id = ?", peerID).First(d).Error == nil
++	if found && d.TokenHash != "" {
++		nextecFailAdd(ip)
++		return "", ErrNextecAlreadyEnroll
++	}
++	token := randomHex(32)
++	d.PeerId, d.TokenHash = peerID, sha256Hex(token)
++	d.LastSeenAt = time.Now().Unix()
++	if err := DB.Save(d).Error; err != nil {
++		return "", err
++	}
++	NextecSecretAuditAdd(nil, peerID, "agent_enroll", ip, "")
++	return token, nil
++}
++
++type NextecAgentSync struct {
++	Managed  bool `json:"managed"`
++	Rotate   bool `json:"rotate"`
++	Interval int  `json:"interval_minutes"`
++}
++
++// NextecAgentSyncState diz ao agente se a máquina é gerenciada e se está na hora de trocar a senha.
++func NextecAgentSyncState(ip, peerID, token string) (*NextecAgentSync, error) {
++	d, err := agentAuth(ip, peerID, token)
++	if err != nil {
++		return nil, err
++	}
++	now := time.Now().Unix()
++	DB.Model(d).Update("last_seen_at", now)
++	enabled, interval := effectivePolicy(peerID, peerGroup(peerID))
++	if !enabled {
++		return &NextecAgentSync{}, nil
++	}
++	rotate := d.ActiveEnc == "" || d.ForceRotate || now >= d.NextRotationAt
++	return &NextecAgentSync{Managed: true, Rotate: rotate, Interval: interval}, nil
++}
++
++// NextecAgentPropose guarda a senha nova como pendente (a antiga continua valendo até o agente confirmar).
++func NextecAgentPropose(ip, peerID, token, password string) error {
++	d, err := agentAuth(ip, peerID, token)
++	if err != nil {
++		return err
++	}
++	if !nextecPasswordPattern.MatchString(password) {
++		return ErrNextecBadPassword
++	}
++	enc, err := vaultEncrypt(password)
++	if err != nil {
++		return err
++	}
++	return DB.Model(d).Update("pending_enc", enc).Error
++}
++
++// NextecAgentConfirm promove a senha pendente a ativa, depois de o agente aplicá-la na máquina.
++func NextecAgentConfirm(ip, peerID, token string) error {
++	d, err := agentAuth(ip, peerID, token)
++	if err != nil {
++		return err
++	}
++	if d.PendingEnc == "" {
++		return ErrNextecNoPending
++	}
++	_, interval := effectivePolicy(peerID, peerGroup(peerID))
++	if interval == 0 {
++		interval = NextecSecretDefaultInterval
++	}
++	now := time.Now().Unix()
++	err = DB.Model(d).Updates(map[string]interface{}{
++		"active_enc": d.PendingEnc, "pending_enc": "", "version": d.Version + 1,
++		"active_at": now, "next_rotation_at": now + int64(interval)*60, "force_rotate": false,
++	}).Error
++	if err == nil {
++		NextecSecretAuditAdd(nil, peerID, "rotated", ip, "versão "+strconv.Itoa(d.Version+1))
++	}
++	return err
++}
++
++// ---------- painel (admin) ----------
++
++type NextecSecretDevice struct {
++	PeerId         string `json:"peer_id"`
++	Hostname       string `json:"hostname"`
++	Alias          string `json:"alias"`
++	GroupId        uint   `json:"group_id"`
++	Managed        bool   `json:"managed"`
++	IntervalMin    int    `json:"interval_minutes"`
++	Enrolled       bool   `json:"enrolled"`
++	HasPassword    bool   `json:"has_password"`
++	Pending        bool   `json:"pending"`
++	Version        int    `json:"version"`
++	ActiveAt       int64  `json:"active_at"`
++	NextRotationAt int64  `json:"next_rotation_at"`
++	LastSeenAt     int64  `json:"last_seen_at"`
++	ForceRotate    bool   `json:"force_rotate"`
++}
++
++// NextecSecretDevices lista as máquinas gerenciadas ou com agente cadastrado.
++func NextecSecretDevices() []*NextecSecretDevice {
++	var states []*model.NextecDeviceSecret
++	DB.Find(&states)
++	byID := map[string]*model.NextecDeviceSecret{}
++	for _, s := range states {
++		byID[s.PeerId] = s
++	}
++	policies := NextecSecretPolicies()
++	ids := map[string]bool{}
++	groupIDs := []uint{}
++	for _, s := range states {
++		ids[s.PeerId] = true
++	}
++	for _, p := range policies {
++		if p.Kind == "peer" {
++			ids[p.Ref] = true
++		} else if g, err := strconv.Atoi(p.Ref); err == nil && p.Enabled {
++			groupIDs = append(groupIDs, uint(g))
++		}
++	}
++	var peers []*model.Peer
++	q := DB.Model(&model.Peer{})
++	idList := make([]string, 0, len(ids))
++	for id := range ids {
++		idList = append(idList, id)
++	}
++	switch {
++	case len(idList) > 0 && len(groupIDs) > 0:
++		q = q.Where("id in ? or group_id in ?", idList, groupIDs)
++	case len(idList) > 0:
++		q = q.Where("id in ?", idList)
++	case len(groupIDs) > 0:
++		q = q.Where("group_id in ?", groupIDs)
++	default:
++		return []*NextecSecretDevice{}
++	}
++	q.Find(&peers)
++	seen := map[string]bool{}
++	out := make([]*NextecSecretDevice, 0, len(peers)+len(states))
++	add := func(peerID, hostname, alias string, groupID uint) {
++		if seen[peerID] {
++			return
++		}
++		seen[peerID] = true
++		enabled, interval := effectivePolicy(peerID, groupID)
++		dv := &NextecSecretDevice{PeerId: peerID, Hostname: hostname, Alias: alias, GroupId: groupID, Managed: enabled, IntervalMin: interval}
++		if s := byID[peerID]; s != nil {
++			dv.Enrolled = s.TokenHash != ""
++			dv.HasPassword = s.ActiveEnc != ""
++			dv.Pending = s.PendingEnc != ""
++			dv.Version, dv.ActiveAt, dv.NextRotationAt = s.Version, s.ActiveAt, s.NextRotationAt
++			dv.LastSeenAt, dv.ForceRotate = s.LastSeenAt, s.ForceRotate
++		}
++		out = append(out, dv)
++	}
++	for _, p := range peers {
++		add(p.Id, p.Hostname, p.Alias, p.GroupId)
++	}
++	for _, s := range states { // agentes de máquinas que ainda não aparecem em Dispositivos
++		add(s.PeerId, "", "", 0)
++	}
++	return out
++}
++
++// NextecSecretRotateNow manda trocar a senha na próxima verificação do agente.
++func NextecSecretRotateNow(peerID string) error {
++	res := DB.Model(&model.NextecDeviceSecret{}).Where("peer_id = ?", peerID).Update("force_rotate", true)
++	if res.Error != nil {
++		return res.Error
++	}
++	if res.RowsAffected == 0 {
++		return errors.New("a máquina ainda não tem agente cadastrado")
++	}
++	return nil
++}
++
++// NextecSecretUnenroll remove o agente (a máquina precisa se cadastrar de novo) e apaga as senhas guardadas.
++func NextecSecretUnenroll(peerID string) error {
++	return DB.Where("peer_id = ?", peerID).Delete(&model.NextecDeviceSecret{}).Error
++}
++
++type NextecRevealed struct {
++	Password string `json:"password"`
++	Pending  string `json:"pending,omitempty"`
++	Version  int    `json:"version"`
++	ActiveAt int64  `json:"active_at"`
++}
++
++// NextecSecretReveal devolve a senha vigente (e a pendente, se houver) em texto, para o admin.
++func NextecSecretReveal(peerID string) (*NextecRevealed, error) {
++	d := &model.NextecDeviceSecret{}
++	if err := DB.Where("peer_id = ?", peerID).First(d).Error; err != nil {
++		return nil, errors.New("máquina sem senha guardada")
++	}
++	active, err := vaultDecrypt(d.ActiveEnc)
++	if err != nil {
++		return nil, err
++	}
++	pending, err := vaultDecrypt(d.PendingEnc)
++	if err != nil {
++		return nil, err
++	}
++	if active == "" && pending == "" {
++		return nil, errors.New("a máquina ainda não tem senha")
++	}
++	return &NextecRevealed{Password: active, Pending: pending, Version: d.Version, ActiveAt: d.ActiveAt}, nil
++}
++
++// ---------- conectar pelo painel ----------
++
++// NextecUserSeesPeer diz se o usuário pode conectar na máquina: admin, máquina dele, lista dele ou lista compartilhada com ele.
++func NextecUserSeesPeer(u *model.User, peerID string) bool {
++	if u == nil || peerID == "" {
++		return false
++	}
++	if AllService.UserService.IsAdmin(u) {
++		return true
++	}
++	var n int64
++	DB.Model(&model.Peer{}).Where("id = ? and user_id = ?", peerID, u.Id).Count(&n)
++	if n > 0 {
++		return true
++	}
++	DB.Model(&model.AddressBook{}).Where("id = ? and user_id = ?", peerID, u.Id).Count(&n)
++	if n > 0 {
++		return true
++	}
++	cols := map[uint]bool{}
++	for _, r := range AllService.AddressBookService.CollectionReadRules(u) {
++		cols[r.CollectionId] = true
++	}
++	if len(cols) == 0 {
++		return false
++	}
++	ids := make([]uint, 0, len(cols))
++	for id := range cols {
++		ids = append(ids, id)
++	}
++	DB.Model(&model.AddressBook{}).Where("id = ? and collection_id in ?", peerID, ids).Count(&n)
++	return n > 0
++}
++
++// NextecConnectPassword devolve a senha vigente de uma máquina gerenciada para quem pode conectar nela ("" se não houver).
++func NextecConnectPassword(u *model.User, peerID string) (string, bool) {
++	if !NextecUserSeesPeer(u, peerID) {
++		return "", false
++	}
++	enabled, _ := effectivePolicy(peerID, peerGroup(peerID))
++	if !enabled {
++		return "", true
++	}
++	d := &model.NextecDeviceSecret{}
++	if DB.Where("peer_id = ?", peerID).First(d).Error != nil || d.ActiveEnc == "" {
++		return "", true
++	}
++	pw, err := vaultDecrypt(d.ActiveEnc)
++	if err != nil {
++		Logger.Warn("nextec vault decrypt: ", err)
++		return "", true
++	}
++	return pw, true
++}
