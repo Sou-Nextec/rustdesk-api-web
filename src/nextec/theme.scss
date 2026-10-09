@@ -695,6 +695,13 @@ html.dark #app .login-container .login-card {
 // Listas da Nextec: quando a tela mostra o próprio aviso de vazio (el-empty), some a faixa vazia da tabela
 .nx-card:has(> .el-empty) .el-table__empty-block { display: none; }
 .nx-card > .el-empty .el-empty__bottom p { margin: 0; font-size: 13px; color: var(--nx-text-muted); }
+// estados vazios com respiro: o texto, a dica e o botão não ficam colados nem encostados nas bordas do cartão
+.nx-card > .el-empty, .nx-wait > .el-empty, .nx-quick > .el-empty { padding: 28px 20px 32px; }
+.nx-card > .el-empty .el-empty__description, .nx-wait > .el-empty .el-empty__description, .nx-quick > .el-empty .el-empty__description { margin-top: 12px; }
+.nx-card > .el-empty .el-empty__bottom, .nx-wait > .el-empty .el-empty__bottom, .nx-quick > .el-empty .el-empty__bottom { margin-top: 12px; }
+.nx-card > .el-empty .el-empty__bottom p + .el-button, .nx-wait > .el-empty .el-empty__bottom p + .el-button { margin-top: 18px; }
+// aviso informativo dentro das listas do upstream (ex.: Minhas listas)
+.nx-tip { margin-bottom: 14px; border-radius: 12px; }
 
 // foto (ou inicial) do usuário ao lado do nome, no topo
 .setting .nx-avatar {

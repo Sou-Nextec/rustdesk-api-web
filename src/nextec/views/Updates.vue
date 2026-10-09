@@ -385,7 +385,7 @@
 </script>
 
 <style scoped lang="scss">
-  .nx-upd { max-width: 1240px; }
+  .nx-upd { width: 100%; }
   .nx-label { font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--nx-text-subtle); margin-bottom: 8px; }
   .nx-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-bottom: 16px; }
   .nx-stat { padding: 18px 22px; background: var(--nx-surface); border-radius: var(--nx-radius-card); box-shadow: var(--nx-shadow-card); }
