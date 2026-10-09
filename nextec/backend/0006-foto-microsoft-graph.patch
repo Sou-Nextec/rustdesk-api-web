@@ -1,0 +1,166 @@
+diff --git a/http/controller/api/ouath.go b/http/controller/api/ouath.go
+index 0e1ee08..4457d01 100644
+--- a/http/controller/api/ouath.go
++++ b/http/controller/api/ouath.go
+@@ -208,6 +208,7 @@ func (o *Oauth) OauthCallback(c *gin.Context) {
+ 			})
+ 			return
+ 		}
++		service.AllService.UserService.FillAvatarIfEmpty(user, oauthUser.Picture)
+ 		c.HTML(http.StatusOK, "oauth_success.html", gin.H{
+ 			"message": "BindSuccess",
+ 		})
+@@ -240,6 +241,8 @@ func (o *Oauth) OauthCallback(c *gin.Context) {
+ 				return
+ 			}
+ 		}
++		// Nextec: foto do provedor (ex.: Microsoft 365) para quem ainda não tem foto
++		service.AllService.UserService.FillAvatarIfEmpty(user, oauthUser.Picture)
+ 		oauthCache.UserId = user.Id
+ 		oauthService.SetOauthCache(cacheKey, oauthCache, 0)
+ 		// 如果是webadmin，登录成功后跳转到webadmin
+diff --git a/service/oauth.go b/service/oauth.go
+index 48c7ddd..4ffcbdc 100644
+--- a/service/oauth.go
++++ b/service/oauth.go
+@@ -2,8 +2,10 @@ package service
+ 
+ import (
+ 	"context"
++	"encoding/base64"
+ 	"encoding/json"
+ 	"errors"
++	"io"
+ 
+ 	"github.com/coreos/go-oidc/v3/oidc"
+ 	"github.com/lejianwen/rustdesk-api/v2/model"
+@@ -13,7 +15,6 @@ import (
+ 
+ 	// "golang.org/x/oauth2/google"
+ 	"gorm.io/gorm"
+-	// "io"
+ 	"fmt"
+ 	"net/http"
+ 	"net/url"
+@@ -326,10 +327,46 @@ func (os *OauthService) linuxdoCallback(oauthConfig *oauth2.Config, provider *oi
+ // oidcCallback oidc回调, 通过code获取用户信息
+ func (os *OauthService) oidcCallback(oauthConfig *oauth2.Config, provider *oidc.Provider, code, verifier, nonce string) (error, *model.OauthUser) {
+ 	var user = &model.OidcUser{}
+-	if err, _ := os.callbackBase(oauthConfig, provider, code, verifier, nonce, user); err != nil {
++	err, client := os.callbackBase(oauthConfig, provider, code, verifier, nonce, user)
++	if err != nil {
+ 		return err, nil
+ 	}
+-	return nil, user.ToOauthUser()
++	ou := user.ToOauthUser()
++	// Nextec: o Microsoft Entra ID não envia a foto no login; busca no Microsoft Graph (quem não tem foto fica sem)
++	if ou.Picture == "" && strings.Contains(oauthConfig.Endpoint.AuthURL, "login.microsoftonline.com") {
++		ou.Picture = fetchGraphPhoto(client, graphPhotoURL)
++	}
++	return nil, ou
++}
++
++const graphPhotoURL = "https://graph.microsoft.com/v1.0/me/photos/96x96/$value"
++
++// fetchGraphPhoto devolve a foto do usuário como data URI (vazio se não houver foto, sem permissão ou em erro)
++func fetchGraphPhoto(client *http.Client, url string) string {
++	if client == nil {
++		return ""
++	}
++	resp, err := client.Get(url)
++	if err != nil {
++		Logger.Warn("graph photo request failed: ", err)
++		return ""
++	}
++	defer resp.Body.Close()
++	if resp.StatusCode != http.StatusOK {
++		// 404: sem foto; 403: falta a permissão User.Read (escopo) no login externo
++		Logger.Info("graph photo not available, status ", resp.StatusCode)
++		return ""
++	}
++	const maxBytes = 150 * 1024
++	b, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
++	if err != nil || len(b) == 0 || len(b) > maxBytes {
++		return ""
++	}
++	ct := resp.Header.Get("Content-Type")
++	if ct != "image/jpeg" && ct != "image/png" && ct != "image/webp" {
++		ct = "image/jpeg"
++	}
++	return "data:" + ct + ";base64," + base64.StdEncoding.EncodeToString(b)
+ }
+ 
+ // Callback: Get user information by code and op(Oauth provider)
+diff --git a/service/oauth_graph_test.go b/service/oauth_graph_test.go
+new file mode 100644
+index 0000000..72ba1f7
+--- /dev/null
++++ b/service/oauth_graph_test.go
+@@ -0,0 +1,43 @@
++package service
++
++import (
++	"io"
++	"net/http"
++	"net/http/httptest"
++	"strings"
++	"testing"
++
++	log "github.com/sirupsen/logrus"
++)
++
++func TestFetchGraphPhoto(t *testing.T) {
++	logger := log.New()
++	logger.SetOutput(io.Discard)
++	Logger = logger
++	foto := []byte{0xff, 0xd8, 0xff, 0xe0, 1, 2, 3}
++	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		switch r.URL.Path {
++		case "/ok":
++			w.Header().Set("Content-Type", "image/jpeg")
++			w.Write(foto)
++		case "/semfoto":
++			w.WriteHeader(http.StatusNotFound)
++		case "/grande":
++			w.Write(make([]byte, 200*1024))
++		}
++	}))
++	defer srv.Close()
++
++	if got := fetchGraphPhoto(srv.Client(), srv.URL+"/ok"); !strings.HasPrefix(got, "data:image/jpeg;base64,") {
++		t.Fatalf("esperava data URI, veio %q", got)
++	}
++	if got := fetchGraphPhoto(srv.Client(), srv.URL+"/semfoto"); got != "" {
++		t.Fatalf("404 deveria devolver vazio, veio %q", got)
++	}
++	if got := fetchGraphPhoto(srv.Client(), srv.URL+"/grande"); got != "" {
++		t.Fatalf("foto acima do limite deveria devolver vazio")
++	}
++	if got := fetchGraphPhoto(nil, srv.URL+"/ok"); got != "" {
++		t.Fatalf("cliente nulo deveria devolver vazio")
++	}
++}
+diff --git a/service/user.go b/service/user.go
+index 9eb7c51..0805330 100644
+--- a/service/user.go
++++ b/service/user.go
+@@ -375,6 +375,19 @@ func (us *UserService) RegisterByOauth(oauthUser *model.OauthUser, op string) (e
+ 	return nil, user
+ }
+ 
++// FillAvatarIfEmpty grava a foto vinda do login externo se o usuário ainda não tem uma (não sobrescreve a escolhida por ele)
++func (us *UserService) FillAvatarIfEmpty(user *model.User, avatar string) {
++	if user == nil || user.Id == 0 || avatar == "" || user.Avatar != "" {
++		return
++	}
++	upd := &model.User{}
++	upd.Id = user.Id
++	upd.Avatar = avatar
++	if err := UpdateFields(upd, "avatar"); err == nil {
++		user.Avatar = avatar
++	}
++}
++
+ // GenerateUsernameByOauth 生成用户名
+ func (us *UserService) GenerateUsernameByOauth(name string) string {
+ 	for us.IsUsernameExists(name) {

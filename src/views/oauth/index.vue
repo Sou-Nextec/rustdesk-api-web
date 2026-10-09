@@ -237,7 +237,7 @@
     if (!r) return
     formData.op = 'Microsoft'
     formData.issuer = `https://login.microsoftonline.com/${r.value.trim()}/v2.0`
-    formData.scopes = 'openid,profile,email'
+    formData.scopes = 'openid,profile,email,User.Read' // User.Read permite buscar a foto no Microsoft 365
     formData.pkce_enable = true
     formData.pkce_method = 'S256'
   }
