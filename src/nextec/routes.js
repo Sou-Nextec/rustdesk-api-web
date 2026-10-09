@@ -142,7 +142,13 @@ export function applyNextecRoutes () {
       meta: { title: 'NxMyShared', icon: 'OfficeBuilding' },
       component: () => import('./views/MyShared.vue'),
     })
-    const ORDER = ['NxMyShared', 'MyPeer', 'MyAddressBookList', 'MyAddressBookCollection', 'MyTagList', 'MyShareRecordList']
+    my.children.push({
+      path: 'support',
+      name: 'NxMySupport',
+      meta: { title: 'NxSupport', icon: 'Service' },
+      component: () => import('./views/Support.vue'),
+    })
+    const ORDER = ['NxMyShared', 'NxMySupport', 'MyPeer', 'MyAddressBookList', 'MyAddressBookCollection', 'MyTagList', 'MyShareRecordList']
     my.meta = { ...my.meta, title: 'NxGroupMine' }
     my.children.forEach(c => {
       if (c.name === 'MyInfo' || c.name === 'MyLoginLog') c.meta = { ...c.meta, hide: true }

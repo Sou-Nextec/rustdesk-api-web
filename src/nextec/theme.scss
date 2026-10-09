@@ -661,7 +661,13 @@ html.dark #app .login-container .login-card {
   // título da página leva a sobra de largura e corta com reticências; os ícones da direita nunca o cobrem
   #app .app-header.el-header::before { flex: 1 1 0; min-width: 0; }
   // em telas muito estreitas o nome do usuário some (fica a foto e a seta)
-  @media (max-width: 480px) { #app .setting .nickname { display: none; } }
+  @media (max-width: 480px) {
+    #app .setting .nickname { display: none; }
+    #app .setting .title > .el-icon:last-child { display: none; }
+    #app .app-header.el-header { gap: 6px; }
+    #app .app-header.el-header::before { font-size: 16px; }
+    #app .setting .menu-item { margin-left: 6px; }
+  }
   #app .header-tags { flex-wrap: nowrap; overflow-x: auto; padding: 8px 12px 0; }
   #app .app-main { padding: 12px; }
   // topbar: só título, menu do usuário e botão do menu (tema e idioma ficam para telas maiores)
@@ -700,8 +706,6 @@ html.dark #app .login-container .login-card {
 .nx-card > .el-empty .el-empty__description, .nx-wait > .el-empty .el-empty__description, .nx-quick > .el-empty .el-empty__description { margin-top: 12px; }
 .nx-card > .el-empty .el-empty__bottom, .nx-wait > .el-empty .el-empty__bottom, .nx-quick > .el-empty .el-empty__bottom { margin-top: 12px; }
 .nx-card > .el-empty .el-empty__bottom p + .el-button, .nx-wait > .el-empty .el-empty__bottom p + .el-button { margin-top: 18px; }
-// aviso informativo dentro das listas do upstream (ex.: Minhas listas)
-.nx-tip { margin-bottom: 14px; border-radius: 12px; }
 
 // foto (ou inicial) do usuário ao lado do nome, no topo
 .setting .nx-avatar {
@@ -737,4 +741,45 @@ html.dark .nx-listpage .nx-dot.is-off { background: #6E6E7A; }
   #app .app-left, #app .app-header, #app .header-tags, .nx-noprint { display: none !important; }
   #app .app-main { padding: 0 !important; background: #fff !important; }
   body, html { background: #fff !important; }
+}
+
+// Chips dentro de tabelas (ex.: e-mail do responsável): nunca estouram a coluna e não ficam em caixa alta
+.el-table .cell .el-tag {
+  max-width: 100%; box-sizing: border-box; text-transform: none; letter-spacing: 0; font-weight: 600; font-size: 12px;
+  height: auto; min-height: 24px; white-space: normal; overflow-wrap: anywhere; line-height: 1.35; text-align: left;
+}
+.el-table .cell .el-tag .el-tag__content { overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+
+// ---------- tabelas em cartões no celular (ver mobile-tables.js) ----------
+html.nx-m-cards {
+  .el-table { overflow: visible; background: transparent; }
+  .el-table .el-table__header-wrapper { display: none; }
+  .el-table .el-table__inner-wrapper::before { display: none; }
+  .el-table .el-table__body-wrapper { overflow: visible; }
+  .el-table .el-table__body-wrapper .el-scrollbar__view { display: block; width: 100%; }
+  .el-table .el-table__body-wrapper .el-scrollbar__bar { display: none; }
+  .el-table .el-table__body { width: 100% !important; display: block; }
+  .el-table .el-table__body colgroup { display: none; }
+  .el-table .el-table__body tbody { display: block; padding: 10px 12px 2px; }
+  .el-table .el-table__body tr.el-table__row {
+    display: flex; flex-direction: column; width: 100%; box-sizing: border-box; margin-bottom: 10px; padding: 8px 12px; border-radius: 14px; background: var(--nx-bg);
+    &:hover > td.el-table__cell { background: transparent; }
+  }
+  .el-table .el-table__body td.el-table__cell {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; border: 0; padding: 5px 0; min-height: 30px; background: transparent;
+    position: static !important;
+    &::before {
+      content: attr(data-label); flex: 0 0 36%; max-width: 36%; font-size: 10px; font-weight: 700; letter-spacing: .08em;
+      text-transform: uppercase; color: var(--nx-text-subtle); overflow-wrap: anywhere; text-align: left;
+    }
+    &[data-empty] { display: none; }
+    &[data-label="Atualizado em"], &[data-label="Updated At"] { display: none; }
+    &[data-label=""]::before { display: none; }
+    .cell { flex: 1; min-width: 0; padding: 0; text-align: right; white-space: normal; overflow-wrap: anywhere; }
+    .nx-row-actions { justify-content: flex-end; flex-wrap: wrap; }
+  }
+  // célula da seleção (caixa de marcar) e das ações ficam sem rótulo e alinhadas
+  .el-table .el-table__body td.el-table-column--selection { justify-content: flex-start; }
+  .el-table .el-table__body td.el-table__cell:last-child:not(.el-table-column--selection) { padding-top: 8px; border-top: 1px solid var(--nx-divider); }
+  .el-table .el-table__empty-block { min-height: 0; }
 }

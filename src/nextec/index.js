@@ -12,6 +12,7 @@ import button from './button'
 import { NEXTEC_VERSION_LABEL } from './version'
 import { guardRequiredFields } from './required-guard'
 import { enterToSubmit } from './enter-submit'
+import { startMobileTables } from './mobile-tables'
 import { router, asyncRoutes } from '@/router'
 import { pinia } from '@/store'
 import { useAppStore } from '@/store/app'
@@ -71,6 +72,7 @@ guardRequiredFields()
 
 // 1d. Enter envia os diálogos
 enterToSubmit()
+startMobileTables()
 
 // 2. Menu agrupado e tela inicial
 applyNextecRoutes()
@@ -104,8 +106,11 @@ routeStore.addRoutes = (names = []) => {
   // Clientes liberados não faz sentido para o admin, que já vê tudo em Dispositivos
   const shared = asyncRoutes.find(r => r.name === 'My')?.children?.find(c => c.name === 'NxMyShared')
   if (shared) shared.meta = { ...shared.meta, hide: admin }
+  // Suporte avulso do usuário comum fica em Minha área; o administrador já o tem em Dispositivos
+  const mySupport = asyncRoutes.find(r => r.name === 'My')?.children?.find(c => c.name === 'NxMySupport')
+  if (mySupport) mySupport.meta = { ...mySupport.meta, hide: admin }
   if (!admin) flattenMyMenu()
-  return addRoutes.call(routeStore, admin ? names : [...names, 'NxHome', 'NxMyShared'])
+  return addRoutes.call(routeStore, admin ? names : [...names, 'NxHome', 'NxMyShared', 'NxMySupport'])
 }
 router.beforeEach((to, from) => {
   const entering = !from.name || from.path === '/login' || from.path.startsWith('/oauth')

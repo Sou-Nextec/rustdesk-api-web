@@ -126,3 +126,8 @@ O app RustDesk manda um heartbeat ao servidor da API com os IDs das conexões ab
 ## Patch 0014: quem vê a fila Aguardando atendimento
 
 Configuração `waiting_visibility` em `data/nextec-settings.json`: `off`, `admins` (padrão quando não definida) ou `all`. `GET /api/admin/my/support/waiting` aplica a regra no servidor: sem permissão devolve `enabled:false` e lista vazia. O admin muda em `POST /api/admin/nextec/support/settings {waiting_mode}` (registrado na auditoria como `support_settings`).
+
+## Patch 0015: textos e has_app
+
+Ajustes pequenos: mensagens de envio sem citar o rdgen e `GET /api/admin/my/support/waiting` passa a devolver o `has_app` real
+também para quem não pode ver a fila (a tela de Suporte avulso precisa saber se o link está disponível).

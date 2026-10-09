@@ -9,7 +9,7 @@
       </el-form>
     </el-card>
     <el-card class="list-body" shadow="hover">
-      <el-alert type="info" :closable="false" show-icon class="nx-tip" :title="T('MyAddressBookTips')"/>
+      <p class="nx-tip"><el-icon aria-hidden="true"><el-icon-InfoFilled/></el-icon><span>{{ T('MyAddressBookTips') }}</span></p>
       <el-table :data="list" v-loading="listRes.loading" border>
         <!--        <el-table-column prop="id" label="ID" align="center"/>-->
         <el-table-column prop="name" :label="T('Name')" align="center"/>
@@ -99,5 +99,9 @@
 </script>
 
 <style scoped lang="scss">
-
+  .nx-tip {
+    display: flex; align-items: flex-start; gap: 8px; margin: 0 0 14px; padding: 0 2px;
+    font-size: 13px; line-height: 1.5; color: var(--nx-text-muted);
+    .el-icon { flex: none; margin-top: 2px; color: var(--nx-text-subtle); }
+  }
 </style>
