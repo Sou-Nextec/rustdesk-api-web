@@ -35,6 +35,10 @@ if (faces.length) {
   document.head.appendChild(style)
 }
 
+// 0b. Versão do painel (vem do build da imagem; "dev" fora dela). Aparece no rodapé do menu e no menu do usuário.
+export const NEXTEC_VERSION = import.meta.env.VITE_NEXTEC_VERSION || 'dev'
+document.documentElement.style.setProperty('--nx-version', JSON.stringify('Painel ' + NEXTEC_VERSION))
+
 // 1. Logo e título da marca
 const appStore = useAppStore(pinia)
 appStore.setting.logo = markUrl

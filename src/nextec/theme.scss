@@ -705,3 +705,11 @@ html.dark .nx-danger-text { color: #FF9C93; }
   display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; align-items: center;
   .el-button { margin: 0 !important; }
 }
+
+// versão do painel no rodapé do menu lateral (--nx-version vem do build; ver src/nextec/index.js)
+#app .app-left::after {
+  content: var(--nx-version, '');
+  position: absolute; left: 20px; bottom: 10px;
+  font-size: 11px; color: rgba(255, 255, 255, 0.5); pointer-events: none;
+}
+#app .app-left:has(.el-menu--collapse)::after { display: none; }
