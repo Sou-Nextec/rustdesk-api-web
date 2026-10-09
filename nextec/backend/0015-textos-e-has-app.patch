@@ -1,0 +1,39 @@
+diff --git a/http/controller/admin/my/nextec_support.go b/http/controller/admin/my/nextec_support.go
+index de4fc2f..9cf9950 100644
+--- a/http/controller/admin/my/nextec_support.go
++++ b/http/controller/admin/my/nextec_support.go
+@@ -16,7 +16,7 @@ func (n *NextecSupportWaiting) List(c *gin.Context) {
+ 	u := service.AllService.UserService.CurUser(c)
+ 	if !service.NextecWaitingAllowed(u) {
+ 		// sem permissão: a tela some com o bloco e nenhum dado de dispositivo sai
+-		response.Success(c, &gin.H{"list": []service.NextecWaitingPeer{}, "has_app": false, "enabled": false, "mode": service.NextecWaitingMode()})
++		response.Success(c, &gin.H{"list": []service.NextecWaitingPeer{}, "has_app": service.NextecSupportAppGet() != nil, "enabled": false, "mode": service.NextecWaitingMode()})
+ 		return
+ 	}
+ 	response.Success(c, &gin.H{"list": service.NextecSupportWaiting(), "has_app": service.NextecSupportAppGet() != nil, "enabled": true, "mode": service.NextecWaitingMode()})
+diff --git a/http/controller/admin/nextec_support.go b/http/controller/admin/nextec_support.go
+index b794f11..01b9ef9 100644
+--- a/http/controller/admin/nextec_support.go
++++ b/http/controller/admin/nextec_support.go
+@@ -55,7 +55,7 @@ func (n *NextecSupport) Upload(c *gin.Context) {
+ 	u := service.AllService.UserService.CurUser(c)
+ 	a, err := service.NextecSupportAppSave(u, fh.Filename, f)
+ 	if err != nil {
+-		response.Fail(c, 101, "Arquivo inválido. Envie o aplicativo de suporte (.exe) gerado pelo rdgen, com até 300 MB.")
++		response.Fail(c, 101, "Arquivo inválido. Envie o aplicativo de suporte (.exe), com até 300 MB.")
+ 		return
+ 	}
+ 	service.NextecSecretAuditAdd(u, "", "support_upload", nextecIP(c), "")
+diff --git a/http/controller/admin/nextec_update.go b/http/controller/admin/nextec_update.go
+index aa08796..8cbfc64 100644
+--- a/http/controller/admin/nextec_update.go
++++ b/http/controller/admin/nextec_update.go
+@@ -28,7 +28,7 @@ func nextecUpdateMsg(err error) string {
+ 	case errors.Is(err, service.ErrNextecBadVersion):
+ 		return "Versão inválida. Use números separados por ponto, como 2.0.1."
+ 	case errors.Is(err, service.ErrNextecBadFile):
+-		return "Arquivo inválido. Envie o instalador .msi (ou .exe) gerado pelo rdgen, com até 300 MB."
++		return "Arquivo inválido. Envie o instalador .msi (ou .exe), com até 300 MB."
+ 	case errors.Is(err, service.ErrNextecVersionTaken):
+ 		return "Essa versão já foi enviada. Use um número novo."
+ 	case errors.Is(err, service.ErrNextecInUse):

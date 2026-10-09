@@ -20,7 +20,7 @@
     </div>
 
     <div class="nx-bar">
-      <p class="nx-bar-text">Envie o instalador gerado no rdgen, escolha quem recebe e as máquinas se atualizam sozinhas.</p>
+      <p class="nx-bar-text">Envie o instalador, escolha quem recebe e as máquinas se atualizam sozinhas.</p>
       <div class="nx-bar-right">
         <el-button :loading="loading" @click="load"><el-icon><el-icon-Refresh/></el-icon><span>Atualizar</span></el-button>
         <el-button @click="installVisible = true">Instalar em uma máquina</el-button>
@@ -81,7 +81,7 @@
         </el-table-column>
       </el-table>
       <el-empty v-if="!loading && !releases.length" :image-size="72" description="Nenhuma versão enviada ainda.">
-        <p class="nx-empty-hint">Gere o instalador MSI no rdgen e envie aqui. Depois, publique para um grupo piloto e, se estiver tudo certo, para todos.</p>
+        <p class="nx-empty-hint">Envie o instalador (.msi) aqui. Depois, publique para um grupo piloto e, se estiver tudo certo, para todos.</p>
         <el-button type="primary" @click="openUpload">Enviar nova versão</el-button>
       </el-empty>
     </div>
@@ -148,7 +148,7 @@
           <el-input v-model="up.version" placeholder="Ex.: 2.0.1" :disabled="up.busy"/>
           <p class="nx-help">Use números separados por ponto. Cada versão é enviada uma vez.</p>
         </el-form-item>
-        <el-form-item label="Instalador (.msi gerado pelo rdgen)" required class="is-required">
+        <el-form-item label="Instalador (.msi)" required class="is-required">
           <input ref="fileInput" type="file" accept=".msi,.exe" class="nx-file" :disabled="up.busy" @change="onFile">
           <p v-if="up.file" class="nx-help">{{ up.file.name }} · {{ size(up.file.size) }}</p>
         </el-form-item>
@@ -308,7 +308,7 @@
     const f = e.target.files && e.target.files[0]
     up.error = ''
     if (!f) { up.file = null; return }
-    if (!/\.(msi|exe)$/i.test(f.name)) { up.file = null; up.error = 'Escolha o instalador .msi (ou .exe) gerado pelo rdgen.'; return }
+    if (!/\.(msi|exe)$/i.test(f.name)) { up.file = null; up.error = 'Escolha o instalador .msi (ou .exe).'; return }
     if (f.size > maxSize.value) { up.file = null; up.error = `O arquivo passa do limite de ${size(maxSize.value)}.`; return }
     up.file = f
   }

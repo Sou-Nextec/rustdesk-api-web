@@ -17,7 +17,7 @@
 
   const visible = defineModel({ type: Boolean, default: false })
   // tira o título geral e a frase de apresentação; o diálogo já tem título
-  const html = computed(() => marked.parse(changelog.replace(/^# .*\n+[^\n#]*\n+/, '')))
+  const html = computed(() => marked.parse(changelog.replace(/\r\n/g, '\n').replace(/^# .*\n+[^\n#]*\n+/, '')))
 </script>
 
 <style lang="scss">

@@ -2,6 +2,15 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.8.0
+
+- **Celular:** as tabelas do painel (Usuários, Equipes, Logins, Dispositivos, Clientes e as demais) viram **cartões**, com rótulo em cada campo e os botões de ação à vista, sem precisar rolar para o lado. No computador nada muda.
+- Chips de e-mail e nomes longos nas tabelas deixaram de estourar a coluna.
+- Topo no celular: o título da página cabe inteiro.
+- **Suporte avulso** agora fica também em Minha área para todos os usuários: link de suporte com Copiar link e Copiar mensagem, mais a fila. Enviar o aplicativo e escolher quem vê a fila continuam só com administradores.
+- Textos de envio do aplicativo e do instalador não citam mais o rdgen.
+- Minhas listas: o aviso da lista padrão virou texto discreto, sem bloco colorido.
+
 ## 2.7.1
 
 - Telas Suporte avulso, Atualizações do app, Políticas do app, Conexões ativas e Relatório mensal agora ocupam a largura toda, alinhadas com o topo, e os estados vazios ganharam espaçamento.
