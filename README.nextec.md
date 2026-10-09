@@ -30,6 +30,7 @@ Tudo que é da Nextec fica em arquivos próprios:
 | `src/nextec/views/Secrets.vue`, `connect.js` e `nextec/atualizacao/Agente-Senha-Nextec.ps1` | Cofre de senhas: troca automática da senha do RustDesk em servidores (regra por grupo ou máquina), "Conectar" com um clique, ver senha e auditoria (patch 0008) |
 | `src/nextec/views/Support.vue`, `WaitingList.vue` e `upload.js` | Suporte avulso: app de suporte para o link público /suporte e fila Aguardando atendimento (patch 0010) |
 | `src/nextec/views/Policies.vue` e `Sessions.vue` | Políticas do app por cliente ou máquina (recebidas pelo app no heartbeat) e conexões ativas com desconectar (patch 0012) |
+| `src/nextec/views/Report.vue` | Relatório mensal por cliente, chamado na conexão (connect.js), CSV e impressão (patch 0013) |
 | `src/nextec/views/Updates.vue` | Atualizações do app: envio do instalador, publicação (piloto, todos, suspender, voltar versão) e acompanhamento por máquina (patch 0009) |
 | `src/nextec/views/QuickAccess.vue` e `quick-access.js` | Acesso rápido (favoritos e recentes, guardados no navegador) no Início e em Dispositivos |
 | `src/nextec/version.js` e `nextec/VERSION` | Versão do painel (x.y.z): o workflow soma o commit e o painel mostra em Novidades (CHANGELOG.md) |

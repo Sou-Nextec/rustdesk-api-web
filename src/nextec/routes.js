@@ -13,7 +13,7 @@ const GROUPS = [
   // quem acessa o quê: permissões por cliente e as listas que aparecem no app RustDesk
   { name: 'NxGroupAddressBook', title: 'NxGroupAddressBook', icon: 'Key', children: ['NxClientAccess', 'UserAddressBookName', 'UserAddressBook', 'UserTag'] },
   { name: 'NxGroupAccess', title: 'NxGroupAccess', icon: 'Lock', children: ['NxSecrets', 'NxPolicies', 'NxSessions', 'Oauth', 'UserToken', 'ShareRecord'] },
-  { name: 'NxGroupAudit', title: 'NxGroupAudit', icon: 'Tickets', children: ['LoginLog', 'AuditConn', 'AuditFile'] },
+  { name: 'NxGroupAudit', title: 'NxGroupAudit', icon: 'Tickets', children: ['NxReport', 'LoginLog', 'AuditConn', 'AuditFile'] },
   { name: 'NxGroupServer', title: 'NxGroupServer', icon: 'Setting', children: ['ServerCmd'] },
 ]
 
@@ -61,6 +61,13 @@ export function applyNextecRoutes () {
     name: 'NxSessions',
     meta: { title: 'NxSessions', icon: 'Connection' },
     component: () => import('./views/Sessions.vue'),
+  })
+  // Relatório mensal de acessos por cliente, com chamado e exportação (só admin; patch 0013)
+  system.children.push({
+    path: '/user/report',
+    name: 'NxReport',
+    meta: { title: 'NxReport', icon: 'Tickets' },
+    component: () => import('./views/Report.vue'),
   })
   const byName = new Map(system.children.map(c => [c.name, c]))
   const used = new Set()
