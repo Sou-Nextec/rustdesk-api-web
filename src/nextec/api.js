@@ -27,3 +27,12 @@ export function sharedStatus (data) {
 export function setAvatar (avatar) {
   return request({ url: '/my/profile/avatar', method: 'post', data: { avatar } })
 }
+
+// patch 0007: modelos de cliente (subgrupos e permissões) guardados no servidor, só admin
+export function getClientTemplates () {
+  return request({ url: '/nextec/client-templates' })
+}
+
+export function saveClientTemplates (templates) {
+  return request({ url: '/nextec/client-templates', method: 'post', data: { templates } })
+}

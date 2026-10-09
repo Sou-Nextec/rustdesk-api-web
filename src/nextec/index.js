@@ -10,6 +10,7 @@ import { translateHardcodedHeaders } from './labels'
 import tableColumn from './table-column'
 import button from './button'
 import { guardRequiredFields } from './required-guard'
+import { enterToSubmit } from './enter-submit'
 import { router, asyncRoutes } from '@/router'
 import { pinia } from '@/store'
 import { useAppStore } from '@/store/app'
@@ -66,6 +67,9 @@ translateHardcodedHeaders()
 
 // 1c. Campos obrigatórios: bloqueia o envio de formulários com campo * vazio
 guardRequiredFields()
+
+// 1d. Enter envia os diálogos
+enterToSubmit()
 
 // 2. Menu agrupado e tela inicial
 applyNextecRoutes()
