@@ -4,10 +4,14 @@
 import { getToken } from '@/utils/auth'
 
 function abrir (url) {
+  // Link no DOM e clique real: o Chrome bloqueia (about:blank#blocked) o clique em link solto depois de um fetch
   const a = document.createElement('a')
   a.href = url
-  a.target = '_self'
+  a.rel = 'noopener'
+  a.style.display = 'none'
+  document.body.appendChild(a)
   a.click()
+  setTimeout(() => a.remove(), 1000)
 }
 
 export async function connectDevice (id) {
