@@ -15,6 +15,7 @@
                  @change="page = 1">
         <el-option label="Online" value="online"/>
         <el-option label="Offline" value="offline"/>
+        <el-option label="Favoritos" value="fav"/>
       </el-select>
       <div class="nx-bar-right">
         <el-button :loading="loading" @click="load">
@@ -44,9 +45,16 @@
       <template v-if="selected.length">
         <span class="nx-sep">·</span>
         <strong>{{ selected.length }} selecionado(s)</strong>
+        <el-button size="small" @click="openBatchMove">Mover para um cliente</el-button>
         <el-button size="small" @click="openBatchList">Salvar em uma lista</el-button>
         <el-button size="small" type="danger" @click="batchDelete">Excluir</el-button>
       </template>
+      <label class="nx-sort">
+        <span>Ordenar por</span>
+        <el-select v-model="sortMode" size="small" aria-label="Ordenar por" @change="page = 1">
+          <el-option v-for="o in sortOptions" :key="o.value" :label="o.label" :value="o.value"/>
+        </el-select>
+      </label>
     </div>
 
     <!-- tabela -->
@@ -54,8 +62,13 @@
       <el-table :data="pageRows" v-loading="loading" row-key="row_id" aria-label="Dispositivos"
                 @selection-change="v => selected = v" empty-text=" ">
         <el-table-column type="selection" width="44" reserve-selection/>
-        <el-table-column label="ID" min-width="140">
+        <el-table-column label="ID" min-width="175">
           <template #default="{ row }">
+            <button type="button" class="nx-star" :class="{ 'is-on': qa.isFavorite(row.id) }" :aria-pressed="qa.isFavorite(row.id)"
+                    :aria-label="(qa.isFavorite(row.id) ? 'Tirar dos favoritos: ' : 'Favoritar: ') + (row.alias || row.hostname || row.id)"
+                    @click="toggleFav(row)">
+              <el-icon><component :is="qa.isFavorite(row.id) ? 'el-icon-StarFilled' : 'el-icon-Star'"/></el-icon>
+            </button>
             <span class="nx-id">{{ row.id }}</span>
             <button type="button" class="nx-copy" :aria-label="'Copiar ID ' + row.id" @click="copy(row.id)">
               <el-icon><el-icon-CopyDocument/></el-icon>
@@ -96,6 +109,7 @@
                 </el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
+                    <el-dropdown-item command="details">Ver detalhes</el-dropdown-item>
                     <el-dropdown-item v-if="appStore.setting.appConfig.web_client" command="web">Abrir no navegador</el-dropdown-item>
                     <el-dropdown-item command="list">Salvar em uma lista</el-dropdown-item>
                     <el-dropdown-item command="delete" divided><span class="nx-danger">Excluir</span></el-dropdown-item>
@@ -154,6 +168,44 @@
       <template #footer>
         <el-button @click="form.visible = false">Cancelar</el-button>
         <el-button type="primary" :loading="form.saving" @click="saveForm">Salvar</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ficha da máquina -->
+    <el-drawer v-model="details.visible" :title="details.row ? (details.row.alias || details.row.hostname || details.row.id) : ''" size="min(440px, 100vw)">
+      <template v-if="details.row">
+        <div class="nx-drawer-status">
+          <span class="nx-dot" :class="isOnline(details.row) ? 'is-on' : 'is-off'" aria-hidden="true"></span>
+          <span>{{ isOnline(details.row) ? 'Online agora' : (details.row.last_online_time ? 'Visto ' + timeAgo(details.row.last_online_time * 1000) : 'Nunca ficou online') }}</span>
+        </div>
+        <dl class="nx-kv">
+          <template v-for="f in detailFields" :key="f.label">
+            <dt>{{ f.label }}</dt>
+            <dd>{{ f.value || '-' }}</dd>
+          </template>
+        </dl>
+      </template>
+      <template #footer>
+        <el-button @click="details.visible = false">Fechar</el-button>
+        <el-button @click="openForm(details.row); details.visible = false">Editar</el-button>
+        <el-button type="primary" @click="connectByClient(details.row.id)">Conectar</el-button>
+      </template>
+    </el-drawer>
+
+    <!-- mover para um cliente (vários) -->
+    <el-dialog v-model="batchMove.visible" title="Mover para um cliente" width="480px">
+      <el-form label-position="top" class="nx-form" @submit.prevent>
+        <p class="nx-muted">{{ selected.length }} dispositivo(s) passam para o cliente escolhido.</p>
+        <el-form-item label="Cliente" required class="is-required">
+          <el-select v-model="batchMove.group_id" filterable placeholder="Escolha o cliente">
+            <el-option label="Sem cliente" :value="0"/>
+            <el-option v-for="g in groups" :key="g.id" :label="g.name" :value="g.id"/>
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="batchMove.visible = false">Cancelar</el-button>
+        <el-button type="primary" :loading="batchMove.saving" :disabled="batchMove.group_id === null" @click="saveBatchMove">Mover</el-button>
       </template>
     </el-dialog>
 
@@ -229,6 +281,7 @@
   import { useAppStore } from '@/store/app'
   import { timeAgo } from '@/utils/time'
   import { connectDevice as connectByClient } from '@/nextec/connect'
+  import { useQuickAccess } from '@/nextec/quick-access'
   import { toWebClientLink } from '@/utils/webclient'
   import { downBlob, jsonToCsv } from '@/utils/file'
   import createABForm from '@/views/peer/createABForm.vue'
@@ -260,6 +313,12 @@
     return !!parent && groupName(groupId).startsWith(parent + ' / ')
   }
 
+  const qa = useQuickAccess()
+  const toggleFav = (row) => {
+    const on = qa.toggleFavorite(row.id, row.alias || row.hostname || '')
+    ok(on ? 'Adicionado aos favoritos.' : 'Removido dos favoritos.')
+  }
+
   const isOnline = row => row.last_online_time && (Date.now() / 1000 - row.last_online_time) < 60
   const onlineCount = computed(() => all.value.filter(isOnline).length)
 
@@ -267,6 +326,17 @@
   const q = ref('')
   const clientFilter = ref(null)
   const statusFilter = ref(null)
+  const sortOptions = [
+    { value: 'online', label: 'Online primeiro' },
+    { value: 'recent', label: 'Visto há menos tempo' },
+    { value: 'client', label: 'Cliente (A a Z)' },
+    { value: 'name', label: 'Nome (A a Z)' },
+  ]
+  const SORT_KEY = 'nx_peer_sort'
+  const sortMode = ref('online')
+  try { const v = localStorage.getItem(SORT_KEY); if (sortOptions.some(o => o.value === v)) sortMode.value = v } catch (e) { /* preferência opcional */ }
+  watch(sortMode, v => { try { localStorage.setItem(SORT_KEY, v) } catch (e) { /* preferência opcional */ } })
+  const byText = (a, b) => String(a || '').localeCompare(String(b || ''), 'pt-BR', { sensitivity: 'base' })
   const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
   const filtered = computed(() => {
     const term = norm(q.value.trim())
@@ -274,9 +344,17 @@
       if (clientFilter.value !== null && clientFilter.value !== '' && !inClient(r.group_id || 0, clientFilter.value)) return false
       if (statusFilter.value === 'online' && !isOnline(r)) return false
       if (statusFilter.value === 'offline' && isOnline(r)) return false
+      if (statusFilter.value === 'fav' && !qa.isFavorite(r.id)) return false
       if (!term) return true
       return [r.id, r.alias, r.hostname, r.username, r.last_online_ip, groupName(r.group_id)].some(v => norm(v).includes(term))
-    }).sort((a, b) => (b.last_online_time || 0) - (a.last_online_time || 0))
+    }).sort((a, b) => {
+      const recent = (b.last_online_time || 0) - (a.last_online_time || 0)
+      const name = x => x.alias || x.hostname || x.id
+      if (sortMode.value === 'client') return byText(groupName(a.group_id) || '~', groupName(b.group_id) || '~') || byText(name(a), name(b))
+      if (sortMode.value === 'name') return byText(name(a), name(b))
+      if (sortMode.value === 'online') return Number(!!isOnline(b)) - Number(!!isOnline(a)) || recent || byText(name(a), name(b))
+      return recent
+    })
   })
   const clearFilters = () => { q.value = ''; clientFilter.value = null; statusFilter.value = null }
   // pesquisa do topo: Enter abre esta tela com ?q=
@@ -320,6 +398,7 @@
     if (cmd === 'import') importVisible.value = true
   }
   const onRow = (cmd, row) => {
+    if (cmd === 'details') { details.row = row; details.visible = true }
     if (cmd === 'web') toWebClientLink(row)
     if (cmd === 'list') { listForm.row = row; listForm.visible = true }
     if (cmd === 'delete') delOne(row)
@@ -354,6 +433,39 @@
     if (!c) return
     const res = await batchRemove({ row_ids: selected.value.map(r => r.row_id) }).catch(() => false)
     if (res) { ok('Dispositivos excluídos.'); selected.value = []; load() }
+  }
+
+  // ficha da máquina
+  const details = reactive({ visible: false, row: null })
+  const fmtDate = v => (v ? new Date(v).toLocaleString('pt-BR') : '')
+  const detailFields = computed(() => {
+    const r = details.row
+    if (!r) return []
+    return [
+      { label: 'ID', value: r.id }, { label: 'Apelido', value: r.alias }, { label: 'Nome do computador', value: r.hostname },
+      { label: 'Usuário', value: r.username }, { label: 'Cliente', value: groupName(r.group_id) || 'Sem cliente' },
+      { label: 'Sistema operacional', value: r.os }, { label: 'Processador', value: r.cpu }, { label: 'Memória', value: r.memory },
+      { label: 'Versão do app', value: r.version }, { label: 'Último IP', value: r.last_online_ip },
+      { label: 'Última vez online', value: r.last_online_time ? fmtDate(r.last_online_time * 1000) : '' },
+      { label: 'Cadastrado em', value: fmtDate(r.created_at) }, { label: 'UUID', value: r.uuid },
+    ]
+  })
+
+  // mover vários para um cliente
+  const batchMove = reactive({ visible: false, saving: false, group_id: null })
+  const openBatchMove = () => { batchMove.group_id = null; batchMove.visible = true }
+  const saveBatchMove = async () => {
+    if (batchMove.group_id === null) return ElMessage.warning('Escolha o cliente.')
+    batchMove.saving = true
+    const results = await Promise.all(selected.value.map(r => update({
+      ...Object.fromEntries(Object.keys(empty()).map(k => [k, r[k] ?? empty()[k]])), row_id: r.row_id, group_id: batchMove.group_id,
+    }).catch(() => false)))
+    batchMove.saving = false
+    const done = results.filter(Boolean).length
+    ElMessage[done === results.length ? 'success' : 'warning'](`${done} de ${results.length} dispositivo(s) movido(s).`)
+    batchMove.visible = false
+    selected.value = []
+    load()
   }
 
   // salvar em lista
@@ -420,8 +532,8 @@
     display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 16px 18px; margin-bottom: 12px;
     background: var(--nx-surface); border-radius: var(--nx-radius-card); box-shadow: var(--nx-shadow-card);
   }
-  .nx-search { flex: 1 1 320px; max-width: 460px; }
-  .nx-filter { width: 220px; }
+  .nx-search { flex: 1 1 240px; max-width: 400px; }
+  .nx-filter { width: 200px; }
   .nx-filter-sm { width: 150px; }
   .nx-bar-right { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; .el-button + .el-button { margin-left: 0; } }
 
@@ -440,6 +552,15 @@
   .nx-card { background: var(--nx-surface); border-radius: var(--nx-radius-card); box-shadow: var(--nx-shadow-card); overflow: hidden; }
   .nx-id { font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; font-size: 13px; white-space: nowrap; }
   :deep(td .cell:has(.nx-id)) { white-space: nowrap; }
+  .nx-star {
+    margin-right: 6px; border: none; background: transparent; cursor: pointer; color: var(--nx-text-subtle); padding: 2px; border-radius: 6px;
+    vertical-align: middle; &:hover { color: #B7791F; background: var(--nx-field); } &.is-on { color: #D69E2E; }
+    &:focus-visible { outline: 2px solid var(--nx-focus); outline-offset: 1px; }
+  }
+  .nx-sort { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font-size: 13px; .el-select { width: 190px; } }
+  .nx-kv { margin: 0; display: grid; grid-template-columns: 150px 1fr; gap: 10px 12px; font-size: 13px;
+    dt { color: var(--nx-text-muted); } dd { margin: 0; color: var(--nx-text); word-break: break-word; } }
+  .nx-drawer-status { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; font-size: 14px; font-weight: 600; color: var(--nx-text); }
   .nx-copy {
     margin-left: 6px; border: none; background: transparent; cursor: pointer; color: var(--nx-text-subtle); padding: 2px; border-radius: 6px;
     vertical-align: middle; &:hover { color: var(--nx-accent); background: var(--nx-tint); }

@@ -2,6 +2,7 @@
 // (rustdesk://<id>?password=...), então quem pode acessar a máquina só clica e entra.
 // Sem permissão, sem rede ou em servidor sem o cofre, cai no link simples (rustdesk://<id>).
 import { getToken } from '@/utils/auth'
+import { useQuickAccess } from './quick-access'
 
 function abrir (url) {
   // Link no DOM e clique real: o Chrome bloqueia (about:blank#blocked) o clique em link solto depois de um fetch
@@ -16,6 +17,7 @@ function abrir (url) {
 
 export async function connectDevice (id) {
   id = String(id).replace(/\s+/g, '') // o painel mostra o ID em grupos (536 822 159); o link precisa dele sem espaços
+  try { useQuickAccess().touch(id) } catch (e) { /* recentes são opcionais */ }
   const plain = `rustdesk://${encodeURIComponent(id)}`
   try {
     const res = await fetch(`${import.meta.env.VITE_SERVER_API}/my/connect-link?id=${encodeURIComponent(id)}`, {
