@@ -51,13 +51,14 @@
           <el-dropdown-item @click="$router.push('/')">{{ T('Userinfo') }}</el-dropdown-item>
           <el-dropdown-item @click="$router.push('/my/loginLog')">{{ T('NxMyLogins') }}</el-dropdown-item>
           <el-dropdown-item @click="showChangePwd">{{ T('ChangePassword') }}</el-dropdown-item>
-          <el-dropdown-item disabled>Painel {{ version }}</el-dropdown-item>
+          <el-dropdown-item @click="whatsNewVisible = true">Novidades ({{ versionLabel }})</el-dropdown-item>
           <el-dropdown-item divided @click="logout">{{ T('Logout') }}</el-dropdown-item>
         </el-dropdown-menu>
       </template>
     </el-dropdown>
     <changePwdDialog v-model:visible="changePwdVisible"></changePwdDialog>
     <ProfilePhoto v-model="photoVisible"/>
+    <WhatsNew v-model="whatsNewVisible"/>
   </div>
 </template>
 
@@ -66,6 +67,8 @@
   import { useAppStore } from '@/store/app'
   import changePwdDialog from '@/components/changePwdDialog.vue'
   import ProfilePhoto from '@/nextec/views/ProfilePhoto.vue'
+  import WhatsNew from '@/nextec/views/WhatsNew.vue'
+  import { NEXTEC_SEMVER, NEXTEC_VERSION_LABEL as versionLabel, NEXTEC_IS_FEATURE_RELEASE } from '@/nextec/version'
   import { ref, watch } from 'vue'
   import { T } from '@/utils/i18n'
   import { useDark } from '@vueuse/core'
@@ -82,7 +85,14 @@
 
   const changePwdVisible = ref(false)
   const photoVisible = ref(false)
-  const version = import.meta.env.VITE_NEXTEC_VERSION || 'dev'
+  const whatsNewVisible = ref(false)
+  // abre as Novidades uma vez por versão nova com mudança visível (x.y.0)
+  try {
+    if (NEXTEC_IS_FEATURE_RELEASE && localStorage.getItem('nx-novidades') !== NEXTEC_SEMVER) {
+      localStorage.setItem('nx-novidades', NEXTEC_SEMVER)
+      whatsNewVisible.value = true
+    }
+  } catch (e) { /* storage indisponível: só não abre sozinho */ }
   // foto que não carrega (ex.: URL que exige login) volta para a inicial
   const avatarBroken = ref(false)
   watch(() => user.avatar, () => { avatarBroken.value = false })

@@ -9,6 +9,7 @@ import { applyNextecRoutes } from './routes'
 import { translateHardcodedHeaders } from './labels'
 import tableColumn from './table-column'
 import button from './button'
+import { NEXTEC_VERSION_LABEL } from './version'
 import { guardRequiredFields } from './required-guard'
 import { enterToSubmit } from './enter-submit'
 import { router, asyncRoutes } from '@/router'
@@ -37,8 +38,8 @@ if (faces.length) {
 }
 
 // 0b. Versão do painel (vem do build da imagem; "dev" fora dela). Aparece no rodapé do menu e no menu do usuário.
-export const NEXTEC_VERSION = import.meta.env.VITE_NEXTEC_VERSION || 'dev'
-document.documentElement.style.setProperty('--nx-version', JSON.stringify('Painel ' + NEXTEC_VERSION))
+export { NEXTEC_SEMVER, NEXTEC_BUILD, NEXTEC_VERSION_LABEL } from './version'
+document.documentElement.style.setProperty('--nx-version', JSON.stringify('Painel ' + NEXTEC_VERSION_LABEL))
 
 // 1. Logo e título da marca
 const appStore = useAppStore(pinia)
