@@ -1,5 +1,7 @@
 # Atualização dos clientes (Windows)
 
+**Instalar em um cliente já com o cliente certo:** use o comando de Dispositivos > Clientes > Comando de instalação (acrescenta `-GrupoId` e `-ChaveCliente`).
+
 **A partir da versão 2.3.0 do painel, o jeito principal é pelo próprio painel (Dispositivos > Atualizações do app): não precisa mais de bucket, `Publicar-Versao.ps1` nem `versao.json`.** O `Instalar-Nextec.ps1` usa o painel por padrão. O restante deste arquivo descreve o site no R2, que continua funcionando com `-UrlBase https://atualizar.nex.tec.br`.
 
 Os clientes recebem atualização de um site nosso (`https://atualizar.nex.tec.br`, um bucket do Cloudflare R2),

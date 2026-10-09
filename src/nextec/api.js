@@ -56,3 +56,16 @@ export const updatesDelete = (id) => request({ url: '/nextec/updates/delete', me
 export const supportInfo = () => request({ url: '/nextec/support' })
 export const supportDelete = () => request({ url: '/nextec/support/delete', method: 'post', data: {} })
 export const supportWaiting = () => request({ url: '/my/support/waiting' })
+
+// patches 0011 a 0013: instalação por cliente, políticas do app, conexões ativas, chamado e relatório
+export const installToken = (group_id) => request({ url: '/nextec/install-token', params: { group_id } })
+export const installRevoke = () => request({ url: '/nextec/install-token/revoke', method: 'post', data: {} })
+export const policiesList = () => request({ url: '/nextec/policies' })
+export const policySave = (data) => request({ url: '/nextec/policies', method: 'post', data })
+export const sessionsList = () => request({ url: '/nextec/sessions' })
+export const sessionDisconnect = (peer_id, conn_id) => request({ url: '/nextec/sessions/disconnect', method: 'post', data: { peer_id, conn_id } })
+export const ticketSettings = () => request({ url: '/nextec/ticket-settings' })
+export const ticketSettingsSave = (data) => request({ url: '/nextec/ticket-settings', method: 'post', data })
+export const reportMonth = (month, group_id) => request({ url: '/nextec/report', params: { month, group_id: group_id || undefined } })
+export const connectSettings = () => request({ url: '/my/connect-settings' })
+export const connectNote = (id, ticket, note) => request({ url: '/my/connect-note', method: 'post', data: { id, ticket, note } })

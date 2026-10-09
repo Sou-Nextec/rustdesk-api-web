@@ -1,0 +1,469 @@
+diff --git a/cmd/apimain.go b/cmd/apimain.go
+index 52ee189..ac85201 100644
+--- a/cmd/apimain.go
++++ b/cmd/apimain.go
+@@ -220,7 +220,7 @@ func InitGlobal() {
+ 	if err := global.DB.AutoMigrate(&model.NextecSecretPolicy{}, &model.NextecDeviceSecret{}, &model.NextecSecretAudit{}); err != nil {
+ 		global.Logger.Error("migrate nextec secrets: ", err)
+ 	}
+-	if err := global.DB.AutoMigrate(&model.NextecAppRelease{}, &model.NextecAppInstall{}, &model.NextecPendingAssign{}); err != nil {
++	if err := global.DB.AutoMigrate(&model.NextecAppRelease{}, &model.NextecAppInstall{}, &model.NextecPendingAssign{}, &model.NextecAppPolicy{}); err != nil {
+ 		global.Logger.Error("migrate nextec updates: ", err)
+ 	}
+ }
+diff --git a/http/controller/admin/nextec_control.go b/http/controller/admin/nextec_control.go
+new file mode 100644
+index 0000000..46d6e75
+--- /dev/null
++++ b/http/controller/admin/nextec_control.go
+@@ -0,0 +1,88 @@
++package admin
++
++import (
++	"errors"
++
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/http/response"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++)
++
++// NextecControl: políticas do app e conexões ativas (somente admin).
++type NextecControl struct{}
++
++type nextecAppPolicyForm struct {
++	Kind    string            `json:"kind" binding:"required"`
++	Ref     string            `json:"ref" binding:"required"`
++	Enabled bool              `json:"enabled"`
++	Options map[string]string `json:"options"`
++	Remove  bool              `json:"remove"`
++}
++
++type nextecDisconnectForm struct {
++	PeerId string `json:"peer_id" binding:"required"`
++	ConnId int64  `json:"conn_id"`
++}
++
++// Policies lista as políticas e as opções que o painel gerencia
++// @Router /admin/nextec/policies [get]
++func (n *NextecControl) Policies(c *gin.Context) {
++	opts := map[string][]string{}
++	for k, v := range service.NextecPolicyOptions {
++		opts[k] = v
++	}
++	response.Success(c, &gin.H{"list": service.NextecPolicyList(), "options": opts})
++}
++
++// PolicySave cria, altera ou remove uma política
++// @Router /admin/nextec/policies [post]
++func (n *NextecControl) PolicySave(c *gin.Context) {
++	f := &nextecAppPolicyForm{}
++	if err := c.ShouldBindJSON(f); err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError")+err.Error())
++		return
++	}
++	u := service.AllService.UserService.CurUser(c)
++	if f.Remove {
++		if err := service.NextecPolicyDelete(f.Kind, f.Ref); err != nil {
++			response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
++			return
++		}
++		service.NextecSecretAuditAdd(u, f.Kind+":"+f.Ref, "app_policy_remove", nextecIP(c), "")
++		response.Success(c, nil)
++		return
++	}
++	p, err := service.NextecPolicyUpsert(f.Kind, f.Ref, f.Enabled, f.Options)
++	if err != nil {
++		response.Fail(c, 101, "Política inválida. Confira o alvo e os valores.")
++		return
++	}
++	service.NextecSecretAuditAdd(u, f.Kind+":"+f.Ref, "app_policy_set", nextecIP(c), p.Options)
++	response.Success(c, p)
++}
++
++// Sessions lista as conexões abertas agora
++// @Router /admin/nextec/sessions [get]
++func (n *NextecControl) Sessions(c *gin.Context) {
++	response.Success(c, &gin.H{"list": service.NextecSessionsActive()})
++}
++
++// Disconnect pede ao app que derrube uma conexão
++// @Router /admin/nextec/sessions/disconnect [post]
++func (n *NextecControl) Disconnect(c *gin.Context) {
++	f := &nextecDisconnectForm{}
++	if err := c.ShouldBindJSON(f); err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError")+err.Error())
++		return
++	}
++	if err := service.NextecSessionDisconnect(f.PeerId, f.ConnId); err != nil {
++		msg := "Não foi possível desconectar."
++		if errors.Is(err, service.ErrNextecSessionGone) {
++			msg = "Essa conexão não está mais ativa."
++		}
++		response.Fail(c, 101, msg)
++		return
++	}
++	service.NextecSecretAuditAdd(service.AllService.UserService.CurUser(c), f.PeerId, "session_disconnect", nextecIP(c), "")
++	response.Success(c, nil)
++}
+diff --git a/http/controller/api/index.go b/http/controller/api/index.go
+index 270b6b7..4166834 100644
+--- a/http/controller/api/index.go
++++ b/http/controller/api/index.go
+@@ -59,6 +59,11 @@ func (i *Index) Heartbeat(c *gin.Context) {
+ 		upp := &model.Peer{RowId: peer.RowId, LastOnlineTime: time.Now().Unix(), LastOnlineIp: c.ClientIP()}
+ 		service.AllService.PeerService.Update(upp)
+ 	}
++	// Nextec: políticas do app e derrubar conexão. Só para quem prova ser o dispositivo (uuid igual ao cadastrado).
++	if peer.Uuid != "" && peer.Uuid == info.Uuid {
++		c.JSON(http.StatusOK, service.NextecHeartbeat(info.Id, info.Conns, info.ModifiedAt))
++		return
++	}
+ 	c.JSON(http.StatusOK, gin.H{})
+ }
+ 
+diff --git a/http/request/api/peer.go b/http/request/api/peer.go
+index 0b51181..fbe29c5 100644
+--- a/http/request/api/peer.go
++++ b/http/request/api/peer.go
+@@ -76,4 +76,7 @@ type PeerInfoInHeartbeat struct {
+ 	Id   string `json:"id"`
+ 	Uuid string `json:"uuid"`
+ 	Ver  int    `json:"ver"`
++	// Nextec: conexões abertas e carimbo da última política recebida (o app envia nos dois)
++	Conns      []int64 `json:"conns"`
++	ModifiedAt int64   `json:"modified_at"`
+ }
+diff --git a/http/router/admin.go b/http/router/admin.go
+index 7e1b3e3..fe0d918 100644
+--- a/http/router/admin.go
++++ b/http/router/admin.go
+@@ -93,6 +93,12 @@ func NextecBind(adg *gin.RouterGroup) {
+ 	asg := &admin.NextecAssign{}
+ 	rg.GET("/install-token", asg.Token)
+ 	rg.POST("/install-token/revoke", asg.Revoke)
++
++	ctl := &admin.NextecControl{}
++	rg.GET("/policies", ctl.Policies)
++	rg.POST("/policies", ctl.PolicySave)
++	rg.GET("/sessions", ctl.Sessions)
++	rg.POST("/sessions/disconnect", ctl.Disconnect)
+ }
+ func LoginBind(rg *gin.RouterGroup) {
+ 	cont := &admin.Login{}
+diff --git a/model/nextec_policy.go b/model/nextec_policy.go
+new file mode 100644
+index 0000000..caedbe2
+--- /dev/null
++++ b/model/nextec_policy.go
+@@ -0,0 +1,12 @@
++package model
++
++// NextecAppPolicy é uma política das opções do app RustDesk, por cliente (grupo de dispositivos) ou por máquina.
++// O app a recebe pelo heartbeat (mesmo canal da versão Pro) e aplica sozinho.
++type NextecAppPolicy struct {
++	Id         uint   `json:"id" gorm:"primaryKey"`
++	Kind       string `json:"kind" gorm:"size:8;not null;uniqueIndex:idx_nextec_app_policy"` // group | peer
++	Ref        string `json:"ref" gorm:"size:64;not null;uniqueIndex:idx_nextec_app_policy"` // id do grupo ou ID da máquina
++	Enabled    bool   `json:"enabled"`
++	Options    string `json:"options" gorm:"type:text"` // JSON {"enable-file-transfer":"N", ...}
++	ModifiedAt int64  `json:"modified_at"`              // milissegundos; é o "modified_at" que o app guarda
++}
+diff --git a/service/nextec_policy.go b/service/nextec_policy.go
+new file mode 100644
+index 0000000..e63cf2d
+--- /dev/null
++++ b/service/nextec_policy.go
+@@ -0,0 +1,278 @@
++package service
++
++import (
++	"encoding/json"
++	"errors"
++	"regexp"
++	"sort"
++	"strconv"
++	"strings"
++	"sync"
++	"time"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++)
++
++// Políticas do app e conexões ativas (Nextec).
++//
++// O app RustDesk (1.4.x) envia a cada poucos segundos um heartbeat ao servidor da API com os IDs das conexões abertas
++// (`conns`) e o carimbo da última política recebida (`modified_at`). A resposta pode trazer `strategy.config_options`
++// (opções a aplicar) e `disconnect` (IDs de conexão a derrubar). Sem política cadastrada nada é enviado.
++
++// NextecPolicyOptions é a lista fechada de opções que o painel gerencia, com os valores aceitos.
++var NextecPolicyOptions = map[string][]string{
++	"enable-keyboard":       {"Y", "N"},
++	"enable-clipboard":      {"Y", "N"},
++	"enable-file-transfer":  {"Y", "N"},
++	"enable-audio":          {"Y", "N"},
++	"enable-camera":         {"Y", "N"},
++	"enable-terminal":       {"Y", "N"},
++	"enable-tunnel":         {"Y", "N"},
++	"enable-remote-restart": {"Y", "N"},
++	"enable-record-session": {"Y", "N"},
++	"enable-block-input":    {"Y", "N"},
++	"enable-remote-printer": {"Y", "N"},
++	"access-mode":           {"full", "view", "custom"},
++}
++
++var ErrNextecPolicyInvalid = errors.New("política inválida")
++
++func nextecPolicyKeys() []string {
++	keys := make([]string, 0, len(NextecPolicyOptions))
++	for k := range NextecPolicyOptions {
++		keys = append(keys, k)
++	}
++	sort.Strings(keys)
++	return keys
++}
++
++func NextecPolicyList() (res []*model.NextecAppPolicy) {
++	DB.Order("id desc").Find(&res)
++	return res
++}
++
++// NextecPolicyUpsert cria ou altera a política de um cliente ou de uma máquina. Valor vazio = padrão do app.
++func NextecPolicyUpsert(kind, ref string, enabled bool, opts map[string]string) (*model.NextecAppPolicy, error) {
++	ref = strings.TrimSpace(ref)
++	switch kind {
++	case "group":
++		g, err := strconv.Atoi(ref)
++		if err != nil || g <= 0 || AllService.GroupService.DeviceGroupInfoById(uint(g)).Id == 0 {
++			return nil, ErrNextecPolicyInvalid
++		}
++	case "peer":
++		if !nextecPeerPattern.MatchString(ref) {
++			return nil, ErrNextecPolicyInvalid
++		}
++	default:
++		return nil, ErrNextecPolicyInvalid
++	}
++	clean := map[string]string{}
++	for k, v := range opts {
++		allowed, ok := NextecPolicyOptions[k]
++		if !ok {
++			return nil, ErrNextecPolicyInvalid
++		}
++		if v == "" {
++			continue
++		}
++		valid := false
++		for _, a := range allowed {
++			if a == v {
++				valid = true
++			}
++		}
++		if !valid {
++			return nil, ErrNextecPolicyInvalid
++		}
++		clean[k] = v
++	}
++	b, _ := json.Marshal(clean)
++	p := &model.NextecAppPolicy{}
++	now := time.Now().UnixMilli()
++	if DB.Where("kind = ? AND ref = ?", kind, ref).First(p).Error != nil {
++		p = &model.NextecAppPolicy{Kind: kind, Ref: ref}
++	}
++	p.Enabled, p.Options, p.ModifiedAt = enabled, string(b), now
++	if err := DB.Save(p).Error; err != nil {
++		return nil, err
++	}
++	return p, nil
++}
++
++func NextecPolicyDelete(kind, ref string) error {
++	return DB.Where("kind = ? AND ref = ?", kind, ref).Delete(&model.NextecAppPolicy{}).Error
++}
++
++// nextecEffectivePolicy: regra da máquina; senão a do cliente; senão a do cliente "pai" (nomes "Cliente / Subgrupo").
++func nextecEffectivePolicy(peerID string, groupID uint) *model.NextecAppPolicy {
++	p := &model.NextecAppPolicy{}
++	if DB.Where("kind = ? AND ref = ? AND enabled = ?", "peer", peerID, true).First(p).Error == nil {
++		return p
++	}
++	for i := 0; groupID != 0 && i < 5; i++ {
++		if DB.Where("kind = ? AND ref = ? AND enabled = ?", "group", strconv.Itoa(int(groupID)), true).First(p).Error == nil {
++			return p
++		}
++		g := AllService.GroupService.DeviceGroupInfoById(groupID)
++		idx := strings.LastIndex(g.Name, " / ")
++		if g.Id == 0 || idx < 0 {
++			break
++		}
++		parent := &model.DeviceGroup{}
++		if DB.Where("name = ?", g.Name[:idx]).First(parent).Error != nil {
++			break
++		}
++		groupID = parent.Id
++	}
++	return nil
++}
++
++// nextecStrategyFor monta a "strategy" do heartbeat. É declarativa: toda opção gerenciada vai, as que a política não define
++// voltam ao padrão (valor vazio), assim remover uma regra devolve o app ao normal.
++func nextecStrategyFor(peerID string, clientModified int64) (modifiedAt int64, opts map[string]string, send bool) {
++	pr := &model.Peer{}
++	DB.Select("group_id").Where("id = ?", peerID).First(pr)
++	eff := nextecEffectivePolicy(peerID, pr.GroupId)
++	chosen := map[string]string{}
++	if eff != nil {
++		if eff.ModifiedAt == clientModified {
++			return 0, nil, false
++		}
++		modifiedAt = eff.ModifiedAt
++		_ = json.Unmarshal([]byte(eff.Options), &chosen)
++	} else if clientModified == 0 {
++		return 0, nil, false
++	}
++	opts = map[string]string{}
++	for _, k := range nextecPolicyKeys() {
++		opts[k] = chosen[k]
++	}
++	return modifiedAt, opts, true
++}
++
++// ---------- conexões ativas ----------
++
++type nextecAliveEntry struct {
++	Conns []int64
++	At    int64
++}
++
++var (
++	nextecSessMu     sync.Mutex
++	nextecAlive      = map[string]nextecAliveEntry{}
++	nextecToDisconn  = map[string][]int64{}
++	nextecAliveFresh = int64(90) // segundos sem heartbeat = considera encerrado
++	nextecPeerOkRe   = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
++)
++
++// NextecHeartbeat registra as conexões vivas da máquina e devolve o que responder ao app (strategy, disconnect, modified_at).
++func NextecHeartbeat(peerID string, conns []int64, clientModified int64) map[string]interface{} {
++	resp := map[string]interface{}{}
++	nextecSessMu.Lock()
++	if len(conns) == 0 {
++		delete(nextecAlive, peerID)
++		delete(nextecToDisconn, peerID)
++	} else {
++		nextecAlive[peerID] = nextecAliveEntry{Conns: conns, At: time.Now().Unix()}
++		if d := nextecToDisconn[peerID]; len(d) > 0 {
++			resp["disconnect"] = d
++			delete(nextecToDisconn, peerID)
++		}
++	}
++	nextecSessMu.Unlock()
++
++	if modified, opts, send := nextecStrategyFor(peerID, clientModified); send {
++		resp["modified_at"] = modified
++		resp["strategy"] = map[string]interface{}{"config_options": opts}
++	}
++	return resp
++}
++
++// NextecSession é uma conexão aberta agora.
++type NextecSession struct {
++	PeerId    string `json:"peer_id"`
++	ConnId    int64  `json:"conn_id"`
++	Alias     string `json:"alias"`
++	Hostname  string `json:"hostname"`
++	GroupId   uint   `json:"group_id"`
++	FromName  string `json:"from_name"`
++	FromPeer  string `json:"from_peer"`
++	Ip        string `json:"ip"`
++	Type      int    `json:"type"`
++	StartedAt int64  `json:"started_at"`
++	Pending   bool   `json:"pending"` // desconexão já pedida, esperando o app buscar
++}
++
++func NextecSessionsActive() []NextecSession {
++	now := time.Now().Unix()
++	nextecSessMu.Lock()
++	type item struct {
++		peer string
++		conn int64
++		pend bool
++	}
++	var items []item
++	for peer, e := range nextecAlive {
++		if now-e.At > nextecAliveFresh {
++			delete(nextecAlive, peer)
++			continue
++		}
++		pend := map[int64]bool{}
++		for _, c := range nextecToDisconn[peer] {
++			pend[c] = true
++		}
++		for _, c := range e.Conns {
++			items = append(items, item{peer, c, pend[c]})
++		}
++	}
++	nextecSessMu.Unlock()
++
++	out := []NextecSession{}
++	for _, it := range items {
++		s := NextecSession{PeerId: it.peer, ConnId: it.conn, Pending: it.pend}
++		ac := &model.AuditConn{}
++		if DB.Where("peer_id = ? AND conn_id = ? AND close_time = 0", it.peer, it.conn).Order("id desc").First(ac).Error == nil {
++			s.FromName, s.FromPeer, s.Ip, s.Type = ac.FromName, ac.FromPeer, ac.Ip, ac.Type
++			s.StartedAt = time.Time(ac.CreatedAt).Unix()
++		}
++		pr := &model.Peer{}
++		if DB.Where("id = ?", it.peer).First(pr).Error == nil {
++			s.Alias, s.Hostname, s.GroupId = pr.Alias, pr.Hostname, pr.GroupId
++		}
++		out = append(out, s)
++	}
++	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt > out[j].StartedAt })
++	return out
++}
++
++var ErrNextecSessionGone = errors.New("conexão não está mais ativa")
++
++// NextecSessionDisconnect pede ao app da máquina que derrube a conexão no próximo heartbeat.
++func NextecSessionDisconnect(peerID string, connID int64) error {
++	if !nextecPeerOkRe.MatchString(peerID) {
++		return ErrNextecSessionGone
++	}
++	nextecSessMu.Lock()
++	defer nextecSessMu.Unlock()
++	e, ok := nextecAlive[peerID]
++	if !ok || time.Now().Unix()-e.At > nextecAliveFresh {
++		return ErrNextecSessionGone
++	}
++	found := false
++	for _, c := range e.Conns {
++		if c == connID {
++			found = true
++		}
++	}
++	if !found {
++		return ErrNextecSessionGone
++	}
++	for _, c := range nextecToDisconn[peerID] {
++		if c == connID {
++			return nil
++		}
++	}
++	nextecToDisconn[peerID] = append(nextecToDisconn[peerID], connID)
++	return nil
++}
+diff --git a/service/nextec_support.go b/service/nextec_support.go
+index adac78c..b94ab9a 100644
+--- a/service/nextec_support.go
++++ b/service/nextec_support.go
+@@ -22,8 +22,8 @@ const (
+ 	nextecSupportFile       = "nextec-suporte.exe"
+ 	NextecSupportDownload   = "Suporte-Nextec.exe"
+ 	settingSupportApp       = "support_app"
+-	nextecWaitingOnlineSecs = int64(600)          // visto nos últimos 10 minutos
+-	nextecWaitingMaxAge     = 24 * time.Hour      // dispositivo novo: cadastrado nas últimas 24 horas
++	nextecWaitingOnlineSecs = int64(600)     // visto nos últimos 10 minutos
++	nextecWaitingMaxAge     = 24 * time.Hour // dispositivo novo: cadastrado nas últimas 24 horas
+ 	nextecWaitingLimit      = 50
+ )
+ 

@@ -12,7 +12,7 @@ const GROUPS = [
   { name: 'NxGroupPeople', title: 'NxGroupPeople', icon: 'UserFilled', children: ['UserList', 'UserAdd', 'UserEdit', 'UserGroup'] },
   // quem acessa o quê: permissões por cliente e as listas que aparecem no app RustDesk
   { name: 'NxGroupAddressBook', title: 'NxGroupAddressBook', icon: 'Key', children: ['NxClientAccess', 'UserAddressBookName', 'UserAddressBook', 'UserTag'] },
-  { name: 'NxGroupAccess', title: 'NxGroupAccess', icon: 'Lock', children: ['NxSecrets', 'Oauth', 'UserToken', 'ShareRecord'] },
+  { name: 'NxGroupAccess', title: 'NxGroupAccess', icon: 'Lock', children: ['NxSecrets', 'NxPolicies', 'NxSessions', 'Oauth', 'UserToken', 'ShareRecord'] },
   { name: 'NxGroupAudit', title: 'NxGroupAudit', icon: 'Tickets', children: ['LoginLog', 'AuditConn', 'AuditFile'] },
   { name: 'NxGroupServer', title: 'NxGroupServer', icon: 'Setting', children: ['ServerCmd'] },
 ]
@@ -48,6 +48,19 @@ export function applyNextecRoutes () {
     name: 'NxUpdates',
     meta: { title: 'NxUpdates', icon: 'Upload' },
     component: () => import('./views/Updates.vue'),
+  })
+  // Políticas do app (o que o RustDesk permite por cliente ou máquina) e Conexões ativas com desconectar (só admin; patch 0012)
+  system.children.push({
+    path: '/user/policies',
+    name: 'NxPolicies',
+    meta: { title: 'NxPolicies', icon: 'Setting' },
+    component: () => import('./views/Policies.vue'),
+  })
+  system.children.push({
+    path: '/user/sessions',
+    name: 'NxSessions',
+    meta: { title: 'NxSessions', icon: 'Connection' },
+    component: () => import('./views/Sessions.vue'),
   })
   const byName = new Map(system.children.map(c => [c.name, c]))
   const used = new Set()
