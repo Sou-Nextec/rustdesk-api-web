@@ -2,6 +2,12 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.1.0
+
+- Tema escuro novo, em grafite (sem o azul), com o roxo da Nextec só como destaque.
+- Números do painel (Início) agora têm um zero legível, sem parecer a letra O.
+- Barra de filtros de Dispositivos cabe em uma linha em telas de notebook.
+
 ## 2.0.1
 
 - Versão do painel passa a ser numerada (`2.0.1`), com a lista de novidades dentro do painel.

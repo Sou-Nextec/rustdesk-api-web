@@ -345,7 +345,7 @@
     &.is-support { background: #E3DFFF; color: var(--nx-support); }
   }
   html.dark .nx-stat-icon { &.is-soft, &.is-support { background: var(--nx-tint); color: #D8C2FF; } }
-  .nx-stat-value { font-family: var(--nx-font-title); font-size: 36px; font-weight: 700; line-height: 1; color: var(--nx-text); }
+  .nx-stat-value { font-family: var(--nx-font-body); font-variant-numeric: tabular-nums; font-size: 36px; font-weight: 700; line-height: 1; color: var(--nx-text); }
   .nx-stat-hint { font-size: 11px; color: var(--nx-text-subtle); margin-top: 6px; }
 
   .nx-cols { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 16px; align-items: start; }
