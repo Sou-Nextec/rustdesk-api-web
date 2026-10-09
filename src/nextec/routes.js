@@ -8,7 +8,7 @@ const layout = () => import('@/layout/index.vue')
 
 // nome da rota filha -> grupo do menu
 const GROUPS = [
-  { name: 'NxGroupDevices', title: 'NxGroupDevices', icon: 'Monitor', children: ['Peer', 'DeviceGroup'] },
+  { name: 'NxGroupDevices', title: 'NxGroupDevices', icon: 'Monitor', children: ['Peer', 'DeviceGroup', 'NxUpdates'] },
   { name: 'NxGroupPeople', title: 'NxGroupPeople', icon: 'UserFilled', children: ['UserList', 'UserAdd', 'UserEdit', 'UserGroup'] },
   // quem acessa o quê: permissões por cliente e as listas que aparecem no app RustDesk
   { name: 'NxGroupAddressBook', title: 'NxGroupAddressBook', icon: 'Key', children: ['NxClientAccess', 'UserAddressBookName', 'UserAddressBook', 'UserTag'] },
@@ -34,6 +34,13 @@ export function applyNextecRoutes () {
     name: 'NxSecrets',
     meta: { title: 'NxSecrets', icon: 'Key' },
     component: () => import('./views/Secrets.vue'),
+  })
+  // Atualizações do app: envio do instalador e publicação para todos ou para um piloto (só admin; patch 0009 da API)
+  system.children.push({
+    path: '/user/updates',
+    name: 'NxUpdates',
+    meta: { title: 'NxUpdates', icon: 'Upload' },
+    component: () => import('./views/Updates.vue'),
   })
   const byName = new Map(system.children.map(c => [c.name, c]))
   const used = new Set()

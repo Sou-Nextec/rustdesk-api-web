@@ -2,6 +2,13 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.3.0
+
+- Nova tela **Dispositivos > Atualizações do app**: envie o instalador (MSI do rdgen), publique primeiro para um grupo piloto e depois para todos, volte para uma versão anterior ou suspenda.
+- Acompanhe quais máquinas já estão na versão publicada e quais aguardam.
+- O script `Instalar-Nextec.ps1` agora busca a atualização no próprio painel (sem precisar do site no R2) e informa o ID da máquina, para o piloto funcionar.
+- Celular: o título da página não é mais coberto pelos ícones do topo e as listas de atualizações viram cartões.
+
 ## 2.2.0
 
 - Início: novo bloco **Acesso rápido**, com Favoritos e Recentes. Conecte em uma máquina com um clique.

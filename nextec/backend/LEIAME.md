@@ -87,3 +87,12 @@ Troca automática da senha permanente do RustDesk nos servidores. Um agente (tar
 - Cadastro do agente: chave gerada em Segurança > Senhas dos servidores > Cadastrar máquina; token por máquina (só o hash fica no banco). Para recadastrar, use "Remover agente".
 - Rotas do agente: `/api/nextec/agent/{enroll,sync,password,confirm}` (fora do Cloudflare Access, com limite de falhas por IP).
 
+## Patch 0009: atualização do app pelo painel
+
+O administrador envia o instalador (`.msi` ou `.exe`, até 300 MB) em Dispositivos > Atualizações do app e escolhe quem recebe: um grupo piloto (clientes e/ou máquinas) ou todos. As máquinas, pelo `Instalar-Nextec.ps1`, consultam o painel todo dia, baixam, conferem o SHA-256 e instalam.
+
+- Arquivos ficam em `data/nextec-updates/` do contêiner do painel (volume `api`), nomeados `nextec-acesso-<versão>.msi`. A tabela `nextec_app_releases` guarda versão, hash, tamanho e notas; `nextec_app_installs` guarda o que cada máquina informou na última checagem. A publicação atual fica em `data/nextec-settings.json` (chave `app_rollout`). **Faça backup do volume `api/` inteiro.**
+- O envio valida versão (`2.0.1`), extensão, cabeçalho real do arquivo (MSI/EXE), tamanho e nunca sobrescreve uma versão existente. Rotas de admin exigem perfil admin.
+- Rotas públicas, sem Cloudflare Access: `GET /api/nextec/update/versao.json?id=<ID RustDesk>&v=<versão instalada>` (mesmo formato do antigo versao.json) e `GET /api/nextec/update/files/<nome>`. Só são servidos arquivos enviados pelo admin. O instalador não tem segredo (endereço do servidor e chave pública). O envio passa pelo túnel da Cloudflare, que limita o corpo a 100 MB no plano gratuito.
+- Voltar versão = publicar uma anterior (o script instala quando a versão publicada é diferente da instalada). Uma versão publicada não pode ser excluída.
+- Máquinas desconhecidas do servidor (ID que nunca se registrou) não são registradas no acompanhamento.

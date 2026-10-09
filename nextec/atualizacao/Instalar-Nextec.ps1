@@ -3,12 +3,14 @@
   Instala e mantém atualizado o app de acesso remoto da Nextec (RustDesk personalizado).
 
 .DESCRIPTION
-  Baixa a versão atual do site de atualização, confere o hash SHA-256, instala o MSI em modo
-  silencioso e cria uma tarefa agendada que repete a checagem todo dia. O mesmo script serve
-  para a primeira instalação e para as atualizações.
+  Pergunta ao painel qual versão esta máquina deve ter, baixa, confere o hash SHA-256, instala o MSI
+  em modo silencioso e cria uma tarefa agendada que repete a checagem todo dia. O mesmo script serve
+  para a primeira instalação e para as atualizações. O administrador escolhe no painel
+  (Dispositivos > Atualizações do app) a versão e quem a recebe (todos ou um grupo piloto).
 
 .PARAMETER UrlBase
-  Endereço do site de atualização (padrão: https://atualizar.nex.tec.br).
+  Endereço da atualização (padrão: o painel, https://painel-remoto.nex.tec.br/api/nextec/update).
+  Serve também qualquer site com versao.json e o MSI lado a lado.
 
 .PARAMETER Forcar
   Reinstala mesmo que a versão instalada já seja a atual.
@@ -21,7 +23,7 @@
 #>
 [CmdletBinding()]
 param(
-  [string]$UrlBase = 'https://atualizar.nex.tec.br',
+  [string]$UrlBase = 'https://painel-remoto.nex.tec.br/api/nextec/update',
   [switch]$Forcar,
   [switch]$SoVerificar,
   [switch]$Silencioso
@@ -49,22 +51,34 @@ try {
   [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
   $UrlBase = $UrlBase.TrimEnd('/')
 
-  # 1. versão publicada
-  $resp = Invoke-WebRequest -Uri "$UrlBase/versao.json?t=$([DateTime]::UtcNow.Ticks)" -UseBasicParsing -TimeoutSec 30
+  # 1. versão instalada (marca gravada por este script) e ID do RustDesk (o painel usa para piloto e acompanhamento)
+  $instalada = $null
+  if (Test-Path $ChaveReg) { $instalada = (Get-ItemProperty $ChaveReg -ErrorAction SilentlyContinue).Versao }
+  if ($instalada) { Escrever "Versão instalada: $instalada" } else { Escrever 'Nada instalado por este script ainda.' }
+  $meuId = ''
+  try {
+    $svc = Get-CimInstance Win32_Service -ErrorAction Stop | Where-Object { $_.PathName -match '--service' -and $_.PathName -match 'Program Files' } | Select-Object -First 1
+    if ($svc -and $svc.PathName -match '^"([^"]+)"') {
+      $saida = & $Matches[1] --get-id 2>&1 | Out-String
+      if ($saida -match '(\d{6,})') { $meuId = $Matches[1] }
+    }
+  } catch { }
+
+  # 2. versão publicada para esta máquina
+  $consulta = "t=$([DateTime]::UtcNow.Ticks)"
+  if ($meuId) { $consulta += "&id=$meuId" }
+  if ($instalada) { $consulta += "&v=$instalada" }
+  $resp = Invoke-WebRequest -Uri "$UrlBase/versao.json?$consulta" -UseBasicParsing -TimeoutSec 30
   # decodifica como UTF-8 e ignora a marca BOM, que o Windows PowerShell 5.1 coloca ao gravar arquivos
   $texto = [Text.Encoding]::UTF8.GetString($resp.RawContentStream.ToArray()).TrimStart([char]0xFEFF)
   $json = $texto | ConvertFrom-Json
   $alvo = $json.windows
-  if (-not $alvo -or -not $alvo.versao -or -not $alvo.arquivo -or -not $alvo.sha256) { throw 'versao.json sem a seção windows completa.' }
+  if (-not $alvo) { Escrever 'Nenhuma versão publicada para esta máquina. Nada a fazer.'; return }
+  if (-not $alvo.versao -or -not $alvo.arquivo -or -not $alvo.sha256) { throw 'versao.json com a seção windows incompleta.' }
   Escrever "Versão publicada: $($alvo.versao)"
 
-  # 2. versão instalada (marca gravada por este script)
-  $instalada = $null
-  if (Test-Path $ChaveReg) { $instalada = (Get-ItemProperty $ChaveReg -ErrorAction SilentlyContinue).Versao }
-  if ($instalada) { Escrever "Versão instalada: $instalada" } else { Escrever 'Nada instalado por este script ainda.' }
-
-  $precisa = $Forcar -or (-not $instalada) -or ([version]$alvo.versao -gt [version]$instalada)
-  if (-not $precisa) { Escrever 'Já está na versão atual. Nada a fazer.'; return }
+  $precisa = $Forcar -or (-not $instalada) -or ([version]$alvo.versao -ne [version]$instalada)
+  if (-not $precisa) { Escrever 'Já está na versão publicada. Nada a fazer.'; return }
 
   # 3. baixar e conferir
   $tmp = Join-Path $Pasta 'download'

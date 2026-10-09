@@ -230,7 +230,7 @@
     }
   }
   @media (max-width: 768px) {
-    .nx-topbar { margin-left: 4px; gap: 6px; }
+    .nx-topbar { flex: 0 0 auto; margin-left: 4px; gap: 6px; }
     .nx-quick-btn .nx-quick-label { display: none; }
   }
 </style>

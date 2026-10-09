@@ -658,6 +658,10 @@ html.dark #app .login-container .login-card {
     box-shadow: 8px 0 32px rgba(13, 0, 53, 0.35);
   }
   #app .app-header.el-header { padding: 0 12px; height: 56px; }
+  // título da página leva a sobra de largura e corta com reticências; os ícones da direita nunca o cobrem
+  #app .app-header.el-header::before { flex: 1 1 0; min-width: 0; }
+  // em telas muito estreitas o nome do usuário some (fica a foto e a seta)
+  @media (max-width: 480px) { #app .setting .nickname { display: none; } }
   #app .header-tags { flex-wrap: nowrap; overflow-x: auto; padding: 8px 12px 0; }
   #app .app-main { padding: 12px; }
   // topbar: só título, menu do usuário e botão do menu (tema e idioma ficam para telas maiores)
