@@ -724,3 +724,10 @@ html.dark .nx-danger-text { color: #FF9C93; }
 // bolinha de situação no escuro: verde claro com halo discreto (o halo claro do tema claro ofusca)
 html.dark .nx-listpage .nx-dot.is-on { background: #4CC38A; box-shadow: 0 0 0 3px rgba(76, 195, 138, 0.22); }
 html.dark .nx-listpage .nx-dot.is-off { background: #6E6E7A; }
+
+// Impressão (relatório mensal): só o conteúdo, sem menu, topo nem botões
+@media print {
+  #app .app-left, #app .app-header, #app .header-tags, .nx-noprint { display: none !important; }
+  #app .app-main { padding: 0 !important; background: #fff !important; }
+  body, html { background: #fff !important; }
+}
