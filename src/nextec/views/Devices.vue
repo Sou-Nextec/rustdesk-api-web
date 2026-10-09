@@ -76,7 +76,7 @@
                     @click="toggleFav(row)">
               <el-icon><component :is="qa.isFavorite(row.id) ? 'el-icon-StarFilled' : 'el-icon-Star'"/></el-icon>
             </button>
-            <span class="nx-id">{{ row.id }}</span>
+            <span class="nx-id">{{ fmtId(row.id) }}</span>
             <button type="button" class="nx-copy" :aria-label="'Copiar ID ' + row.id" @click="copy(row.id)">
               <el-icon><el-icon-CopyDocument/></el-icon>
             </button>
@@ -143,7 +143,7 @@
       <el-form label-position="top" class="nx-form" @submit.prevent>
         <div class="nx-form-grid">
           <el-form-item label="ID" required class="is-required">
-            <el-input v-model="form.data.id" placeholder="ID do RustDesk (ex.: 123456789)"/>
+            <el-input v-model="form.data.id" :formatter="fmtId" :parser="rawId" placeholder="ID do RustDesk (ex.: 123 456 789)"/>
           </el-form-item>
           <el-form-item label="Apelido">
             <el-input v-model="form.data.alias" placeholder="Como a equipe reconhece (ex.: Recepção)"/>
@@ -279,6 +279,7 @@
 
 <script setup>
   import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
+  import { fmtId, rawId } from '@/nextec/id'
   import { useRoute } from 'vue-router'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { batchRemove, create, list, remove, update } from '@/api/peer'
@@ -446,10 +447,10 @@
     form.visible = true
   }
   const saveForm = async () => {
-    if (!String(form.data.id).trim()) return ElMessage.warning('Informe o ID do dispositivo.')
+    if (!rawId(form.data.id)) return ElMessage.warning('Informe o ID do dispositivo.')
     form.saving = true
     const api = form.data.row_id ? update : create
-    const res = await api({ ...form.data, id: String(form.data.id).trim() }).catch(() => false)
+    const res = await api({ ...form.data, id: rawId(form.data.id) }).catch(() => false)
     form.saving = false
     if (res) { form.visible = false; ok(form.data.row_id ? 'Dispositivo atualizado.' : 'Dispositivo adicionado.'); load() }
   }
@@ -477,7 +478,7 @@
     const r = details.row
     if (!r) return []
     return [
-      { label: 'ID', value: r.id }, { label: 'Apelido', value: r.alias }, { label: 'Nome do computador', value: r.hostname },
+      { label: 'ID', value: fmtId(r.id) }, { label: 'Apelido', value: r.alias }, { label: 'Nome do computador', value: r.hostname },
       { label: 'Usuário', value: r.username }, { label: 'Cliente', value: groupName(r.group_id) || 'Sem cliente' },
       { label: 'Sistema operacional', value: r.os }, { label: 'Processador', value: r.cpu }, { label: 'Memória', value: r.memory },
       { label: 'Versão do app', value: r.version }, { label: 'Último IP', value: r.last_online_ip },
@@ -551,7 +552,7 @@
         return obj
       }).filter(o => o.id)
       if (!items.length) return ElMessage.warning('Nenhum dispositivo com ID encontrado no arquivo.')
-      const results = await Promise.all(items.map(i => create(i).catch(() => false)))
+      const results = await Promise.all(items.map(i => create({ ...i, id: rawId(i.id) }).catch(() => false)))
       const okCount = results.filter(Boolean).length
       ElMessage[okCount === items.length ? 'success' : 'warning'](`${okCount} de ${items.length} dispositivo(s) importado(s).`)
       importVisible.value = false

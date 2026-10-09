@@ -54,7 +54,7 @@
         <el-table-column label="Duração" width="100"><template #default="{ row }">{{ dur(row) }}</template></el-table-column>
         <el-table-column label="Cliente" min-width="150"><template #default="{ row }">{{ row.client || 'Sem cliente' }}</template></el-table-column>
         <el-table-column label="Máquina" min-width="170">
-          <template #default="{ row }"><div>{{ row.machine }}</div><div class="nx-small nx-muted nx-mono">{{ row.peer_id }}</div></template>
+          <template #default="{ row }"><div>{{ row.machine }}</div><div class="nx-small nx-muted nx-mono">{{ fmtId(row.peer_id) }}</div></template>
         </el-table-column>
         <el-table-column label="Técnico" min-width="130"><template #default="{ row }">{{ row.tech || '-' }}</template></el-table-column>
         <el-table-column label="Tipo" min-width="130"><template #default="{ row }">{{ kind(row.type) }}</template></el-table-column>
@@ -101,6 +101,7 @@
 
 <script setup>
   import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue'
+  import { fmtId, rawId } from '@/nextec/id'
   import { ElMessage } from 'element-plus'
   import { useMediaQuery } from '@vueuse/core'
   import { list as groupList } from '@/api/device_group'
@@ -166,7 +167,7 @@
   const exportCsv = () => {
     const head = ['Cliente', 'Máquina', 'ID', 'Início', 'Fim', 'Duração (min)', 'Técnico', 'Tipo', 'Chamado', 'Observação']
     const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`
-    const lines = rows.value.map(r => [r.client || 'Sem cliente', r.machine, r.peer_id, when(r.started_at), r.closed_at ? when(r.closed_at) : '',
+    const lines = rows.value.map(r => [r.client || 'Sem cliente', r.machine, rawId(r.peer_id), when(r.started_at), r.closed_at ? when(r.closed_at) : '',
       r.seconds ? Math.round(r.seconds / 60) : '', r.tech, kind(r.type), r.ticket, r.note].map(esc).join(';'))
     // BOM para o Excel abrir os acentos; ponto e vírgula é o separador padrão do Excel em português
     const csv = '\uFEFF' + [head.map(esc).join(';'), ...lines].join('\r\n')

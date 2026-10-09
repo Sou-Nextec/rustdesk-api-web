@@ -28,7 +28,7 @@
         <span class="nx-dot is-on" aria-hidden="true"></span>
         <span class="nx-wtext">
           <strong>{{ p.alias || p.hostname || 'Computador sem nome' }}</strong>
-          <span>{{ [p.username, osShort(p.os), p.id, 'abriu ' + timeAgo(p.created_at * 1000)].filter(Boolean).join(' · ') }}</span>
+          <span>{{ [p.username, osShort(p.os), fmtId(p.id), 'abriu ' + timeAgo(p.created_at * 1000)].filter(Boolean).join(' · ') }}</span>
         </span>
         <el-button size="small" type="primary" @click="connectDevice(p.id)">Conectar</el-button>
       </li>
@@ -39,6 +39,7 @@
 
 <script setup>
   import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+  import { fmtId, rawId } from '@/nextec/id'
   import { ElMessage } from 'element-plus'
   import { timeAgo } from '@/utils/time'
   import { useUserStore } from '@/store/user'

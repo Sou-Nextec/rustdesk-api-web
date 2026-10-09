@@ -131,3 +131,9 @@ Configuração `waiting_visibility` em `data/nextec-settings.json`: `off`, `admi
 
 Ajustes pequenos: mensagens de envio sem citar o rdgen e `GET /api/admin/my/support/waiting` passa a devolver o `has_app` real
 também para quem não pode ver a fila (a tela de Suporte avulso precisa saber se o link está disponível).
+
+## Patch 0016: ID sem espaços
+
+`NextecCleanId` remove espaços (inclusive o sem quebra) do ID ao criar ou alterar dispositivos e acessos salvos, e na sincronização
+da lista de endereços do app. Na inicialização, `NextecNormalizeIds` corrige os IDs já gravados com espaço (dispositivos e acessos
+salvos), pulando os que causariam conflito com um ID já existente (aviso no log). Cobertura em `service/nextec_ids_test.go`.

@@ -17,8 +17,8 @@
       <el-table :data="pageRows" v-loading="loading" row-key="peer_id" aria-label="Máquinas com senha automática" empty-text=" ">
         <el-table-column label="Máquina" min-width="190">
           <template #default="{ row }">
-            <div class="nx-name">{{ row.alias || row.hostname || row.peer_id }}</div>
-            <div class="nx-muted nx-small nx-mono">{{ row.peer_id }}</div>
+            <div class="nx-name">{{ row.alias || row.hostname || fmtId(row.peer_id) }}</div>
+            <div class="nx-muted nx-small nx-mono">{{ fmtId(row.peer_id) }}</div>
           </template>
         </el-table-column>
         <el-table-column label="Cliente" min-width="150">
@@ -175,6 +175,7 @@
 
 <script setup>
   import { computed, onMounted, reactive, ref } from 'vue'
+  import { fmtId, rawId } from '@/nextec/id'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { list as groupList } from '@/api/device_group'
   import { list as peerList } from '@/api/peer'

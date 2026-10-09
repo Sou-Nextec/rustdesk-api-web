@@ -36,6 +36,7 @@
 
 <script setup>
   import { computed, ref } from 'vue'
+  import { fmtId, rawId } from '@/nextec/id'
   import { timeAgo } from '@/utils/time'
   import { connectDevice } from '@/nextec/connect'
   import { useQuickAccess } from '@/nextec/quick-access'
@@ -59,9 +60,9 @@
     const seen = online ? 'online agora' : (ts ? `visto ${timeAgo(ts * 1000)}` : '')
     return {
       id: x.id,
-      label: props.labels[x.id] || x.label || x.id,
+      label: props.labels[x.id] || x.label || fmtId(x.id),
       online,
-      hint: [x.id, tab.value === 'recent' && x.at ? `aberto ${timeAgo(x.at)}` : seen].filter(Boolean).join(' · '),
+      hint: [fmtId(x.id), tab.value === 'recent' && x.at ? `aberto ${timeAgo(x.at)}` : seen].filter(Boolean).join(' · '),
     }
   }))
 </script>
