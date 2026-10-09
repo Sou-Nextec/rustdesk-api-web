@@ -183,7 +183,7 @@
   import { T } from '@/utils/i18n'
   import { timeAgo } from '@/utils/time'
   import { useUserStore } from '@/store/user'
-  import { connectByClient } from '@/utils/peer'
+  import { connectDevice as connectByClient } from '@/nextec/connect'
   import { list as peerList } from '@/api/peer'
   import { list as userList } from '@/api/user'
   import { list as connList } from '@/api/audit'

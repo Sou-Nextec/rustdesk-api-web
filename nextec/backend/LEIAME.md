@@ -76,3 +76,14 @@ No login externo com Microsoft Entra ID, a API busca a foto em `graph.microsoft.
 ## Patch 0007: modelos de cliente
 
 `GET` e `POST /api/admin/nextec/client-templates` (somente admin) guardam a lista de modelos de cliente (subgrupos e quem acessa cada um) em `data/nextec-settings.json`, junto com as demais configurações. A tela Clientes usa isso para criar um cliente já com os subgrupos e as permissões do modelo.
+
+## Patch 0008: cofre de senhas
+
+Troca automática da senha permanente do RustDesk nos servidores. Um agente (tarefa agendada, a cada 5 min, como SYSTEM) pergunta ao painel se é hora de trocar, gera a senha, envia como pendente, aplica com `--password` e só então confirma. Se aplicar falhar, a senha anterior continua valendo no painel.
+
+- Regras: por grupo ou por máquina (a da máquina vale mais). Padrão 3 h, mínimo 15 min, máximo 24 h.
+- Admin vê a senha (`Ver senha`, fica na auditoria). Quem enxerga a máquina conecta com um clique (`rustdesk://<id>?password=...`, registrado como `connect`).
+- Senhas cifradas em AES-256-GCM. Chave: variável `NEXTEC_VAULT_KEY` ou arquivo `data/nextec-vault.key` (gerado na primeira subida). **Faça backup desse arquivo junto do `api/`**: sem ele as senhas guardadas não abrem.
+- Cadastro do agente: chave gerada em Segurança > Senhas dos servidores > Cadastrar máquina; token por máquina (só o hash fica no banco). Para recadastrar, use "Remover agente".
+- Rotas do agente: `/api/nextec/agent/{enroll,sync,password,confirm}` (fora do Cloudflare Access, com limite de falhas por IP).
+

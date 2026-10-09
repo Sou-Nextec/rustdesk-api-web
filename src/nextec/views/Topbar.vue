@@ -61,7 +61,7 @@
   import { useRoute, useRouter } from 'vue-router'
   import { T } from '@/utils/i18n'
   import { useUserStore } from '@/store/user'
-  import { connectByClient } from '@/utils/peer'
+  import { connectDevice as connectByClient } from '@/nextec/connect'
   import { list as adminPeers } from '@/api/peer'
   import { list as deviceGroups } from '@/api/device_group'
   import { list as myPeers } from '@/api/my/peer'
