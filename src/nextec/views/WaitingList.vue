@@ -1,5 +1,5 @@
 <template>
-  <section class="nx-wait" aria-labelledby="nx-wait-title">
+  <section v-if="!loaded || enabled" class="nx-wait" aria-labelledby="nx-wait-title">
     <div class="nx-card-head">
       <div>
         <h2 id="nx-wait-title" class="nx-h2">Aguardando atendimento</h2>
@@ -49,6 +49,7 @@
   const isAdmin = computed(() => (userStore.route_names || []).includes('*'))
   const list = ref([])
   const hasApp = ref(false)
+  const enabled = ref(true) // o servidor decide quem vê; sem permissão ele nem manda a lista
   const loaded = ref(false)
   let timer = null
 
@@ -61,6 +62,7 @@
     if (res) {
       list.value = res.data.list || []
       hasApp.value = !!res.data.has_app
+      enabled.value = res.data.enabled !== false
     }
     loaded.value = true
   }

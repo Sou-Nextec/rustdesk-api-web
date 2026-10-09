@@ -27,6 +27,18 @@
     </div>
 
     <div class="nx-card">
+      <div class="nx-card-head"><h2 class="nx-h2">Quem vê a fila Aguardando atendimento</h2></div>
+      <div class="nx-who">
+        <el-radio-group v-model="waitingMode" :disabled="savingMode" aria-label="Quem vê a fila" @change="saveMode">
+          <el-radio-button value="off">Ninguém (desligada)</el-radio-button>
+          <el-radio-button value="admins">Só administradores</el-radio-button>
+          <el-radio-button value="all">Todos os usuários</el-radio-button>
+        </el-radio-group>
+        <p class="nx-help nx-help-in">A fila mostra máquinas novas que acabaram de abrir o app de suporte. A regra vale no servidor, não só na tela. A conexão sempre depende de a pessoa aceitar no app.</p>
+      </div>
+    </div>
+
+    <div class="nx-card">
       <div class="nx-card-head"><h2 class="nx-h2">Como gerar o aplicativo no rdgen</h2></div>
       <ol class="nx-steps">
         <li>No rdgen, gere um cliente <strong>Windows (.exe)</strong> com o servidor e a chave da Nextec.</li>
@@ -58,10 +70,12 @@
   import { onMounted, reactive, ref } from 'vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import WaitingList from '@/nextec/views/WaitingList.vue'
-  import { supportInfo, supportDelete } from '@/nextec/api'
+  import { supportInfo, supportDelete, supportSettings } from '@/nextec/api'
   import { uploadFile } from '@/nextec/upload'
 
   const waiting = ref(null)
+  const waitingMode = ref('admins')
+  const savingMode = ref(false)
   const app = ref(null)
   const maxSize = ref(300 * 1024 * 1024)
   const loading = ref(false)
@@ -74,10 +88,17 @@
     const res = await supportInfo().catch(() => false)
     loading.value = false
     loaded.value = true
-    if (res) { app.value = res.data.app || null; maxSize.value = res.data.max_size || maxSize.value }
+    if (res) { app.value = res.data.app || null; maxSize.value = res.data.max_size || maxSize.value; waitingMode.value = res.data.waiting_mode || 'admins' }
     if (waiting.value) waiting.value.refresh()
   }
   onMounted(load)
+
+  const saveMode = async (v) => {
+    savingMode.value = true
+    const res = await supportSettings(v).catch(() => false)
+    savingMode.value = false
+    if (res) { ElMessage.success('Ajuste salvo.'); if (waiting.value) waiting.value.refresh() } else { load() }
+  }
 
   const openPage = () => window.open('/suporte', '_blank', 'noopener')
 
@@ -124,6 +145,8 @@
   .nx-danger-text { color: #BA1A1A; }
   html.dark .nx-danger-text { color: #FF9C93; }
   .nx-steps { margin: 0; padding: 16px 22px 4px 44px; font-size: 14px; line-height: 1.6; color: var(--nx-text); li { margin-bottom: 8px; } code { font-size: 12px; } }
+  .nx-who { padding: 16px 22px 6px; }
+  .nx-help-in { padding: 10px 0 12px !important; }
   .nx-help { margin: 0; padding: 0 22px 18px; font-size: 12px; line-height: 1.5; color: var(--nx-text-muted); }
   .nx-form .nx-help { padding: 0; margin: 6px 0 0; }
   .nx-file { width: 100%; font: inherit; font-size: 13px; color: var(--nx-text); }

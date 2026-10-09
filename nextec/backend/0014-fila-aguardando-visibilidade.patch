@@ -1,0 +1,130 @@
+diff --git a/http/controller/admin/my/nextec_support.go b/http/controller/admin/my/nextec_support.go
+index ff6329a..de4fc2f 100644
+--- a/http/controller/admin/my/nextec_support.go
++++ b/http/controller/admin/my/nextec_support.go
+@@ -6,12 +6,18 @@ import (
+ 	"github.com/lejianwen/rustdesk-api/v2/service"
+ )
+ 
+-// NextecSupportWaiting: lista "Aguardando atendimento", visível a qualquer usuário logado do painel
+-// (quem atende precisa ver quem acabou de abrir o app de suporte; a conexão em si depende de a pessoa aceitar no app).
++// NextecSupportWaiting: lista "Aguardando atendimento". Quem vê é decidido pelo admin (desligada, só administradores ou todos).
++// A conexão em si sempre depende de a pessoa aceitar no app.
+ type NextecSupportWaiting struct{}
+ 
+ // List devolve os dispositivos novos online e se o app de suporte está publicado
+ // @Router /admin/my/support/waiting [get]
+ func (n *NextecSupportWaiting) List(c *gin.Context) {
+-	response.Success(c, &gin.H{"list": service.NextecSupportWaiting(), "has_app": service.NextecSupportAppGet() != nil})
++	u := service.AllService.UserService.CurUser(c)
++	if !service.NextecWaitingAllowed(u) {
++		// sem permissão: a tela some com o bloco e nenhum dado de dispositivo sai
++		response.Success(c, &gin.H{"list": []service.NextecWaitingPeer{}, "has_app": false, "enabled": false, "mode": service.NextecWaitingMode()})
++		return
++	}
++	response.Success(c, &gin.H{"list": service.NextecSupportWaiting(), "has_app": service.NextecSupportAppGet() != nil, "enabled": true, "mode": service.NextecWaitingMode()})
+ }
+diff --git a/http/controller/admin/nextec_support.go b/http/controller/admin/nextec_support.go
+index db65014..b794f11 100644
+--- a/http/controller/admin/nextec_support.go
++++ b/http/controller/admin/nextec_support.go
+@@ -14,7 +14,27 @@ type NextecSupport struct{}
+ // Info devolve o app publicado e o caminho público da página
+ // @Router /admin/nextec/support [get]
+ func (n *NextecSupport) Info(c *gin.Context) {
+-	response.Success(c, &gin.H{"app": service.NextecSupportAppGet(), "path": "/suporte", "max_size": service.NextecUpdateMaxSize})
++	response.Success(c, &gin.H{"app": service.NextecSupportAppGet(), "path": "/suporte", "max_size": service.NextecUpdateMaxSize, "waiting_mode": service.NextecWaitingMode()})
++}
++
++type nextecSupportSettingsForm struct {
++	WaitingMode string `json:"waiting_mode" binding:"required"`
++}
++
++// Settings define quem vê a fila Aguardando atendimento (off, admins ou all)
++// @Router /admin/nextec/support/settings [post]
++func (n *NextecSupport) Settings(c *gin.Context) {
++	f := &nextecSupportSettingsForm{}
++	if err := c.ShouldBindJSON(f); err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError")+err.Error())
++		return
++	}
++	if err := service.NextecWaitingModeSet(f.WaitingMode); err != nil {
++		response.Fail(c, 101, "Opção inválida. Use off, admins ou all.")
++		return
++	}
++	service.NextecSecretAuditAdd(service.AllService.UserService.CurUser(c), "", "support_settings", nextecIP(c), f.WaitingMode)
++	response.Success(c, &gin.H{"waiting_mode": service.NextecWaitingMode()})
+ }
+ 
+ // Upload recebe o app de suporte (multipart: file)
+diff --git a/http/router/admin.go b/http/router/admin.go
+index 38e3ce1..9948918 100644
+--- a/http/router/admin.go
++++ b/http/router/admin.go
+@@ -89,6 +89,7 @@ func NextecBind(adg *gin.RouterGroup) {
+ 	rg.GET("/support", sup.Info)
+ 	rg.POST("/support/upload", sup.Upload)
+ 	rg.POST("/support/delete", sup.Delete)
++	rg.POST("/support/settings", sup.Settings)
+ 
+ 	asg := &admin.NextecAssign{}
+ 	rg.GET("/install-token", asg.Token)
+diff --git a/service/nextec_support.go b/service/nextec_support.go
+index b94ab9a..018f7f6 100644
+--- a/service/nextec_support.go
++++ b/service/nextec_support.go
+@@ -4,6 +4,7 @@ import (
+ 	"crypto/sha256"
+ 	"encoding/hex"
+ 	"encoding/json"
++	"errors"
+ 	"io"
+ 	"os"
+ 	"path/filepath"
+@@ -22,8 +23,9 @@ const (
+ 	nextecSupportFile       = "nextec-suporte.exe"
+ 	NextecSupportDownload   = "Suporte-Nextec.exe"
+ 	settingSupportApp       = "support_app"
+-	nextecWaitingOnlineSecs = int64(600)     // visto nos últimos 10 minutos
+-	nextecWaitingMaxAge     = 24 * time.Hour // dispositivo novo: cadastrado nas últimas 24 horas
++	settingWaitingMode      = "waiting_visibility" // off | admins | all
++	nextecWaitingOnlineSecs = int64(600)           // visto nos últimos 10 minutos
++	nextecWaitingMaxAge     = 24 * time.Hour       // dispositivo novo: cadastrado nas últimas 24 horas
+ 	nextecWaitingLimit      = 50
+ )
+ 
+@@ -149,3 +151,34 @@ func NextecSupportWaiting() []NextecWaitingPeer {
+ 	}
+ 	return out
+ }
++
++// ---------- quem vê a fila "Aguardando atendimento" ----------
++
++var ErrNextecWaitingMode = errors.New("modo inválido")
++
++// NextecWaitingMode devolve quem pode ver a fila: off (ninguém), admins (padrão) ou all (qualquer usuário logado).
++func NextecWaitingMode() string {
++	switch m := global.NextecSettingGet(settingWaitingMode); m {
++	case "off", "all":
++		return m
++	}
++	return "admins"
++}
++
++func NextecWaitingModeSet(mode string) error {
++	if mode != "off" && mode != "admins" && mode != "all" {
++		return ErrNextecWaitingMode
++	}
++	return global.NextecSettingSet(settingWaitingMode, mode)
++}
++
++// NextecWaitingAllowed aplica a regra no servidor: a tela só esconde, quem decide é esta função.
++func NextecWaitingAllowed(u *model.User) bool {
++	switch NextecWaitingMode() {
++	case "all":
++		return u != nil
++	case "admins":
++		return u != nil && AllService.UserService.IsAdmin(u)
++	}
++	return false
++}

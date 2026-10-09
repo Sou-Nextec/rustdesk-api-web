@@ -49,6 +49,7 @@
         <el-button size="small" @click="openBatchList">Salvar em uma lista</el-button>
         <el-button size="small" type="danger" @click="batchDelete">Excluir</el-button>
       </template>
+      <el-checkbox v-model="groupByClient" class="nx-group-toggle" @change="page = 1">Agrupar por cliente</el-checkbox>
       <label class="nx-sort">
         <span>Ordenar por</span>
         <el-select v-model="sortMode" size="small" aria-label="Ordenar por" @change="page = 1">
@@ -59,8 +60,14 @@
 
     <!-- tabela -->
     <div class="nx-card">
-      <el-table :data="pageRows" v-loading="loading" row-key="row_id" aria-label="Dispositivos"
-                @selection-change="v => selected = v" empty-text=" ">
+      <template v-for="sec in sections" :key="sec.key + '-' + tblKey">
+      <div v-if="sec.title" class="nx-sec-head">
+        <strong>{{ sec.title }}</strong>
+        <span class="nx-muted">{{ sec.total }} {{ sec.total === 1 ? 'dispositivo' : 'dispositivos' }} · {{ sec.online }} online</span>
+      </div>
+      <el-table :data="sec.rows" v-loading="loading && sec.first" row-key="row_id" :aria-label="sec.title || 'Dispositivos'"
+                :show-header="!sec.title || sec.first"
+                @selection-change="v => onSel(sec.key, v)" empty-text=" ">
         <el-table-column type="selection" width="44" reserve-selection/>
         <el-table-column label="ID" min-width="175">
           <template #default="{ row }">
@@ -120,6 +127,7 @@
           </template>
         </el-table-column>
       </el-table>
+      </template>
       <el-empty v-if="!loading && !filtered.length" :image-size="72"
                 :description="all.length ? 'Nenhum dispositivo encontrado com esses filtros.' : 'Nenhum dispositivo conectado a este servidor ainda.'">
         <el-button v-if="all.length" @click="clearFilters">Limpar filtros</el-button>
@@ -334,6 +342,12 @@
   ]
   const SORT_KEY = 'nx_peer_sort'
   const sortMode = ref('online')
+  const GROUP_KEY = 'nx_peer_group'
+  const groupByClient = ref(false)
+  try { groupByClient.value = localStorage.getItem(GROUP_KEY) === '1' } catch (e) { /* preferência opcional */ }
+  watch(groupByClient, v => { try { localStorage.setItem(GROUP_KEY, v ? '1' : '0') } catch (e) { /* preferência opcional */ } })
+  // agrupado, a lista fica ordenada por cliente para as seções saírem inteiras
+  const effSort = computed(() => (groupByClient.value ? 'client' : sortMode.value))
   try { const v = localStorage.getItem(SORT_KEY); if (sortOptions.some(o => o.value === v)) sortMode.value = v } catch (e) { /* preferência opcional */ }
   watch(sortMode, v => { try { localStorage.setItem(SORT_KEY, v) } catch (e) { /* preferência opcional */ } })
   const byText = (a, b) => String(a || '').localeCompare(String(b || ''), 'pt-BR', { sensitivity: 'base' })
@@ -350,9 +364,9 @@
     }).sort((a, b) => {
       const recent = (b.last_online_time || 0) - (a.last_online_time || 0)
       const name = x => x.alias || x.hostname || x.id
-      if (sortMode.value === 'client') return byText(groupName(a.group_id) || '~', groupName(b.group_id) || '~') || byText(name(a), name(b))
-      if (sortMode.value === 'name') return byText(name(a), name(b))
-      if (sortMode.value === 'online') return Number(!!isOnline(b)) - Number(!!isOnline(a)) || recent || byText(name(a), name(b))
+      if (effSort.value === 'client') return byText(groupName(a.group_id) || '\uffff', groupName(b.group_id) || '\uffff') || byText(name(a), name(b))
+      if (effSort.value === 'name') return byText(name(a), name(b))
+      if (effSort.value === 'online') return Number(!!isOnline(b)) - Number(!!isOnline(a)) || recent || byText(name(a), name(b))
       return recent
     })
   })
@@ -366,7 +380,28 @@
   const page = ref(1)
   const pageSize = ref(20)
   const pageRows = computed(() => filtered.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value))
-  const selected = ref([])
+  // cada seção é uma tabela: a seleção de todas vira uma lista só
+  const tblKey = ref(0)
+  const selMap = reactive({})
+  const onSel = (key, rows) => { selMap[key] = rows }
+  const selected = computed({
+    get: () => Object.values(selMap).flat(),
+    set: (v) => { if (!v || !v.length) { Object.keys(selMap).forEach(k => delete selMap[k]); tblKey.value++ } },
+  })
+  const sections = computed(() => {
+    if (!groupByClient.value) return [{ key: 'all', title: '', rows: pageRows.value, first: true }]
+    const order = []
+    const map = new Map()
+    for (const r of pageRows.value) {
+      const name = groupName(r.group_id) || 'Sem cliente'
+      if (!map.has(name)) { map.set(name, []); order.push(name) }
+      map.get(name).push(r)
+    }
+    return order.map((name, i) => {
+      const all = filtered.value.filter(r => (groupName(r.group_id) || 'Sem cliente') === name)
+      return { key: name, title: name, rows: map.get(name), first: i === 0, total: all.length, online: all.filter(isOnline).length }
+    })
+  })
 
   // ---------- colunas opcionais ----------
   const optionalColumns = [
@@ -552,12 +587,18 @@
   .nx-card { background: var(--nx-surface); border-radius: var(--nx-radius-card); box-shadow: var(--nx-shadow-card); overflow: hidden; }
   .nx-id { font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; font-size: 13px; white-space: nowrap; }
   :deep(td .cell:has(.nx-id)) { white-space: nowrap; }
+  .nx-sec-head {
+    display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap;
+    padding: 12px 18px; background: var(--nx-bg); border-top: 1px solid var(--nx-divider); font-size: 14px; color: var(--nx-text);
+    &:first-child { border-top: 0; }
+  }
   .nx-star {
     margin-right: 6px; border: none; background: transparent; cursor: pointer; color: var(--nx-text-subtle); padding: 2px; border-radius: 6px;
     vertical-align: middle; &:hover { color: #B7791F; background: var(--nx-field); } &.is-on { color: #D69E2E; }
     &:focus-visible { outline: 2px solid var(--nx-focus); outline-offset: 1px; }
   }
-  .nx-sort { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font-size: 13px; .el-select { width: 190px; } }
+  .nx-group-toggle { margin-left: auto; margin-right: 4px; }
+  .nx-sort { margin-left: 0; display: inline-flex; align-items: center; gap: 8px; font-size: 13px; .el-select { width: 190px; } }
   .nx-kv { margin: 0; display: grid; grid-template-columns: 150px 1fr; gap: 10px 12px; font-size: 13px;
     dt { color: var(--nx-text-muted); } dd { margin: 0; color: var(--nx-text); word-break: break-word; } }
   .nx-drawer-status { display: flex; align-items: center; gap: 8px; margin-bottom: 16px; font-size: 14px; font-weight: 600; color: var(--nx-text); }

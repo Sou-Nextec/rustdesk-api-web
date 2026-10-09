@@ -69,3 +69,4 @@ export const ticketSettingsSave = (data) => request({ url: '/nextec/ticket-setti
 export const reportMonth = (month, group_id) => request({ url: '/nextec/report', params: { month, group_id: group_id || undefined } })
 export const connectSettings = () => request({ url: '/my/connect-settings' })
 export const connectNote = (id, ticket, note) => request({ url: '/my/connect-note', method: 'post', data: { id, ticket, note } })
+export const supportSettings = (waiting_mode) => request({ url: '/nextec/support/settings', method: 'post', data: { waiting_mode } })
