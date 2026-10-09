@@ -1,15 +1,18 @@
-# Stack do Portainer: servidor RustDesk Nextec (hbbs, hbbr, API e painel) + túnel da Cloudflare.
+# Stack do Portainer: servidor RustDesk Nextec + painel + túnel da Cloudflare.
+# O hbbs/hbbr ("servidor") fica em contêiner próprio, com versão fixa: atualizar o painel não derruba o acesso remoto.
 # Variáveis (Portainer > Environment variables):
 #   TUNNEL_TOKEN  obrigatória (token do túnel da Cloudflare)
 #   DOMINIO       padrão remoto.nex.tec.br
 #   URL_PAINEL    padrão https://painel-remoto.nex.tec.br
 #   PASTA_DADOS   padrão /opt/rustdesk-nextec (guarda data/ e api/ no disco da VPS)
 services:
-  rustdesk:
-    image: ghcr.io/sou-nextec/rustdesk-nextec:latest
-    pull_policy: always
-    container_name: rustdesk
+  # hbbs + hbbr: IDs, relay e chave. Versão fixa (sem pull_policy always) para não reiniciar a cada atualização do painel.
+  servidor:
+    image: lejianwen/rustdesk-server-s6:v0.1.2
+    container_name: rustdesk-servidor
     restart: unless-stopped
+    # mesma base da imagem Nextec, só com o hbbs/hbbr ligados (a API roda no contêiner "rustdesk")
+    entrypoint: ["sh", "-c", "rm -f /etc/s6-overlay/s6-rc.d/user/contents.d/api; exec /init"]
     ports:
       - "21115:21115"
       - "21116:21116"
@@ -17,12 +20,26 @@ services:
       - "21117:21117"
       - "21118:21118"
       - "21119:21119"
-      # 21114 (painel e API) fica só na rede interna, para o cloudflared
     environment:
       - TZ=America/Sao_Paulo
       - RELAY=${DOMINIO:-remoto.nex.tec.br}:21117
       - ENCRYPTED_ONLY=1
       - MUST_LOGIN=N
+    volumes:
+      # chave do servidor e cadastro de IDs (hbbs)
+      - ${PASTA_DADOS:-/opt/rustdesk-nextec}/data:/data
+
+  # Painel e API (imagem Nextec). O nome "rustdesk" é o que o túnel da Cloudflare aponta (rustdesk:21114).
+  rustdesk:
+    image: ghcr.io/sou-nextec/rustdesk-nextec:latest
+    pull_policy: always
+    container_name: rustdesk
+    restart: unless-stopped
+    # só a API: sem hbbs/hbbr/key-secret, que rodam no contêiner "servidor"
+    entrypoint: ["sh", "-c", "cd /etc/s6-overlay/s6-rc.d && rm -f user/contents.d/hbbs user/contents.d/hbbr user/contents.d/key-secret && : > api/dependencies && exec /init"]
+    # 21114 (painel e API) fica só na rede interna, para o cloudflared
+    environment:
+      - TZ=America/Sao_Paulo
       - RUSTDESK_API_LANG=pt-BR
       - RUSTDESK_API_RUSTDESK_ID_SERVER=${DOMINIO:-remoto.nex.tec.br}:21116
       - RUSTDESK_API_RUSTDESK_RELAY_SERVER=${DOMINIO:-remoto.nex.tec.br}:21117
@@ -30,8 +47,8 @@ services:
       - RUSTDESK_API_KEY_FILE=/data/id_ed25519.pub
       - RUSTDESK_API_RUSTDESK_KEY_FILE=/data/id_ed25519.pub
     volumes:
-      # chave do servidor e cadastro de IDs (hbbs)
-      - ${PASTA_DADOS:-/opt/rustdesk-nextec}/data:/data
+      # chave pública do servidor (só leitura)
+      - ${PASTA_DADOS:-/opt/rustdesk-nextec}/data:/data:ro
       # banco do painel: usuários, listas, permissões e ajustes
       - ${PASTA_DADOS:-/opt/rustdesk-nextec}/api:/app/data
 
