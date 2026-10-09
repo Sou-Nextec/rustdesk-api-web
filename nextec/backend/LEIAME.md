@@ -68,3 +68,7 @@ Branch `nextec/web-client-toggle` do fork da API (commit seguinte ao 0002). Não
 ## Patch 0005: SQLite em modo WAL
 
 O banco do painel abria no modo padrão do SQLite: uma escrita lenta bloqueava todas as leituras e a espera era de 5 s, gerando `database is locked` (usuário deslogado, botão do login externo sumindo, atualização de dispositivos de 57 s). Agora abre com WAL, `busy_timeout` de 30 s e transações imediatas. Para copiar o banco com o servidor ligado, copie também os arquivos `-wal` e `-shm` (ou use `sqlite3 .backup`).
+
+## Patch 0006: foto do Microsoft 365
+
+No login externo com Microsoft Entra ID, a API busca a foto em `graph.microsoft.com/v1.0/me/photos/96x96/$value` e grava como avatar do usuário **se ele ainda não tem foto** (a escolhida por ele no painel nunca é sobrescrita). Requer o escopo `User.Read` no provedor (o botão "Preencher para Microsoft Entra ID" já inclui). Quem não tem foto no Microsoft 365 continua com a inicial.
