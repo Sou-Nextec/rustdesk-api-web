@@ -60,43 +60,45 @@
   --primaryColor: #613CB3;
 }
 
+// Tema escuro: grafite neutro (sem azul), o roxo da marca só como destaque
 html.dark {
-  --nx-bg: #0D0035;
-  --nx-surface: #17104A;
-  --nx-field: #241D70;
-  --nx-field-hover: #2A2380;
-  --nx-text: #F4F4F4;
-  --nx-text-muted: #C4C0DC;
-  --nx-text-subtle: #A39EC4;
-  --nx-border: #342C73;
-  --nx-divider: #241D70;
-  --nx-tint: #2A2380;
-  --nx-focus: #B8B2FF;
-  --nx-shadow-card: 0 0 32px rgba(0, 0, 0, 0.3);
+  --nx-base: #0E0E10;             // menu lateral
+  --nx-bg: #121214;
+  --nx-surface: #1B1B1F;
+  --nx-field: #26262B;
+  --nx-field-hover: #2E2E34;
+  --nx-text: #ECECEF;
+  --nx-text-muted: #BDBDC6;
+  --nx-text-subtle: #9A9AA6;      // 6,2:1 sobre a superfície
+  --nx-border: #34343B;
+  --nx-divider: #26262B;
+  --nx-tint: #2C2740;             // fundo de ícones e item em foco (grafite com um fio de roxo)
+  --nx-focus: #B899FF;
+  --nx-shadow-card: 0 0 32px rgba(0, 0, 0, 0.35);
 
   --el-color-primary: #B899FF;
-  --el-color-primary-light-3: #6F65FF;
-  --el-color-primary-light-5: #4F44D6;
-  --el-color-primary-light-7: #352D96;
-  --el-color-primary-light-8: #2A2380;
-  --el-color-primary-light-9: #211A66;
-  --el-color-primary-dark-2: #B8B2FF;
+  --el-color-primary-light-3: #8F73D6;
+  --el-color-primary-light-5: #6A56A0;
+  --el-color-primary-light-7: #3F3560;
+  --el-color-primary-light-8: #322B4C;
+  --el-color-primary-light-9: #28233C;
+  --el-color-primary-dark-2: #D2C0FF;
   --el-color-success: #4CC38A;
   --el-color-warning: #F0B24A;
   --el-color-danger: #FF8A80;
-  --el-color-info: #C4C0DC;
-  --el-bg-color: #17104A;
-  --el-bg-color-overlay: #17104A;
-  --el-bg-color-page: #0D0035;
-  --el-fill-color-blank: #17104A;
-  --el-text-color-primary: #F4F4F4;
-  --el-text-color-regular: #E3E0F3;
-  --el-text-color-secondary: #C4C0DC;
-  --el-text-color-placeholder: #A39EC4;
-  --el-border-color: #342C73;
-  --el-border-color-light: #2A2380;
-  --el-border-color-lighter: #241D70;
-  --tag-bg-color: #241D70;
+  --el-color-info: #BDBDC6;
+  --el-bg-color: #1B1B1F;
+  --el-bg-color-overlay: #1B1B1F;
+  --el-bg-color-page: #121214;
+  --el-fill-color-blank: #1B1B1F;
+  --el-text-color-primary: #ECECEF;
+  --el-text-color-regular: #DADAE0;
+  --el-text-color-secondary: #BDBDC6;
+  --el-text-color-placeholder: #9A9AA6;
+  --el-border-color: #34343B;
+  --el-border-color-light: #2E2E34;
+  --el-border-color-lighter: #26262B;
+  --tag-bg-color: #26262B;
 }
 
 // ---------- Tipografia ----------
@@ -146,7 +148,7 @@ h1, h2, h3, h4, h5, h6,
   }
 
   .el-menu.menus {
-    --el-menu-bg-color: #0D0035 !important;
+    --el-menu-bg-color: var(--nx-base) !important;
     --el-menu-text-color: rgba(255, 255, 255, 0.72) !important;
     --el-menu-active-color: #FFFFFF !important;
     --el-menu-hover-bg-color: rgba(255, 255, 255, 0.06) !important;
@@ -248,7 +250,7 @@ h1, h2, h3, h4, h5, h6,
   .setting .title { color: var(--nx-text); border-radius: 10px; padding: 6px 10px; }
 }
 html.dark #app .app-header.el-header {
-  background: rgba(13, 0, 53, 0.96);
+  background: rgba(18, 18, 20, 0.96);
   border-bottom-color: rgba(255, 255, 255, 0.08);
 }
 #app {
@@ -386,13 +388,13 @@ html.dark #app .app-header.el-header {
 .el-table:has(> .el-loading-mask) .el-table__empty-text { visibility: hidden; }
 .el-loading-mask { background-color: rgba(255, 255, 255, 0.7); }
 .el-loading-spinner .path { stroke: var(--nx-accent); }
-html.dark .el-loading-mask { background-color: rgba(23, 16, 74, 0.7); }
+html.dark .el-loading-mask { background-color: rgba(27, 27, 31, 0.7); }
 
 html.dark .el-table {
-  --el-table-header-bg-color: #211A66;
-  --el-table-bg-color: #17104A;
-  --el-table-tr-bg-color: #17104A;
-  --el-table-row-hover-bg-color: #211A66;
+  --el-table-header-bg-color: #222227;
+  --el-table-bg-color: #1B1B1F;
+  --el-table-tr-bg-color: #1B1B1F;
+  --el-table-row-hover-bg-color: #222227;
 }
 
 // ---------- Botões ----------
@@ -430,15 +432,15 @@ html.dark .el-button--warning { --el-button-bg-color: #4A2A0A; --el-button-text-
 html.dark .el-button--danger  { --el-button-bg-color: #4D1511; --el-button-text-color: #FFB4AB; --el-button-hover-bg-color: #6B1D17; --el-button-hover-text-color: #FFDAD6; }.el-button--info    { --el-button-bg-color: var(--nx-field-hover); --el-button-text-color: var(--nx-text); }
 .el-button.is-text, .el-button.is-link { --el-button-bg-color: transparent; --el-button-text-color: var(--el-color-primary); background: transparent; }
 .el-button.is-disabled { opacity: 0.45; }
-html.dark .el-pagination .el-pager li.is-active { background: #B899FF !important; color: #0D0035 !important; }
+html.dark .el-pagination .el-pager li.is-active { background: #B899FF !important; color: #14121A !important; }
 // tema escuro: primário claro com texto escuro (8,5:1)
 html.dark .el-button--primary {
   --el-button-bg-color: #B899FF;
-  --el-button-text-color: #0D0035;
+  --el-button-text-color: #14121A;
   --el-button-hover-bg-color: #D8C2FF;
-  --el-button-hover-text-color: #0D0035;
+  --el-button-hover-text-color: #14121A;
   --el-button-active-bg-color: #9D75FF;
-  --el-button-active-text-color: #0D0035;
+  --el-button-active-text-color: #14121A;
 }
 
 // ---------- Campos ----------
@@ -504,7 +506,7 @@ html.dark .el-button--primary {
 // avisos (el-alert) na paleta da marca
 .el-alert { border-radius: 14px; }
 .el-alert--info.is-light { background: var(--nx-tint); --el-alert-title-color: var(--nx-text); --el-alert-description-color: var(--nx-text-muted); color: var(--nx-text); .el-alert__icon { color: var(--nx-accent); } }
-html.dark .el-alert--info.is-light { background: #241D70; .el-alert__icon { color: #B899FF; } }
+html.dark .el-alert--info.is-light { background: #26262B; .el-alert__icon { color: #B899FF; } }
 .el-alert__title { font-weight: 600; }
 
 // avisos longos em badge (ex.: Meus catálogos) quebram linha em vez de estourar
@@ -518,6 +520,7 @@ html.dark .el-alert--info.is-light { background: #241D70; .el-alert__icon { colo
   .el-dialog__body { padding: 8px 24px 20px; }
 }
 .el-overlay { background-color: rgba(13, 0, 53, 0.45); }
+html.dark .el-overlay { background-color: rgba(0, 0, 0, 0.6); }
 .el-popper.is-light { border-radius: 14px; border: none; box-shadow: 0 8px 32px rgba(26, 28, 28, 0.14); }
 .el-dropdown-menu__item { border-radius: 8px; margin: 0 6px; }
 .el-pagination {
@@ -641,9 +644,9 @@ html.dark .el-alert--info.is-light { background: #241D70; .el-alert__icon { colo
   }
 }
 html.dark #app .login-container .login-card {
-  background-color: #17104A;
-  .el-input .el-input__wrapper { background: #0D0035; border-color: #4B4290; }
-  .oidc-btn { background: #0D0035; color: #F4F4F4; }
+  background-color: #1B1B1F;
+  .el-input .el-input__wrapper { background: #121214; border-color: #3E3E46; }
+  .oidc-btn { background: #121214; color: #F4F4F4; }
 }
 
 // ---------- Responsivo ----------
@@ -713,3 +716,7 @@ html.dark .nx-danger-text { color: #FF9C93; }
   font-size: 11px; color: rgba(255, 255, 255, 0.5); pointer-events: none;
 }
 #app .app-left:has(.el-menu--collapse)::after { display: none; }
+
+// bolinha de situação no escuro: verde claro com halo discreto (o halo claro do tema claro ofusca)
+html.dark .nx-listpage .nx-dot.is-on { background: #4CC38A; box-shadow: 0 0 0 3px rgba(76, 195, 138, 0.22); }
+html.dark .nx-listpage .nx-dot.is-off { background: #6E6E7A; }
