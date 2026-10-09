@@ -695,3 +695,13 @@ html.dark #app .login-container .login-card {
   display: inline-grid; place-items: center; background: var(--nx-accent); color: #fff; font-size: 13px; font-weight: 700;
   img { width: 100%; height: 100%; object-fit: cover; display: block; }
 }
+
+// ações das linhas: botões lado a lado, sem quebrar em duas linhas
+.nx-row-actions { display: flex; gap: 6px; justify-content: center; flex-wrap: nowrap; .el-button { margin: 0 !important; } }
+.nx-danger-text { color: #BA1A1A; }
+html.dark .nx-danger-text { color: #FF9C93; }
+// telas do upstream que ainda têm vários botões na coluna Ações: alinha e deixa quebrar com respiro
+.el-table td.el-table__cell .cell:has(> .el-button + .el-button) {
+  display: flex; flex-wrap: wrap; gap: 6px; justify-content: center; align-items: center;
+  .el-button { margin: 0 !important; }
+}

@@ -20,7 +20,7 @@ index 0e1ee08..4457d01 100644
  		oauthService.SetOauthCache(cacheKey, oauthCache, 0)
  		// 如果是webadmin，登录成功后跳转到webadmin
 diff --git a/service/oauth.go b/service/oauth.go
-index 48c7ddd..4ffcbdc 100644
+index 48c7ddd..2fdc960 100644
 --- a/service/oauth.go
 +++ b/service/oauth.go
 @@ -2,8 +2,10 @@ package service
@@ -42,7 +42,7 @@ index 48c7ddd..4ffcbdc 100644
  	"fmt"
  	"net/http"
  	"net/url"
-@@ -326,10 +327,46 @@ func (os *OauthService) linuxdoCallback(oauthConfig *oauth2.Config, provider *oi
+@@ -326,10 +327,49 @@ func (os *OauthService) linuxdoCallback(oauthConfig *oauth2.Config, provider *oi
  // oidcCallback oidc回调, 通过code获取用户信息
  func (os *OauthService) oidcCallback(oauthConfig *oauth2.Config, provider *oidc.Provider, code, verifier, nonce string) (error, *model.OauthUser) {
  	var user = &model.OidcUser{}
@@ -56,6 +56,9 @@ index 48c7ddd..4ffcbdc 100644
 +	// Nextec: o Microsoft Entra ID não envia a foto no login; busca no Microsoft Graph (quem não tem foto fica sem)
 +	if ou.Picture == "" && strings.Contains(oauthConfig.Endpoint.AuthURL, "login.microsoftonline.com") {
 +		ou.Picture = fetchGraphPhoto(client, graphPhotoURL)
++		if ou.Picture != "" {
++			Logger.Info("graph photo fetched for ", ou.Username)
++		}
 +	}
 +	return nil, ou
 +}
@@ -75,7 +78,7 @@ index 48c7ddd..4ffcbdc 100644
 +	defer resp.Body.Close()
 +	if resp.StatusCode != http.StatusOK {
 +		// 404: sem foto; 403: falta a permissão User.Read (escopo) no login externo
-+		Logger.Info("graph photo not available, status ", resp.StatusCode)
++		Logger.Warn("graph photo not available, status ", resp.StatusCode)
 +		return ""
 +	}
 +	const maxBytes = 150 * 1024

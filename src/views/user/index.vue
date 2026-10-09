@@ -36,13 +36,23 @@
         <el-table-column prop="remark" :label="T('Remark')" align="center"/>
         <el-table-column prop="created_at" :label="T('CreatedAt')" align="center"/>
         <el-table-column prop="updated_at" :label="T('UpdatedAt')" align="center"/>
-        <el-table-column :label="T('Actions')" align="center" width="650">
+        <el-table-column :label="T('Actions')" align="center" width="150">
           <template #default="{row}">
-            <el-button @click="toTag(row)">{{ T('UserTags') }}</el-button>
-            <el-button @click="toAddressBook(row)">{{ T('UserAddressBook') }}</el-button>
-            <el-button @click="toEdit(row)">{{ T('Edit') }}</el-button>
-            <el-button type="warning" @click="changePass(row)">{{ T('ResetPassword') }}</el-button>
-            <el-button type="danger" @click="remove(row)">{{ T('Delete') }}</el-button>
+            <!-- Nextec: Editar fica à vista; o resto vai para o menu "..." -->
+            <div class="nx-row-actions">
+              <el-button @click="toEdit(row)">{{ T('Edit') }}</el-button>
+              <el-dropdown trigger="click" @command="cmd => onRowCommand(cmd, row)">
+                <el-button aria-label="Mais ações"><el-icon><el-icon-MoreFilled/></el-icon></el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="tag">{{ T('UserTags') }}</el-dropdown-item>
+                    <el-dropdown-item command="addressBook">{{ T('UserAddressBook') }}</el-dropdown-item>
+                    <el-dropdown-item command="password">{{ T('ResetPassword') }}</el-dropdown-item>
+                    <el-dropdown-item command="delete" divided><span class="nx-danger-text">{{ T('Delete') }}</span></el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -89,6 +99,12 @@
 
   //删除
   const { del } = useDel()
+  const onRowCommand = (cmd, row) => {
+    if (cmd === 'tag') toTag(row)
+    else if (cmd === 'addressBook') toAddressBook(row)
+    else if (cmd === 'password') changePass(row)
+    else if (cmd === 'delete') remove(row)
+  }
   const remove = async (row) => {
     const res = await del(row.id)
     if (res) {
