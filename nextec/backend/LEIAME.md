@@ -96,3 +96,13 @@ O administrador envia o instalador (`.msi` ou `.exe`, até 300 MB) em Dispositiv
 - Rotas públicas, sem Cloudflare Access: `GET /api/nextec/update/versao.json?id=<ID RustDesk>&v=<versão instalada>` (mesmo formato do antigo versao.json) e `GET /api/nextec/update/files/<nome>`. Só são servidos arquivos enviados pelo admin. O instalador não tem segredo (endereço do servidor e chave pública). O envio passa pelo túnel da Cloudflare, que limita o corpo a 100 MB no plano gratuito.
 - Voltar versão = publicar uma anterior (o script instala quando a versão publicada é diferente da instalada). Uma versão publicada não pode ser excluída.
 - Máquinas desconhecidas do servidor (ID que nunca se registrou) não são registradas no acompanhamento.
+
+## Patch 0010: suporte avulso
+
+Entrega o app de suporte a quem ainda não tem nada instalado, sem o cliente precisar de conta.
+
+- O administrador envia o `.exe` do rdgen em Dispositivos > Suporte avulso (validação de extensão e cabeçalho MZ, até 300 MB, troca atômica). Fica em `data/nextec-support/nextec-suporte.exe`; metadados em `data/nextec-settings.json` (chave `support_app`).
+- Páginas públicas, sem Cloudflare Access: `GET /suporte` (instruções em pt-BR) e `GET /suporte/baixar` (entrega `Suporte-Nextec.exe`). Só entregam o arquivo enviado pelo admin; sem arquivo, a página avisa que o link está indisponível. Cabeçalhos de segurança (CSP restrita, `nosniff`, `no-store`).
+- `GET /api/admin/my/support/waiting` (qualquer usuário logado) lista dispositivos novos (cadastrados nas últimas 24 h), sem cliente nem dono e vistos nos últimos 10 minutos. Quem recebe a conexão decide no app (aprovação por clique), então a lista não concede acesso.
+- Rotas de admin: `GET /api/admin/nextec/support`, `POST .../support/upload`, `POST .../support/delete`.
+- Rollback: o patch não altera tabelas; remover a imagem nova desativa as páginas.

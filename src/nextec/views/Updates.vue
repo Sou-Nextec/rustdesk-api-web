@@ -213,7 +213,7 @@
   import { useMediaQuery } from '@vueuse/core'
   import { list as peerList } from '@/api/peer'
   import { list as groupList } from '@/api/device_group'
-  import { getToken } from '@/utils/auth'
+  import { uploadFile } from '@/nextec/upload'
   import { timeAgo } from '@/utils/time'
   import { updatesOverview, updatesRollout, updatesDelete } from '@/nextec/api'
 
@@ -313,31 +313,18 @@
     up.file = f
   }
   const beforeCloseUpload = (done) => { if (!up.busy) done() }
-  const sendUpload = () => {
+  const sendUpload = async () => {
     if (!VERSION_RE.test(up.version.trim())) { up.error = 'Versão inválida. Use números separados por ponto, como 2.0.1.'; return }
-    const body = new FormData()
-    body.append('file', up.file)
-    body.append('version', up.version.trim())
-    body.append('notes', up.notes)
     up.busy = true; up.progress = 0; up.error = ''
-    const xhr = new XMLHttpRequest()
-    xhr.open('POST', `${import.meta.env.VITE_SERVER_API}/nextec/updates/upload`)
-    xhr.setRequestHeader('api-token', getToken() || '')
-    xhr.upload.onprogress = (e) => { if (e.lengthComputable) up.progress = Math.round((e.loaded / e.total) * 100) }
-    xhr.onerror = () => { up.busy = false; up.error = 'Não foi possível enviar. Confira a conexão e tente de novo; os campos foram mantidos.' }
-    xhr.onload = () => {
-      up.busy = false
-      let res = {}
-      try { res = JSON.parse(xhr.responseText) } catch (e) { /* resposta fora do padrão */ }
-      if (xhr.status === 200 && res.code === 0) {
-        up.visible = false
-        ok(`Versão ${up.version.trim()} enviada. Publique para um grupo piloto quando quiser.`)
-        load()
-      } else {
-        up.error = res.message || (xhr.status === 413 ? 'O arquivo é maior que o limite aceito.' : 'O envio falhou. Tente de novo.')
-      }
+    const r = await uploadFile('/nextec/updates/upload', { version: up.version.trim(), notes: up.notes }, up.file, (p) => { up.progress = p })
+    up.busy = false
+    if (r.ok) {
+      up.visible = false
+      ok(`Versão ${up.version.trim()} enviada. Publique para um grupo piloto quando quiser.`)
+      load()
+    } else {
+      up.error = r.message
     }
-    xhr.send(body)
   }
 
   // ---------- publicar ----------

@@ -307,7 +307,7 @@
     connect: 'Conectou com a senha', reveal: 'Viu a senha', rotated: 'Senha trocada', rotate_now: 'Pediu troca imediata',
     policy_set: 'Mudou a regra', policy_remove: 'Removeu a regra', unenroll: 'Removeu o agente', agent_enroll: 'Agente cadastrado',
     agent_key_new: 'Gerou chave de cadastro',
-    update_upload: 'Enviou versão do app', update_publish: 'Mudou a publicação do app', update_delete: 'Excluiu versão do app',
+    support_upload: 'Enviou o app de suporte', support_delete: 'Tirou o app de suporte do ar', update_upload: 'Enviou versão do app', update_publish: 'Mudou a publicação do app', update_delete: 'Excluiu versão do app',
   }
   const audit = reactive({ visible: false, loading: false, list: [] })
   const openAudit = async () => {

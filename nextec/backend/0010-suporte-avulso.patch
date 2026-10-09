@@ -1,0 +1,376 @@
+diff --git a/http/controller/admin/my/nextec_support.go b/http/controller/admin/my/nextec_support.go
+new file mode 100644
+index 0000000..ff6329a
+--- /dev/null
++++ b/http/controller/admin/my/nextec_support.go
+@@ -0,0 +1,17 @@
++package my
++
++import (
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/http/response"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++)
++
++// NextecSupportWaiting: lista "Aguardando atendimento", visível a qualquer usuário logado do painel
++// (quem atende precisa ver quem acabou de abrir o app de suporte; a conexão em si depende de a pessoa aceitar no app).
++type NextecSupportWaiting struct{}
++
++// List devolve os dispositivos novos online e se o app de suporte está publicado
++// @Router /admin/my/support/waiting [get]
++func (n *NextecSupportWaiting) List(c *gin.Context) {
++	response.Success(c, &gin.H{"list": service.NextecSupportWaiting(), "has_app": service.NextecSupportAppGet() != nil})
++}
+diff --git a/http/controller/admin/nextec_support.go b/http/controller/admin/nextec_support.go
+new file mode 100644
+index 0000000..db65014
+--- /dev/null
++++ b/http/controller/admin/nextec_support.go
+@@ -0,0 +1,54 @@
++package admin
++
++import (
++	"net/http"
++
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/http/response"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++)
++
++// NextecSupport: administração do app de suporte avulso (somente admin).
++type NextecSupport struct{}
++
++// Info devolve o app publicado e o caminho público da página
++// @Router /admin/nextec/support [get]
++func (n *NextecSupport) Info(c *gin.Context) {
++	response.Success(c, &gin.H{"app": service.NextecSupportAppGet(), "path": "/suporte", "max_size": service.NextecUpdateMaxSize})
++}
++
++// Upload recebe o app de suporte (multipart: file)
++// @Router /admin/nextec/support/upload [post]
++func (n *NextecSupport) Upload(c *gin.Context) {
++	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, service.NextecUpdateMaxSize+(2<<20))
++	fh, err := c.FormFile("file")
++	if err != nil {
++		response.Fail(c, 101, nextecUpdateMsg(service.ErrNextecBadFile))
++		return
++	}
++	f, err := fh.Open()
++	if err != nil {
++		response.Fail(c, 101, nextecUpdateMsg(service.ErrNextecBadFile))
++		return
++	}
++	defer f.Close()
++	u := service.AllService.UserService.CurUser(c)
++	a, err := service.NextecSupportAppSave(u, fh.Filename, f)
++	if err != nil {
++		response.Fail(c, 101, "Arquivo inválido. Envie o aplicativo de suporte (.exe) gerado pelo rdgen, com até 300 MB.")
++		return
++	}
++	service.NextecSecretAuditAdd(u, "", "support_upload", nextecIP(c), "")
++	response.Success(c, a)
++}
++
++// Delete tira o app de suporte do ar
++// @Router /admin/nextec/support/delete [post]
++func (n *NextecSupport) Delete(c *gin.Context) {
++	if err := service.NextecSupportAppDelete(); err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
++		return
++	}
++	service.NextecSecretAuditAdd(service.AllService.UserService.CurUser(c), "", "support_delete", nextecIP(c), "")
++	response.Success(c, nil)
++}
+diff --git a/http/controller/api/nextec_support.go b/http/controller/api/nextec_support.go
+new file mode 100644
+index 0000000..9126f7e
+--- /dev/null
++++ b/http/controller/api/nextec_support.go
+@@ -0,0 +1,87 @@
++package api
++
++import (
++	"fmt"
++	"net/http"
++
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++)
++
++// NextecSupport: página pública do suporte avulso (/suporte) e o download do app de suporte.
++type NextecSupport struct{}
++
++const supportPageTpl = `<!doctype html>
++<html lang="pt-BR">
++<head>
++<meta charset="utf-8">
++<meta name="viewport" content="width=device-width, initial-scale=1">
++<meta name="robots" content="noindex">
++<title>Suporte remoto Nextec</title>
++<style>
++:root{--bg:#f4f4f4;--card:#fff;--text:#1a1c1c;--muted:#464556;--accent:#613cb3;--on:#fff;--soft:#efecf7}
++@media (prefers-color-scheme:dark){:root{--bg:#121214;--card:#1b1b1f;--text:#ececef;--muted:#bdbdc6;--accent:#b899ff;--on:#14121a;--soft:#2c2740}}
++*{box-sizing:border-box}
++body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px 16px;background:var(--bg);color:var(--text);font:16px/1.55 "Open Sans",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
++main{width:100%%;max-width:520px;background:var(--card);border-radius:20px;padding:32px 28px;box-shadow:0 0 32px rgba(0,0,0,.08)}
++h1{margin:0 0 6px;font-size:24px;line-height:1.25}
++p{margin:0 0 16px;color:var(--muted)}
++ol{margin:20px 0;padding:0;list-style:none;counter-reset:s}
++li{counter-increment:s;display:flex;gap:12px;margin:0 0 14px;color:var(--text)}
++li::before{content:counter(s);flex:none;width:28px;height:28px;border-radius:50%%;background:var(--soft);color:var(--accent);font-weight:700;display:grid;place-items:center;font-size:14px}
++a.btn{display:block;text-align:center;text-decoration:none;font-weight:700;padding:14px 18px;border-radius:12px;background:var(--accent);color:var(--on);margin:8px 0 6px}
++a.btn:focus-visible{outline:3px solid var(--text);outline-offset:2px}
++small{display:block;color:var(--muted);font-size:13px}
++.note{margin-top:18px;padding:12px 14px;border-radius:12px;background:var(--soft);font-size:14px;color:var(--text)}
++</style>
++</head>
++<body>
++<main>
++<h1>Suporte remoto Nextec</h1>
++%s
++</main>
++</body>
++</html>`
++
++const supportPageReady = `<p>Para que a Nextec atenda você, baixe e abra o aplicativo de suporte. Leva menos de um minuto.</p>
++<a class="btn" href="/suporte/baixar" download>Baixar o aplicativo de suporte</a>
++<small>Windows · %s</small>
++<ol>
++<li><span>Abra o arquivo <strong>Suporte-Nextec.exe</strong> que foi baixado. Se o Windows mostrar um aviso, clique em <strong>Mais informações</strong> e depois em <strong>Executar assim mesmo</strong>.</span></li>
++<li><span>Avise o técnico da Nextec que o aplicativo está aberto.</span></li>
++<li><span>Quando ele pedir a conexão, clique em <strong>Aceitar</strong> na janela do aplicativo.</span></li>
++</ol>
++<div class="note">Ninguém entra no seu computador sem você aceitar. Ao final do atendimento, feche o aplicativo.</div>`
++
++const supportPageUnavailable = `<p>Este link de suporte não está disponível no momento. Fale com a Nextec pelo canal em que você abriu o chamado.</p>`
++
++func supportMB(n int64) string {
++	return fmt.Sprintf("%.1f MB", float64(n)/1048576)
++}
++
++func supportHeaders(c *gin.Context) {
++	c.Header("Cache-Control", "no-store")
++	c.Header("X-Content-Type-Options", "nosniff")
++	c.Header("Referrer-Policy", "no-referrer")
++	c.Header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
++}
++
++// Page GET /suporte
++func (s *NextecSupport) Page(c *gin.Context) {
++	supportHeaders(c)
++	body := supportPageUnavailable
++	if a := service.NextecSupportAppGet(); a != nil {
++		body = fmt.Sprintf(supportPageReady, supportMB(a.Size))
++	}
++	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(fmt.Sprintf(supportPageTpl, body)))
++}
++
++// Download GET /suporte/baixar
++func (s *NextecSupport) Download(c *gin.Context) {
++	supportHeaders(c)
++	if service.NextecSupportAppGet() == nil {
++		c.Status(http.StatusNotFound)
++		return
++	}
++	c.FileAttachment(service.NextecSupportPath(), service.NextecSupportDownload)
++}
+diff --git a/http/router/admin.go b/http/router/admin.go
+index 957ec23..ec67475 100644
+--- a/http/router/admin.go
++++ b/http/router/admin.go
+@@ -84,6 +84,11 @@ func NextecBind(adg *gin.RouterGroup) {
+ 	rg.POST("/updates/upload", upd.Upload)
+ 	rg.POST("/updates/rollout", upd.Rollout)
+ 	rg.POST("/updates/delete", upd.Delete)
++
++	sup := &admin.NextecSupport{}
++	rg.GET("/support", sup.Info)
++	rg.POST("/support/upload", sup.Upload)
++	rg.POST("/support/delete", sup.Delete)
+ }
+ func LoginBind(rg *gin.RouterGroup) {
+ 	cont := &admin.Login{}
+@@ -333,6 +338,10 @@ func MyBind(rg *gin.RouterGroup) {
+ 		// Nextec: link de conexão (com a senha automática, quando a máquina tem)
+ 		conn := &my.NextecConnect{}
+ 		rg.GET("/my/connect-link", conn.Link)
++
++		// Nextec: suporte avulso, lista de quem está aguardando atendimento
++		sw := &my.NextecSupportWaiting{}
++		rg.GET("/my/support/waiting", sw.List)
+ 	}
+ 
+ 	{
+diff --git a/http/router/api.go b/http/router/api.go
+index 614207a..7cc4b0e 100644
+--- a/http/router/api.go
++++ b/http/router/api.go
+@@ -21,6 +21,11 @@ func ApiInit(g *gin.Engine) {
+ 	// 加载 HTML 模板
+ 	g.LoadHTMLGlob("resources/templates/*")
+ 
++	// Nextec: página pública do suporte avulso
++	sup := &api.NextecSupport{}
++	g.GET("/suporte", sup.Page)
++	g.GET("/suporte/baixar", sup.Download)
++
+ 	frg := g.Group("/api")
+ 
+ 	{
+diff --git a/service/nextec_support.go b/service/nextec_support.go
+new file mode 100644
+index 0000000..adac78c
+--- /dev/null
++++ b/service/nextec_support.go
+@@ -0,0 +1,151 @@
++package service
++
++import (
++	"crypto/sha256"
++	"encoding/hex"
++	"encoding/json"
++	"io"
++	"os"
++	"path/filepath"
++	"strings"
++	"time"
++
++	"github.com/lejianwen/rustdesk-api/v2/global"
++	"github.com/lejianwen/rustdesk-api/v2/model"
++)
++
++// Suporte avulso (Nextec): uma página pública entrega o app de suporte (gerado no rdgen) a quem ainda não tem nada instalado.
++// Quando a pessoa abre o app, ele aparece na lista "Aguardando atendimento" para o técnico conectar.
++
++const (
++	nextecSupportDir        = "./data/nextec-support"
++	nextecSupportFile       = "nextec-suporte.exe"
++	NextecSupportDownload   = "Suporte-Nextec.exe"
++	settingSupportApp       = "support_app"
++	nextecWaitingOnlineSecs = int64(600)          // visto nos últimos 10 minutos
++	nextecWaitingMaxAge     = 24 * time.Hour      // dispositivo novo: cadastrado nas últimas 24 horas
++	nextecWaitingLimit      = 50
++)
++
++// NextecSupportApp descreve o app de suporte publicado.
++type NextecSupportApp struct {
++	Sha256     string `json:"sha256"`
++	Size       int64  `json:"size"`
++	UploadedAt int64  `json:"uploaded_at"`
++	UploadedBy string `json:"uploaded_by"`
++}
++
++// NextecWaitingPeer é um dispositivo novo, sem cliente nem dono, que está online agora.
++type NextecWaitingPeer struct {
++	Id             string `json:"id"`
++	Alias          string `json:"alias"`
++	Hostname       string `json:"hostname"`
++	Username       string `json:"username"`
++	Os             string `json:"os"`
++	CreatedAt      int64  `json:"created_at"`
++	LastOnlineTime int64  `json:"last_online_time"`
++}
++
++func NextecSupportAppGet() *NextecSupportApp {
++	raw := global.NextecSettingGet(settingSupportApp)
++	if raw == "" {
++		return nil
++	}
++	a := &NextecSupportApp{}
++	if json.Unmarshal([]byte(raw), a) != nil || a.Sha256 == "" {
++		return nil
++	}
++	if _, err := os.Stat(NextecSupportPath()); err != nil {
++		return nil
++	}
++	return a
++}
++
++func NextecSupportPath() string { return filepath.Join(nextecSupportDir, nextecSupportFile) }
++
++// NextecSupportAppSave guarda o app de suporte (.exe, até 300 MB), trocando o anterior de forma atômica.
++func NextecSupportAppSave(u *model.User, originalName string, src io.Reader) (*NextecSupportApp, error) {
++	if strings.ToLower(filepath.Ext(originalName)) != ".exe" {
++		return nil, ErrNextecBadFile
++	}
++	if err := os.MkdirAll(nextecSupportDir, 0755); err != nil {
++		return nil, err
++	}
++	tmp, err := os.CreateTemp(nextecSupportDir, ".upload-*")
++	if err != nil {
++		return nil, err
++	}
++	defer os.Remove(tmp.Name())
++	head := make([]byte, 2)
++	n, _ := io.ReadFull(src, head)
++	if !nextecMagicOk(".exe", head[:n]) {
++		tmp.Close()
++		return nil, ErrNextecBadFile
++	}
++	h := sha256.New()
++	h.Write(head[:n])
++	if _, err := tmp.Write(head[:n]); err != nil {
++		tmp.Close()
++		return nil, err
++	}
++	size, err := io.Copy(io.MultiWriter(tmp, h), io.LimitReader(src, NextecUpdateMaxSize+1-int64(n)))
++	if err != nil {
++		tmp.Close()
++		return nil, err
++	}
++	size += int64(n)
++	if err := tmp.Close(); err != nil {
++		return nil, err
++	}
++	if size > NextecUpdateMaxSize {
++		return nil, ErrNextecBadFile
++	}
++	if err := os.Chmod(tmp.Name(), 0644); err != nil {
++		return nil, err
++	}
++	if err := os.Rename(tmp.Name(), NextecSupportPath()); err != nil {
++		return nil, err
++	}
++	a := &NextecSupportApp{Sha256: hex.EncodeToString(h.Sum(nil)), Size: size, UploadedAt: time.Now().Unix()}
++	if u != nil {
++		a.UploadedBy = u.Username
++	}
++	b, _ := json.Marshal(a)
++	if err := global.NextecSettingSet(settingSupportApp, string(b)); err != nil {
++		return nil, err
++	}
++	return a, nil
++}
++
++func NextecSupportAppDelete() error {
++	if err := global.NextecSettingSet(settingSupportApp, ""); err != nil {
++		return err
++	}
++	if err := os.Remove(NextecSupportPath()); err != nil && !os.IsNotExist(err) {
++		return err
++	}
++	return nil
++}
++
++// NextecSupportWaiting lista os dispositivos novos, sem cliente nem dono, online agora (os que acabaram de abrir o app de suporte).
++func NextecSupportWaiting() []NextecWaitingPeer {
++	now := time.Now()
++	var peers []*model.Peer
++	DB.Where("group_id = 0 AND user_id = 0 AND last_online_time >= ?", now.Unix()-nextecWaitingOnlineSecs).
++		Order("last_online_time desc").Limit(200).Find(&peers)
++	out := []NextecWaitingPeer{}
++	for _, p := range peers {
++		created := time.Time(p.CreatedAt)
++		if created.IsZero() || now.Sub(created) > nextecWaitingMaxAge {
++			continue
++		}
++		out = append(out, NextecWaitingPeer{
++			Id: p.Id, Alias: p.Alias, Hostname: p.Hostname, Username: p.Username, Os: p.Os,
++			CreatedAt: created.Unix(), LastOnlineTime: p.LastOnlineTime,
++		})
++		if len(out) >= nextecWaitingLimit {
++			break
++		}
++	}
++	return out
++}

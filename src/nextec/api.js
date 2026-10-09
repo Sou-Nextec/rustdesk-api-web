@@ -51,3 +51,8 @@ export const updatesOverview = () => request({ url: '/nextec/updates' })
 export const updatesRollout = (data) => request({ url: '/nextec/updates/rollout', method: 'post', data })
 export const updatesDelete = (id) => request({ url: '/nextec/updates/delete', method: 'post', data: { id } })
 // o envio do instalador usa XMLHttpRequest direto (progresso), em src/nextec/views/Updates.vue
+
+// patch 0010: suporte avulso (página pública /suporte, app de suporte e lista aguardando atendimento)
+export const supportInfo = () => request({ url: '/nextec/support' })
+export const supportDelete = () => request({ url: '/nextec/support/delete', method: 'post', data: {} })
+export const supportWaiting = () => request({ url: '/my/support/waiting' })

@@ -8,7 +8,7 @@ const layout = () => import('@/layout/index.vue')
 
 // nome da rota filha -> grupo do menu
 const GROUPS = [
-  { name: 'NxGroupDevices', title: 'NxGroupDevices', icon: 'Monitor', children: ['Peer', 'DeviceGroup', 'NxUpdates'] },
+  { name: 'NxGroupDevices', title: 'NxGroupDevices', icon: 'Monitor', children: ['Peer', 'DeviceGroup', 'NxSupport', 'NxUpdates'] },
   { name: 'NxGroupPeople', title: 'NxGroupPeople', icon: 'UserFilled', children: ['UserList', 'UserAdd', 'UserEdit', 'UserGroup'] },
   // quem acessa o quê: permissões por cliente e as listas que aparecem no app RustDesk
   { name: 'NxGroupAddressBook', title: 'NxGroupAddressBook', icon: 'Key', children: ['NxClientAccess', 'UserAddressBookName', 'UserAddressBook', 'UserTag'] },
@@ -34,6 +34,13 @@ export function applyNextecRoutes () {
     name: 'NxSecrets',
     meta: { title: 'NxSecrets', icon: 'Key' },
     component: () => import('./views/Secrets.vue'),
+  })
+  // Suporte avulso: link público para o cliente baixar o app de suporte e lista de quem aguarda atendimento (só admin; patch 0010)
+  system.children.push({
+    path: '/user/support',
+    name: 'NxSupport',
+    meta: { title: 'NxSupport', icon: 'Service' },
+    component: () => import('./views/Support.vue'),
   })
   // Atualizações do app: envio do instalador e publicação para todos ou para um piloto (só admin; patch 0009 da API)
   system.children.push({
