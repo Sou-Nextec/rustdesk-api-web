@@ -35,7 +35,7 @@
     <el-dropdown class="menu-item">
       <div class="title">
         <span class="nx-avatar" aria-hidden="true">
-          <img v-if="user.avatar" :src="user.avatar" alt="">
+          <img v-if="user.avatar && !avatarBroken" :src="user.avatar" alt="" @error="avatarBroken = true">
           <template v-else>{{ String(user.nickname || user.username || '?').trim().charAt(0).toUpperCase() }}</template>
         </span>
         <span class="nickname">{{ user.username }}</span>
@@ -65,7 +65,7 @@
   import { useAppStore } from '@/store/app'
   import changePwdDialog from '@/components/changePwdDialog.vue'
   import ProfilePhoto from '@/nextec/views/ProfilePhoto.vue'
-  import { ref } from 'vue'
+  import { ref, watch } from 'vue'
   import { T } from '@/utils/i18n'
   import { useDark } from '@vueuse/core'
   import { Sunny, Moon } from '@element-plus/icons'
@@ -81,6 +81,9 @@
 
   const changePwdVisible = ref(false)
   const photoVisible = ref(false)
+  // foto que não carrega (ex.: URL que exige login) volta para a inicial
+  const avatarBroken = ref(false)
+  watch(() => user.avatar, () => { avatarBroken.value = false })
   const showChangePwd = () => {
     changePwdVisible.value = true
   }
