@@ -15,6 +15,9 @@ ARG API_TAG=v2.6.29
 ARG NEXTEC_API_PATCH=1
 
 FROM node:22-alpine AS panel
+# versão mostrada na tela (o workflow passa master-<commit> ou a tag)
+ARG NEXTEC_VERSION=dev
+ENV VITE_NEXTEC_VERSION=${NEXTEC_VERSION}
 WORKDIR /src
 COPY package.json package-lock.json ./
 RUN npm ci

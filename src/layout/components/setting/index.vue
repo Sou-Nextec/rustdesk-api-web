@@ -51,6 +51,7 @@
           <el-dropdown-item @click="$router.push('/')">{{ T('Userinfo') }}</el-dropdown-item>
           <el-dropdown-item @click="$router.push('/my/loginLog')">{{ T('NxMyLogins') }}</el-dropdown-item>
           <el-dropdown-item @click="showChangePwd">{{ T('ChangePassword') }}</el-dropdown-item>
+          <el-dropdown-item disabled>Painel {{ version }}</el-dropdown-item>
           <el-dropdown-item divided @click="logout">{{ T('Logout') }}</el-dropdown-item>
         </el-dropdown-menu>
       </template>
@@ -81,6 +82,7 @@
 
   const changePwdVisible = ref(false)
   const photoVisible = ref(false)
+  const version = import.meta.env.VITE_NEXTEC_VERSION || 'dev'
   // foto que não carrega (ex.: URL que exige login) volta para a inicial
   const avatarBroken = ref(false)
   watch(() => user.avatar, () => { avatarBroken.value = false })
