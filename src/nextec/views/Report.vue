@@ -188,7 +188,7 @@
 </script>
 
 <style scoped lang="scss">
-  .nx-rep { max-width: 1240px; }
+  .nx-rep { width: 100%; }
   .nx-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 14px 18px; margin-bottom: 16px; background: var(--nx-surface); border-radius: var(--nx-radius-card); box-shadow: var(--nx-shadow-card); }
   .nx-month { width: 160px; }
   .nx-client { width: 260px; max-width: 100%; }

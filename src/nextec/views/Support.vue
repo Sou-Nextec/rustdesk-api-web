@@ -129,7 +129,7 @@
 </script>
 
 <style scoped lang="scss">
-  .nx-sup { max-width: 1000px; }
+  .nx-sup { width: 100%; }
   .nx-card { background: var(--nx-surface); border-radius: var(--nx-radius-card); box-shadow: var(--nx-shadow-card); overflow: hidden; margin-bottom: 16px; }
   .nx-card-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 16px 22px; border-bottom: 1px solid var(--nx-divider); }
   .nx-h2 { font-size: 16px; margin: 0; color: var(--nx-text); }

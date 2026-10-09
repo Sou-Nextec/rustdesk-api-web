@@ -20,7 +20,7 @@
     </el-alert>
 
     <div v-if="!loaded" class="nx-pad"><el-skeleton animated :rows="2"/></div>
-    <el-empty v-else-if="!list.length" :image-size="56" description="Ninguém aguardando agora.">
+    <el-empty v-else-if="!list.length && hasApp" :image-size="56" description="Ninguém aguardando agora.">
       <p class="nx-empty-hint">Mande o link ao cliente. Quando ele abrir o app, a máquina aparece aqui para você conectar.</p>
     </el-empty>
     <ul v-else class="nx-wlist" aria-live="polite">

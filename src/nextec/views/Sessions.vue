@@ -95,7 +95,7 @@
 </script>
 
 <style scoped lang="scss">
-  .nx-ses { max-width: 1100px; }
+  .nx-ses { width: 100%; }
   .nx-bar { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; padding: 14px 18px; margin-bottom: 16px; background: var(--nx-surface); border-radius: var(--nx-radius-card); box-shadow: var(--nx-shadow-card); }
   .nx-bar-text { margin: 0; flex: 1 1 320px; font-size: 13px; color: var(--nx-text-muted); }
   .nx-card { background: var(--nx-surface); border-radius: var(--nx-radius-card); box-shadow: var(--nx-shadow-card); overflow: hidden; }

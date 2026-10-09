@@ -9,7 +9,7 @@
       </el-form>
     </el-card>
     <el-card class="list-body" shadow="hover">
-      <el-tag type="danger" effect="light" style="margin-bottom: 10px">{{ T('MyAddressBookTips') }}</el-tag>
+      <el-alert type="info" :closable="false" show-icon class="nx-tip" :title="T('MyAddressBookTips')"/>
       <el-table :data="list" v-loading="listRes.loading" border>
         <!--        <el-table-column prop="id" label="ID" align="center"/>-->
         <el-table-column prop="name" :label="T('Name')" align="center"/>
@@ -22,6 +22,7 @@
               <el-button @click="toEdit(row)">{{ T('Edit') }}</el-button>
               <el-button type="danger" @click="del(row)">{{ T('Delete') }}</el-button>
             </template>
+            <span v-else class="nx-default-note">Lista padrão da pessoa (fixa)</span>
           </template>
         </el-table-column>
       </el-table>
