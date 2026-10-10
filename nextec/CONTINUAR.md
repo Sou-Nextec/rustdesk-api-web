@@ -4,7 +4,7 @@ Ponto de entrada para quem assume o projeto (pessoa ou IA). Resume o mapa, o est
 Documentos de detalhe estão listados na seção "Onde está cada documentação". Nada aqui contém segredo: tokens, senhas e
 chaves ficam no Portainer e nos segredos do GitHub, e nunca devem ser colados em chat, issue ou arquivo.
 
-Atualizado em 10/10/2026 (painel v2.9.3).
+Atualizado em 10/10/2026 (painel v2.9.5).
 
 ## 1. O que é
 
@@ -75,6 +75,9 @@ Variáveis da stack (Portainer > stack > Environment variables): `TUNNEL_TOKEN`,
 - **Comandos do hbbs (Ajustes do servidor):** o hbbs só aceita comandos de `127.0.0.1`. Na stack, o contêiner `servidor` roda um
   encaminhador (`nc`, portas internas 21125 e 21127) e o painel usa `NEXTEC_SERVER_CMD_HOST=servidor` (patch 0018). Não use
   `network_mode: service:servidor`: reiniciar o servidor deixa o painel sem rede até recriá-lo (testado).
+- **Protocolo do link (botão Conectar):** o app gerado como `Nextec-Connect` registra `nextec-connect://`, não `rustdesk://`. O
+  protocolo do painel é configurável em Dispositivos > Gerar cliente (patch 0020). Se o Windows pedir "obter um aplicativo para
+  abrir este link", o protocolo configurado não é o do app instalado.
 - **Antivírus:** Acronis EDR bloqueia executáveis de acesso remoto sem assinatura (`ML:Generic.MaliciousExe`). Solução definitiva
   é assinatura digital (adiada por custo); até lá, liberar por hash, processo ou caminho.
 - **Segredos:** nunca em chat. O `GERADOR_ZIP_SENHA` precisa ser igual ao segredo `ZIP_PASSWORD` do repositório `rdgen`.
@@ -84,7 +87,7 @@ Variáveis da stack (Portainer > stack > Environment variables): `TUNNEL_TOKEN`,
 Entregue e em produção:
 - Painel v2.9.1: cofre de senhas, atualizações do app com piloto, suporte avulso, políticas e sessões, relatório mensal, fila de
   atendimento, acesso rápido, instalação por cliente, tabelas em cartões no celular, máscara de ID, avisos de erro em português.
-- API com patches 0001 a 0018 (`nextec/backend/LEIAME.md`).
+- API com patches 0001 a 0020 (`nextec/backend/LEIAME.md`).
 - Gerador: imagem publicada, rodando na stack do app03, endurecido (token por build, `cleanzip` e `get_zip` com nomes exatos),
   só Windows e Linux, padrões Nextec travados (`NX_*`), ícone e logo Nextec, `SECRET_KEY` automática, aviso de configuração.
 

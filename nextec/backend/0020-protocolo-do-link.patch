@@ -1,0 +1,167 @@
+diff --git a/http/controller/admin/my/nextec_connect.go b/http/controller/admin/my/nextec_connect.go
+index 2611a60..19d0280 100644
+--- a/http/controller/admin/my/nextec_connect.go
++++ b/http/controller/admin/my/nextec_connect.go
+@@ -12,7 +12,7 @@ import (
+ // e só para quem pode acessar a máquina; cada uso fica registrado em auditoria.
+ type NextecConnect struct{}
+ 
+-// Link devolve rustdesk://<id>[?password=...]
++// Link devolve <protocolo>://<id>[?password=...] (protocolo: rustdesk ou o nome do app gerado, ver NextecConnectSchemeGet)
+ // @Router /admin/my/connect-link [get]
+ func (ct *NextecConnect) Link(c *gin.Context) {
+ 	id := c.Query("id")
+@@ -26,7 +26,7 @@ func (ct *NextecConnect) Link(c *gin.Context) {
+ 		response.Fail(c, 403, response.TranslateMsg(c, "NoAccess"))
+ 		return
+ 	}
+-	link := "rustdesk://" + url.PathEscape(id)
++	link := service.NextecConnectSchemeGet() + "://" + url.PathEscape(id)
+ 	if pw != "" {
+ 		link += "?password=" + url.QueryEscape(pw)
+ 		ip := c.GetHeader("CF-Connecting-IP")
+diff --git a/http/controller/admin/my/nextec_note.go b/http/controller/admin/my/nextec_note.go
+index f440903..04cf94c 100644
+--- a/http/controller/admin/my/nextec_note.go
++++ b/http/controller/admin/my/nextec_note.go
+@@ -20,7 +20,9 @@ type nextecNoteForm struct {
+ // Settings devolve se o painel pede o chamado ao conectar e o endereço base do Jira
+ // @Router /admin/my/connect-settings [get]
+ func (ct *NextecNote) Settings(c *gin.Context) {
+-	response.Success(c, service.NextecTicketSettingsGet())
++	t := service.NextecTicketSettingsGet()
++	// scheme: protocolo do link do app (o app gerado como Nextec-Connect abre nextec-connect://)
++	response.Success(c, &gin.H{"mode": t.Mode, "jira_base": t.JiraBase, "scheme": service.NextecConnectSchemeGet()})
+ }
+ 
+ // Add registra o chamado da conexão que vai começar
+diff --git a/http/controller/admin/nextec_scheme.go b/http/controller/admin/nextec_scheme.go
+new file mode 100644
+index 0000000..649d462
+--- /dev/null
++++ b/http/controller/admin/nextec_scheme.go
+@@ -0,0 +1,34 @@
++package admin
++
++import (
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/http/response"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++)
++
++// NextecScheme: protocolo do link do botão Conectar (somente admin).
++type NextecScheme struct{}
++
++type nextecSchemeForm struct {
++	Scheme string `json:"scheme"`
++}
++
++// Get @Router /admin/nextec/connect-scheme [get]
++func (n *NextecScheme) Get(c *gin.Context) {
++	response.Success(c, &gin.H{"scheme": service.NextecConnectSchemeGet()})
++}
++
++// Save @Router /admin/nextec/connect-scheme [post]
++func (n *NextecScheme) Save(c *gin.Context) {
++	f := &nextecSchemeForm{}
++	if err := c.ShouldBindJSON(f); err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError")+err.Error())
++		return
++	}
++	if err := service.NextecConnectSchemeSet(f.Scheme); err != nil {
++		response.Fail(c, 101, err.Error())
++		return
++	}
++	service.NextecSecretAuditAdd(service.AllService.UserService.CurUser(c), "", "connect_scheme", nextecIP(c), service.NextecConnectSchemeGet())
++	response.Success(c, &gin.H{"scheme": service.NextecConnectSchemeGet()})
++}
+diff --git a/http/router/admin.go b/http/router/admin.go
+index 9948918..5f7540c 100644
+--- a/http/router/admin.go
++++ b/http/router/admin.go
+@@ -105,6 +105,10 @@ func NextecBind(adg *gin.RouterGroup) {
+ 	rg.GET("/ticket-settings", rep.TicketSettings)
+ 	rg.POST("/ticket-settings", rep.TicketSettingsSave)
+ 	rg.GET("/report", rep.Report)
++
++	sch := &admin.NextecScheme{}
++	rg.GET("/connect-scheme", sch.Get)
++	rg.POST("/connect-scheme", sch.Save)
+ }
+ func LoginBind(rg *gin.RouterGroup) {
+ 	cont := &admin.Login{}
+diff --git a/service/nextec_scheme.go b/service/nextec_scheme.go
+new file mode 100644
+index 0000000..31ee080
+--- /dev/null
++++ b/service/nextec_scheme.go
+@@ -0,0 +1,45 @@
++package service
++
++import (
++	"errors"
++	"regexp"
++	"strings"
++
++	"github.com/lejianwen/rustdesk-api/v2/global"
++)
++
++// Protocolo do link de conexão. O RustDesk registra no Windows o protocolo com o nome do app em minúsculas
++// (um app gerado como "Nextec-Connect" abre "nextec-connect://", não "rustdesk://").
++const (
++	settingConnectScheme = "connect_scheme"
++	defaultConnectScheme = "rustdesk"
++)
++
++var nextecSchemeRe = regexp.MustCompile(`^[a-z][a-z0-9+.-]{1,31}$`)
++
++// nextecSchemeValid diz se o texto serve como protocolo de URL (sem "://").
++func nextecSchemeValid(v string) bool {
++	return nextecSchemeRe.MatchString(v)
++}
++
++// NextecConnectSchemeGet devolve o protocolo configurado (padrão rustdesk).
++func NextecConnectSchemeGet() string {
++	v := strings.ToLower(strings.TrimSpace(global.NextecSettingGet(settingConnectScheme)))
++	if !nextecSchemeValid(v) {
++		return defaultConnectScheme
++	}
++	return v
++}
++
++// NextecConnectSchemeSet grava o protocolo. Vazio volta ao padrão.
++func NextecConnectSchemeSet(v string) error {
++	v = strings.ToLower(strings.TrimSpace(v))
++	v = strings.TrimSuffix(v, "://")
++	if v == "" {
++		v = defaultConnectScheme
++	}
++	if !nextecSchemeValid(v) {
++		return errors.New("protocolo inválido: use letras minúsculas, números e hífen, como nextec-connect")
++	}
++	return global.NextecSettingSet(settingConnectScheme, v)
++}
+diff --git a/service/nextec_scheme_test.go b/service/nextec_scheme_test.go
+new file mode 100644
+index 0000000..bbe21e8
+--- /dev/null
++++ b/service/nextec_scheme_test.go
+@@ -0,0 +1,18 @@
++package service
++
++import "testing"
++
++func TestNextecSchemeValid(t *testing.T) {
++	ok := []string{"rustdesk", "nextec-connect", "nextec.connect", "app2"}
++	bad := []string{"", "r", "Nextec-Connect", "nextec connect", "1app", "javascript:alert(1)", "nextec://", "a/b", "-app"}
++	for _, v := range ok {
++		if !nextecSchemeValid(v) {
++			t.Fatalf("%q deveria ser válido", v)
++		}
++	}
++	for _, v := range bad {
++		if nextecSchemeValid(v) {
++			t.Fatalf("%q deveria ser inválido", v)
++		}
++	}
++}

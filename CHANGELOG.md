@@ -2,6 +2,10 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.9.5
+
+- **Botão Conectar com o app gerado:** o app gerado como `Nextec-Connect` registra o protocolo `nextec-connect://`, e o painel abria `rustdesk://` (o Windows pedia para "obter um aplicativo"). Em Dispositivos > Gerar cliente, o administrador define o protocolo do app instalado; o botão Conectar passa a usá-lo.
+
 ## 2.9.4
 
 - **Permissões de acesso:** senhas automáticas respeitam o vínculo da máquina com o cliente e os acessos liberados pelo administrador. Favoritos continuam permitindo conexão manual.

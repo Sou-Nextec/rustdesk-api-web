@@ -1,9 +1,6 @@
-export const connectByClient = (id) => {
-  //不新开窗口打开url protocol ,格式是 rustdesk://<id>
-  // window.open(`rustdesk://${row.id}`)
-  let a = document.createElement('a')
-  a.href = `rustdesk://${id}`
-  a.target = '_self'
-  a.click()
+// Nextec: o protocolo do link vem do painel (rustdesk ou o nome do app gerado, ex.: nextec-connect). Ver src/nextec/connect.js.
+import { connectLink } from '@/nextec/connect'
 
+export const connectByClient = (id) => {
+  connectLink(id)
 }
