@@ -21,3 +21,5 @@ yarn.lock
 # Fontes licenciadas da Nextec (nao versionar)
 src/nextec/fonts/*.woff2
 src/nextec/fonts/*.woff
+
+test-results/
