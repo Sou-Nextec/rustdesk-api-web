@@ -14,7 +14,11 @@ A imagem é `ghcr.io/sou-nextec/rdgen-nextec`, publicada pelo repositório `Sou-
 | `GERADOR_GH_TOKEN` | o mesmo token do GitHub que o rdgen usa hoje (`GHBEARER` do compose antigo) |
 | `GERADOR_ZIP_SENHA` | o mesmo `ZIP_PASSWORD` do compose antigo (tem que ser igual ao segredo `ZIP_PASSWORD` do repositório `rdgen`) |
 | `GERADOR_SECRET_KEY` | opcional: deixe vazia e o gerador cria uma chave aleatória e guarda no volume |
+| `GERADOR_EMAILS_AUTORIZADOS` | e-mails que podem gerar clientes, separados por vírgula (ex.: `admin@nex.tec.br,tecnico@nex.tec.br`). Vazio = qualquer pessoa que passe pelo Access. **Recomendado preencher** |
 | `GERADOR_SH_SECRET` | o mesmo `SH_SECRET` do compose antigo, ou qualquer texto longo |
+
+Os nomes originais do rdgen (`GHBEARER`, `GHUSER`, `ZIP_PASSWORD`, `SECRET_KEY`, `SH_SECRET`, `GENURL`) também funcionam no
+Portainer; se os dois existirem, vale o `GERADOR_*`.
 
 Para ver os valores atuais no servidor antigo (não cole em chat nem em issue):
 

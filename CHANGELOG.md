@@ -2,6 +2,11 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.9.3
+
+- **Gerar cliente:** novo item no menu Dispositivos (só administradores) que abre o gerador de instaladores já configurado com o servidor, a chave e a identidade da Nextec.
+- O gerador só aceita administradores e pessoas autorizadas (lista de e-mails, além do login do Cloudflare Access).
+
 ## 2.9.2
 
 - **Ajustes do servidor voltam a funcionar** com o servidor de ID e o relay em contêiner separado: relay, velocidade, IPs bloqueados, uso e login obrigatório. O painel agora fala com um encaminhador ao lado do hbbs/hbbr, que repassa os comandos pelo endereço local que eles exigem.

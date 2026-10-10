@@ -11,6 +11,9 @@
 #   GERADOR_ZIP_SENHA    obrigatória para o gerador (a MESMA do segredo ZIP_PASSWORD do repositório rdgen)
 #   GERADOR_SECRET_KEY   opcional (se vazia, o gerador cria uma chave aleatória e guarda no volume)
 #   GERADOR_SH_SECRET    obrigatória para o gerador (senha da API do gerador; qualquer texto longo)
+#   GERADOR_EMAILS_AUTORIZADOS  e-mails que podem gerar clientes, separados por vírgula (vazio = quem passa pelo Access)
+# Os nomes originais do rdgen (GHBEARER, GHUSER, ZIP_PASSWORD, SECRET_KEY, SH_SECRET, GENURL) tambem sao aceitos no Portainer;
+# se os dois existirem, vale o GERADOR_*.
 #   Sem essas variáveis só o gerador não sobe; o painel e o servidor de ID não são afetados.
 services:
   # hbbs + hbbr: IDs, relay e chave. Versão fixa (sem pull_policy always) para não reiniciar a cada atualização do painel.
@@ -78,14 +81,14 @@ services:
       - TZ=America/Sao_Paulo
       - URL_PREFIX=/gerador
       - PROTOCOL=https
-      - GENURL=${URL_PAINEL:-https://painel-remoto.nex.tec.br}/gerador
-      - GHUSER=${GERADOR_GH_USER:-Sou-Nextec}
-      - GHBEARER=${GERADOR_GH_TOKEN:-}
+      - GENURL=${GENURL:-${URL_PAINEL:-https://painel-remoto.nex.tec.br}/gerador}
+      - GHUSER=${GERADOR_GH_USER:-${GHUSER:-Sou-Nextec}}
+      - GHBEARER=${GERADOR_GH_TOKEN:-${GHBEARER:-}}
       - GHBRANCH=master
       - REPONAME=rdgen
-      - ZIP_PASSWORD=${GERADOR_ZIP_SENHA:-}
-      - SECRET_KEY=${GERADOR_SECRET_KEY:-}
-      - SH_SECRET=${GERADOR_SH_SECRET:-}
+      - ZIP_PASSWORD=${GERADOR_ZIP_SENHA:-${ZIP_PASSWORD:-}}
+      - SECRET_KEY=${GERADOR_SECRET_KEY:-${SECRET_KEY:-}}
+      - SH_SECRET=${GERADOR_SH_SECRET:-${SH_SECRET:-}}
       # padrões Nextec: o formulário já vem com o servidor, a chave e a API, e esses campos ficam travados
       - NX_SERVER_HOST=${DOMINIO:-remoto.nex.tec.br}
       - NX_API_SERVER=${URL_PAINEL:-https://painel-remoto.nex.tec.br}
@@ -93,6 +96,8 @@ services:
       - NX_URL_LINK=${URL_PAINEL:-https://painel-remoto.nex.tec.br}
       - NX_DOWNLOAD_LINK=${URL_PAINEL:-https://painel-remoto.nex.tec.br}
       - NX_COMPANY=Nextec
+      # só estas pessoas geram clientes (além do login do Access); vazio = quem passa pelo Access
+      - NX_ALLOWED_EMAILS=${GERADOR_EMAILS_AUTORIZADOS:-}
       - NX_APP_NAME=Nextec-Connect
     volumes:
       # só a chave pública do servidor (a privada não entra neste contêiner)
