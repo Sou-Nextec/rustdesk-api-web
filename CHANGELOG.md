@@ -2,6 +2,11 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.9.7
+
+- A configuracao do cliente web usa URL versionada para evitar cache de um endereco WebSocket antigo.
+- A stack garante leitura da chave publica pelo RDGen e restringe a chave privada ao root.
+
 ## 2.9.6
 
 - Cliente web usa WebSocket seguro no mesmo dominio HTTPS do painel, com proxy interno para hbbs/hbbr.
