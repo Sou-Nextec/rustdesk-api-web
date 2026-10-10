@@ -2,6 +2,11 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.9.6
+
+- Cliente web usa WebSocket seguro no mesmo dominio HTTPS do painel, com proxy interno para hbbs/hbbr.
+- Testes verificam transporte bidirecional e bloqueio de origens externas; credenciais do painel nao sao encaminhadas.
+
 ## 2.9.5
 
 - **Botão Conectar com o app gerado:** o app gerado como `Nextec-Connect` registra o protocolo `nextec-connect://`, e o painel abria `rustdesk://` (o Windows pedia para "obter um aplicativo"). Em Dispositivos > Gerar cliente, o administrador define o protocolo do app instalado; o botão Conectar passa a usá-lo.
