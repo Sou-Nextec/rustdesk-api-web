@@ -21,6 +21,10 @@ isoladas, para continuar recebendo as atualizações do projeto original:
 
 O hbbs/hbbr (servidor de ID e relay) usa a imagem oficial `lejianwen/rustdesk-server-s6:v0.1.2`, fixa de propósito.
 
+Pastas locais fora dos repositórios, dentro de `RustyDesk Admin`: `implantacao-remoto` (material de implantação anterior),
+`clientes-gerados` (executáveis gerados pelo rdgen, para teste; não versionar) e `backupsdgen-backup` (cópia do volume `exe`
+do rdgen antigo; pode conter dados sensíveis, não versionar).
+
 ## 2. Onde roda
 
 | Item | Detalhe |
@@ -54,8 +58,8 @@ Variáveis da stack (Portainer > stack > Environment variables): `TUNNEL_TOKEN`,
 - API (Go): `docker run --rm -v <pasta rustdesk-api>:/src -w /src golang:1.23-alpine sh -c 'apk add -q gcc musl-dev; CGO_ENABLED=1 go test ./service -count=1'`.
 - Gerador (Django): `docker build -t rdgen-nextec:t . && docker run --rm rdgen-nextec:t python manage.py test rdgenerator`.
 - Painel: `npx vite build` e `npm run dev` para olhar as telas (largura de 390 px e 1440 px; escuro e claro).
-- Regressão ponta a ponta (cofre, agente, suporte, atualizações, controle, IDs) foi feita com scripts PowerShell contra
-  contêineres locais; esses scripts não estão no repositório. Ao mexer em backend, suba a imagem local e exercite as rotas.
+- Regressão ponta a ponta (cofre, agente, suporte, atualizações, controle, fila, IDs): scripts PowerShell em `nextec/testes/`
+  contra um contêiner local descartável (instruções em `nextec/testes/LEIAME.md`). Rode os que tocam a área alterada.
 
 ## 5. Armadilhas conhecidas
 
@@ -115,6 +119,7 @@ Em ordem (detalhes em `nextec/PENDENCIAS.md`):
 | Gerador na stack, túnel, Access, diagnóstico | `nextec/deploy/GERADOR.md` |
 | Fork do gerador (variáveis `NX_*`, segurança, CI) | `NEXTEC.md` no repositório `rdgen` |
 | Instalador e agentes nos clientes | `nextec/atualizacao/` |
+| Testes de regressão do backend | `nextec/testes/LEIAME.md` |
 
 ## 9. Preferências do dono do projeto
 
