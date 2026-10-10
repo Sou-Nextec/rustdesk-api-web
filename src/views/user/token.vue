@@ -21,24 +21,33 @@
     <el-card class="list-body" shadow="hover">
       <el-table :data="listRes.list" v-loading="listRes.loading" border @selection-change="handleSelectionChange">
         <el-table-column type="selection" align="center" width="50"/>
-        <el-table-column prop="id" label="id" align="center" width="100"/>
-        <el-table-column :label="T('Owner')" align="center">
+        <el-table-column prop="id" label="ID da sessão" align="center" width="110"/>
+        <el-table-column label="Pessoa" align="center" min-width="180">
           <template #default="{row}">
             <span v-if="row.user_id"> <el-tag>{{ allUsers?.find(u => u.id === row.user_id)?.username }}</el-tag> </span>
           </template>
         </el-table-column>
-        <el-table-column :label="T('Token')" align="center">
+        <el-table-column label="Origem" align="center" min-width="150">
           <template #default="{row}">
-            <span> {{ maskToken(row.token) }} </span>
+            {{ clientLabel(row.client) }}<span v-if="row.platform"> · {{ row.platform }}</span>
           </template>
+        </el-table-column>
+        <el-table-column label="ID do dispositivo" min-width="160">
+          <template #default="{row}">{{ row.device_id || 'Sem ID informado' }}</template>
+        </el-table-column>
+        <el-table-column label="Identificador do app" min-width="180">
+          <template #default="{row}">{{ row.device_uuid || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="IP do login" min-width="145">
+          <template #default="{row}">{{ row.ip || 'Não registrado' }}</template>
         </el-table-column>
         <el-table-column prop="created_at" :label="T('CreatedAt')" align="center"/>
         <el-table-column :label="T('ExpireTime')" prop="expired_at" align="center">
           <template #default="{row}">
-            <el-tag :type="expired(row)?'info':'success'">{{ row.expired_at ? new Date(row.expired_at * 1000).toLocaleString() : '-' }}</el-tag>
+            <el-tag type="success">{{ row.expired_at ? new Date(row.expired_at * 1000).toLocaleString() : '-' }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column :label="T('Actions')" align="center" width="400">
+        <el-table-column :label="T('Actions')" align="center" width="180">
           <template #default="{row}">
             <el-button type="danger" @click="del(row)">{{ T('Logout') }}</el-button>
           </template>
@@ -81,13 +90,7 @@
   watch(() => listQuery.page, getList)
 
   watch(() => listQuery.page_size, handlerQuery)
-  const maskToken = (token) => {
-    return token.slice(0, 4) + '****' + token.slice(-4)
-  }
-  const expired = (row) => {
-    const now = new Date().getTime()
-    return row.expired_at * 1000 < now
-  }
+  const clientLabel = (client) => ({ webadmin: 'Painel', webclient: 'WebView', app: 'Aplicativo' }[client] || 'Não registrado')
 
   const multipleSelection = ref([])
   const handleSelectionChange = (val) => {

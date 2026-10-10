@@ -1,0 +1,116 @@
+diff --git a/http/controller/admin/userToken.go b/http/controller/admin/userToken.go
+index ca230cc..7ef395f 100644
+--- a/http/controller/admin/userToken.go
++++ b/http/controller/admin/userToken.go
+@@ -1,6 +1,8 @@
+ package admin
+ 
+ import (
++	"time"
++
+ 	"github.com/gin-gonic/gin"
+ 	"github.com/lejianwen/rustdesk-api/v2/global"
+ 	"github.com/lejianwen/rustdesk-api/v2/http/request/admin"
+@@ -33,6 +35,7 @@ func (ct *UserToken) List(c *gin.Context) {
+ 		return
+ 	}
+ 	res := service.AllService.UserService.TokenList(query.Page, query.PageSize, func(tx *gorm.DB) {
++		tx.Where("expired_at > ?", time.Now().Unix())
+ 		if query.UserId > 0 {
+ 			tx.Where("user_id = ?", query.UserId)
+ 		}
+diff --git a/model/userToken.go b/model/userToken.go
+index 8fba177..c31d433 100644
+--- a/model/userToken.go
++++ b/model/userToken.go
+@@ -5,8 +5,11 @@ type UserToken struct {
+ 	UserId     uint   `json:"user_id" gorm:"default:0;not null;index"`
+ 	DeviceUuid string `json:"device_uuid" gorm:"default:'';omitempty;"`
+ 	DeviceId   string `json:"device_id" gorm:"default:'';omitempty;"`
+-	Token      string `json:"token" gorm:"default:'';not null;index"`
++	Token      string `json:"-" gorm:"default:'';not null;index"`
+ 	ExpiredAt  int64  `json:"expired_at" gorm:"default:0;not null;"`
++	Client     string `json:"client" gorm:"-"`
++	Platform   string `json:"platform" gorm:"-"`
++	Ip         string `json:"ip" gorm:"-"`
+ 	TimeModel
+ }
+ 
+diff --git a/service/user.go b/service/user.go
+index 9eb7c51..c848bba 100644
+--- a/service/user.go
++++ b/service/user.go
+@@ -104,7 +104,7 @@ func (us *UserService) Login(u *model.User, llog *model.LoginLog) *model.UserTok
+ 		ExpiredAt:  us.UserTokenExpireTimestamp(),
+ 	}
+ 	DB.Create(ut)
+-	llog.UserTokenId = ut.UserId
++	llog.UserTokenId = ut.Id
+ 	DB.Create(llog)
+ 	if llog.Uuid != "" {
+ 		AllService.PeerService.UuidBindUserId(llog.DeviceId, llog.Uuid, u.Id)
+@@ -375,6 +375,24 @@ func (us *UserService) RegisterByOauth(oauthUser *model.OauthUser, op string) (e
+ 	return nil, user
+ }
+ 
++// avatarCanBeReplaced: vazio, ou uma URL do Graph gravada por engano (exige token e não abre no navegador nem no app)
++func avatarCanBeReplaced(current string) bool {
++	return current == "" || strings.HasPrefix(current, "https://graph.microsoft.com/")
++}
++
++// FillAvatarIfEmpty grava a foto vinda do login externo se o usuário ainda não tem uma (não sobrescreve a escolhida por ele)
++func (us *UserService) FillAvatarIfEmpty(user *model.User, avatar string) {
++	if user == nil || user.Id == 0 || avatar == "" || !avatarCanBeReplaced(user.Avatar) {
++		return
++	}
++	upd := &model.User{}
++	upd.Id = user.Id
++	upd.Avatar = avatar
++	if err := UpdateFields(upd, "avatar"); err == nil {
++		user.Avatar = avatar
++	}
++}
++
+ // GenerateUsernameByOauth 生成用户名
+ func (us *UserService) GenerateUsernameByOauth(name string) string {
+ 	for us.IsUsernameExists(name) {
+@@ -452,6 +470,39 @@ func (us *UserService) TokenList(page uint, size uint, f func(tx *gorm.DB)) *mod
+ 	tx.Count(&res.Total)
+ 	tx.Scopes(Paginate(page, size))
+ 	tx.Find(&res.UserTokens)
++	if len(res.UserTokens) > 0 {
++		ids := make([]uint, 0, len(res.UserTokens))
++		firstCreated := time.Time(res.UserTokens[0].CreatedAt)
++		minCreated, maxCreated := firstCreated, firstCreated
++		for _, token := range res.UserTokens {
++			ids = append(ids, token.Id)
++			created := time.Time(token.CreatedAt)
++			if created.Before(minCreated) {
++				minCreated = created
++			}
++			if created.After(maxCreated) {
++				maxCreated = created
++			}
++		}
++		var logs []model.LoginLog
++		DB.Where("user_token_id IN ? AND created_at BETWEEN ? AND ?", ids,
++			minCreated.Add(-5*time.Second), maxCreated.Add(5*time.Second)).Order("id DESC").Find(&logs)
++		byToken := make(map[uint]model.LoginLog, len(logs))
++		for _, log := range logs {
++			if _, found := byToken[log.UserTokenId]; !found {
++				byToken[log.UserTokenId] = log
++			}
++		}
++		for i := range res.UserTokens {
++			if log, found := byToken[res.UserTokens[i].Id]; found && log.UserId == res.UserTokens[i].UserId &&
++				time.Time(log.CreatedAt).Sub(time.Time(res.UserTokens[i].CreatedAt)) < 5*time.Second &&
++				time.Time(res.UserTokens[i].CreatedAt).Sub(time.Time(log.CreatedAt)) < 5*time.Second {
++				res.UserTokens[i].Client = log.Client
++				res.UserTokens[i].Platform = log.Platform
++				res.UserTokens[i].Ip = log.Ip
++			}
++		}
++	}
+ 	return res
+ }
+ 

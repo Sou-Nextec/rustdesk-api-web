@@ -147,7 +147,7 @@
   "ConfirmPassword": { "One": "Confirmar senha" },
   "PasswordNotMatchConfirmPassword": { "One": "A confirmação não é igual à nova senha" },
   "ToLogin": { "One": "Ir para o login" },
-  "UserToken": { "One": "Logins no painel" },
+  "UserToken": { "One": "Logins ativos" },
   "BatchAddToAB": { "One": "Adicionar à lista em lote" },
   "BatchEditTags": { "One": "Editar etiquetas em lote" },
   "User": { "One": "Usuário" },
