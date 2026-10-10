@@ -137,3 +137,9 @@ também para quem não pode ver a fila (a tela de Suporte avulso precisa saber s
 `NextecCleanId` remove espaços (inclusive o sem quebra) do ID ao criar ou alterar dispositivos e acessos salvos, e na sincronização
 da lista de endereços do app. Na inicialização, `NextecNormalizeIds` corrige os IDs já gravados com espaço (dispositivos e acessos
 salvos), pulando os que causariam conflito com um ID já existente (aviso no log). Cobertura em `service/nextec_ids_test.go`.
+
+## Patch 0017: mensagens claras do servidor de ID e do relay
+
+`NextecCmdErrorMessage` (`service/nextec_cmderr.go`) traduz o erro de rede ao enviar comandos para o hbbs/hbbr
+(recusado, tempo esgotado, host não encontrado, conexão encerrada) em texto em português. A rota `/rustdesk/sendCmd` passa a
+devolvê-lo no lugar do erro cru. O hbbs só aceita comandos de 127.0.0.1; com servidor em contêiner separado a recusa é esperada.

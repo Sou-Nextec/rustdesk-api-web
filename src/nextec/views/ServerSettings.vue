@@ -22,8 +22,8 @@
     </div>
 
     <el-alert v-if="idOk === false || relayOk === false" type="warning" show-icon :closable="false" class="nx-alert"
-              title="O painel não conseguiu falar com o servidor"
-              description="Os ajustes desta tela são enviados direto ao hbbs e ao hbbr. Isso só funciona quando a API e os dois serviços rodam no mesmo host, como na imagem Nextec."/>
+              title="O painel não consegue enviar comandos ao servidor de ID e ao relay"
+              description="Os ajustes desta tela (relay, velocidade, IPs bloqueados, login obrigatório) são comandos que o painel envia ao hbbs e ao hbbr. O hbbs só aceita comandos vindos da própria máquina, então eles só funcionam quando a API e os dois serviços estão no mesmo contêiner. Com o servidor em contêiner separado, esta tela serve só para consulta. O acesso remoto dos dispositivos não é afetado."/>
 
     <el-tabs v-model="tab" class="nx-tabs">
       <el-tab-pane label="Ajustes" name="simple">
@@ -261,7 +261,7 @@
   const statusText = ok => ok === null ? 'Verificando...' : ok ? 'Respondendo' : 'Sem resposta'
 
   const cmd = async (c, target, option) => {
-    const res = await sendCmd({ cmd: c, target, option: option ?? '' }).catch(() => false)
+    const res = await sendCmd({ cmd: c, target, option: option ?? '' }, { silent: true }).catch(() => false)
     return res ? (res.data || '') : false
   }
   const lines = s => String(s || '').split('\n').map(x => x.trim()).filter(Boolean)

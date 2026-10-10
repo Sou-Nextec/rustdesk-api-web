@@ -31,10 +31,11 @@ export function remove (data) {
   })
 }
 
-export function sendCmd (data) {
+export function sendCmd (data, config = {}) {
   return request({
     url: '/rustdesk/sendCmd',
     method: 'post',
     data,
+    ...config,
   })
 }
