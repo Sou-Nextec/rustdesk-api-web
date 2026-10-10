@@ -21,11 +21,12 @@ services:
     image: lejianwen/rustdesk-server-s6:v0.1.2
     container_name: rustdesk-servidor
     restart: unless-stopped
+    # A chave publica precisa ser legivel pelo usuario sem privilegios do gerador; a privada continua restrita.
     # mesma base da imagem Nextec, só com o hbbs/hbbr ligados (a API roda no contêiner "rustdesk").
     # Os dois laços "nc" são o encaminhador de comandos: o hbbs/hbbr só aceitam comandos vindos de 127.0.0.1, então o painel
     # fala com servidor:21125 (hbbs) e servidor:21127 (hbbr), e o nc repassa pelo loopback. Essas portas não são publicadas
     # no host, só existem na rede interna da stack.
-    entrypoint: ["sh", "-c", "rm -f /etc/s6-overlay/s6-rc.d/user/contents.d/api; (while :; do nc -lk -p 21125 -e nc 127.0.0.1 21115; sleep 1; done) & (while :; do nc -lk -p 21127 -e nc 127.0.0.1 21117; sleep 1; done) & exec /init"]
+    entrypoint: ["sh", "-c", "rm -f /etc/s6-overlay/s6-rc.d/user/contents.d/api; (while [ ! -s /data/id_ed25519.pub ]; do sleep 1; done; chmod 0600 /data/id_ed25519; chmod 0644 /data/id_ed25519.pub) & (while :; do nc -lk -p 21125 -e nc 127.0.0.1 21115; sleep 1; done) & (while :; do nc -lk -p 21127 -e nc 127.0.0.1 21117; sleep 1; done) & exec /init"]
     ports:
       - "21115:21115"
       - "21116:21116"

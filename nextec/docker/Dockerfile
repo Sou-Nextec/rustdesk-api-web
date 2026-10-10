@@ -37,6 +37,7 @@ RUN CGO_ENABLED=1 go test ./service ./utils ./http/router ./http/controller/api 
 RUN CGO_ENABLED=1 go build -ldflags "-s -w -linkmode external -extldflags -static" -o /out/apimain ./cmd/apimain.go
 
 FROM lejianwen/rustdesk-server-s6:${BASE_TAG}
+ARG NEXTEC_VERSION=dev
 ARG API_TAG
 ARG NEXTEC_API_PATCH
 RUN test "$(cat /app/resources/version)" = "${API_TAG#v}" || \
@@ -45,6 +46,8 @@ COPY --from=api /out/apimain /tmp/apimain-nextec
 RUN if [ "${NEXTEC_API_PATCH}" = "1" ]; then mv /tmp/apimain-nextec /app/apimain && chmod +x /app/apimain; else rm /tmp/apimain-nextec; fi
 RUN rm -rf /app/resources/admin
 COPY --from=panel /src/dist/ /app/resources/admin/
+# A versioned URL prevents browsers/CDNs from retaining an old WebSocket hostname.
+RUN sed -i "s|/webclient-config/index.js|/webclient-config/index.js?v=${NEXTEC_VERSION}|g" /app/resources/web/index.html /app/resources/web2/index.html
 COPY nextec/i18n/pt_BR.toml /app/resources/i18n/pt_BR.toml
 # mensagem de boas-vindas da tela "Meus dados" (o padrão do upstream é em chinês)
 COPY nextec/conf/hello.html /app/conf/admin/hello.html
