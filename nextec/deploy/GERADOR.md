@@ -1,0 +1,72 @@
+# Gerador de clientes na stack (`/gerador`)
+
+O rdgen roda como serviço `rdgen` da stack do Portainer e responde em `https://painel-remoto.nex.tec.br/gerador`.
+Ele não compila nada: dispara o build no GitHub Actions (repositório `Sou-Nextec/rdgen`, 30 a 45 min) e recebe o resultado.
+O formulário já vem com servidor, chave pública, API, links, empresa, ícone e logo da Nextec (campos travados), só Windows e Linux.
+
+A imagem é `ghcr.io/sou-nextec/rdgen-nextec`, publicada pelo repositório `Sou-Nextec/rdgen` a cada mudança no app.
+
+## 1. Variáveis no Portainer (stack do painel > Environment variables)
+
+| Variável | Valor |
+|---|---|
+| `GERADOR_GH_USER` | `Sou-Nextec` (opcional, é o padrão) |
+| `GERADOR_GH_TOKEN` | o mesmo token do GitHub que o rdgen usa hoje (`GHBEARER` do compose antigo) |
+| `GERADOR_ZIP_SENHA` | o mesmo `ZIP_PASSWORD` do compose antigo (tem que ser igual ao segredo `ZIP_PASSWORD` do repositório `rdgen`) |
+| `GERADOR_SECRET_KEY` | o mesmo `SECRET_KEY` do compose antigo, ou qualquer texto longo e aleatório |
+| `GERADOR_SH_SECRET` | o mesmo `SH_SECRET` do compose antigo, ou qualquer texto longo |
+
+Para ver os valores atuais no servidor antigo (não cole em chat nem em issue):
+
+```bash
+cd /caminho/do/rdgen && grep -E 'GHUSER|GHBEARER|ZIP_PASSWORD|SECRET_KEY|SH_SECRET' docker-compose.yml
+```
+
+## 2. Túnel da Cloudflare (Zero Trust > Networks > Tunnels > o túnel do painel > Public hostnames)
+
+Adicione um hostname **acima** do que já existe para o painel:
+
+| Campo | Valor |
+|---|---|
+| Subdomain / Domain | `painel-remoto` / `nex.tec.br` |
+| Path | `gerador` |
+| Service | `HTTP` e `rdgen:8000` |
+
+O hostname do painel (sem path, `rustdesk:21114`) fica abaixo. A ordem importa: o mais específico vem primeiro.
+
+## 3. Cloudflare Access
+
+O formulário fica atrás do login (Entra), como o painel. As chamadas do GitHub Actions precisam passar sem login
+(elas têm segredo próprio):
+
+1. **Aplicação protegida:** em Access > Applications, adicione o caminho `painel-remoto.nex.tec.br/gerador` à aplicação do painel
+   (ou crie outra com a mesma política do Entra).
+2. **Bypass das chamadas do GitHub:** crie uma aplicação com a política **Bypass** (Everyone) para estes caminhos do mesmo hostname:
+   - `painel-remoto.nex.tec.br/gerador/updategh`
+   - `painel-remoto.nex.tec.br/gerador/cleanzip`
+   - `painel-remoto.nex.tec.br/gerador/save_custom_client`
+   - `painel-remoto.nex.tec.br/gerador/get_png`
+   - `painel-remoto.nex.tec.br/gerador/get_zip`
+3. Nada de `/gerador/api/*` e `/gerador/generator` no bypass.
+
+## 4. Segredo `GENURL` no GitHub
+
+Em `Sou-Nextec/rdgen` > Settings > Secrets and variables > Actions, o segredo `GENURL` passa a ser
+`https://painel-remoto.nex.tec.br/gerador`. Troque só depois de a stack estar no ar (os builds em andamento usam o
+endereço antigo).
+
+## 5. Subir
+
+Portainer > a stack > **Pull and redeploy**. Confira:
+
+```bash
+docker logs rdgen --tail 20
+```
+
+e abra `https://painel-remoto.nex.tec.br/gerador/`. Gere um cliente de teste (Windows, nome `Teste-Nextec`).
+
+## Depois que estiver funcionando
+
+- Desligue o rdgen e o `frpc` do servidor antigo.
+- Se o pacote `rdgen-nextec` estiver privado no GHCR, o servidor precisa de `docker login ghcr.io` com um token `read:packages`
+  (o mesmo que já baixa a imagem do painel).
