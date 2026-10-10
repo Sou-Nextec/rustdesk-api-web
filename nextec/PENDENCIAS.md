@@ -39,6 +39,18 @@ A revisão de 09/10/2026 (v2.8.0) cobriu as 27 telas do painel no celular (390 p
 ## Operação
 
 - **Assinatura digital dos executáveis.** Resolve de vez o bloqueio por antivírus (ML:Generic.MaliciousExe no Acronis).
-- **Integração do rdgen ao painel (nível 1).** Tela "Gerar cliente" com acompanhamento e publicação automática. Hoje é manual.
+- **Gerador na stack: concluir a migração.** Variáveis `GERADOR_*` no Portainer, rota `/gerador` no túnel, Access e segredo
+  `GENURL` (passo a passo em `nextec/deploy/GERADOR.md`); validar um cliente de teste e desligar o rdgen e o `frpc` do servidor antigo.
+- **Gerador, fase 2: modo simples.** Formulário com plataforma, nome do cliente e senha; "Avançado" para o resto.
+- **Gerador, fase 3: integração ao painel.** Botão "Gerar cliente" com acompanhamento e publicação automática do resultado em
+  Atualizações. Hoje é manual.
+- **Gerador, fase 4: build mais rápido.** Opção "só MSI" (hoje gera exe e msi) e cache do Flutter e do Rust nos workflows
+  (30 a 45 min por build). Só Windows e Linux por enquanto; Android e macOS ficam fora até haver necessidade.
+- **Gerador: Service Token do Access** no lugar do Bypass das 4 rotas chamadas pelo GitHub (exige enviar cabeçalho nos
+  workflows). Com o endurecimento atual o risco restante é baixo.
+- **Ajustes do servidor com hbbs em contêiner separado.** O hbbs só aceita comandos de `127.0.0.1`, então relay, velocidade e IPs
+  bloqueados ficam só de consulta. Opção: `network_mode: "service:servidor"` no serviço `rustdesk` (e alias `rustdesk` na rede do
+  servidor para o túnel). Custo: recriar o servidor recria o painel. Decisão pendente do dono.
+- **Acesso SSH ao app03 como `leonam_daris`.** A chave do Bitwarden só está liberada para root; copiar para o usuário comum.
 - **Conta do Docker Hub no GitHub.** Evita falha do build da imagem por limite de requisições (erro 429 e timeout).
 - **Backup fora da VPS** de `data/` e `api/` (senhas, atualizações, app de suporte, configurações).
