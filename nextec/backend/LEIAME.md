@@ -157,3 +157,10 @@ A leitura da resposta ganhou prazo de 3 s: comandos de gravação não respondem
 Cofre restrito ao dono real ou às listas de cliente administradas, comandos só para administradores, preservação do dono
 das listas e validação do par ID/UUID no cadastro, heartbeat e vínculo de usuário. Inclui testes executados pelo Dockerfile.
 Contrato e limites em [0019-LEIAME.md](0019-LEIAME.md).
+
+## Patch 0020: protocolo do link de conexão
+
+O RustDesk registra no sistema o protocolo com o nome do app em minúsculas: um app gerado como `Nextec-Connect` abre
+`nextec-connect://`, não `rustdesk://`. `NextecConnectSchemeGet/Set` guardam o protocolo (padrão `rustdesk`, só letras minúsculas,
+números, `.`, `+` e `-`). `GET/POST /nextec/connect-scheme` (admin) lê e grava; `/my/connect-settings` devolve `scheme` e
+`/my/connect-link` monta o link com ele.
