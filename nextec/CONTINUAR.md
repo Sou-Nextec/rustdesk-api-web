@@ -4,7 +4,7 @@ Ponto de entrada para quem assume o projeto (pessoa ou IA). Resume o mapa, o est
 Documentos de detalhe estão listados na seção "Onde está cada documentação". Nada aqui contém segredo: tokens, senhas e
 chaves ficam no Portainer e nos segredos do GitHub, e nunca devem ser colados em chat, issue ou arquivo.
 
-Atualizado em 10/10/2026 (painel v2.9.2).
+Atualizado em 10/10/2026 (painel v2.9.3).
 
 ## 1. O que é
 
@@ -103,7 +103,7 @@ Em andamento (falta o dono do ambiente fazer; passo a passo em `nextec/deploy/GE
 Em ordem (detalhes em `nextec/PENDENCIAS.md`):
 1. Fechar a migração do gerador (itens acima) e remover o rdgen e o `frpc` do servidor antigo.
 2. Gerador, fase 2: "modo simples" (plataforma, nome do cliente e senha; "Avançado" para o resto).
-3. Gerador, fase 3: botão "Gerar cliente" no painel e publicação do resultado em Atualizações.
+3. Gerador, fase 3: o botão "Gerar cliente" (menu Dispositivos, v2.9.3) já abre o gerador; falta publicar o resultado em Atualizações automaticamente.
 4. Gerador, fase 4: opção "só MSI" e cache do Flutter/Rust nos workflows (hoje 30 a 45 min por build).
 5. Backup fora da VPS (`data/`, `api/` e volumes do gerador), Docker Hub autenticado no GitHub, assinatura digital.
 

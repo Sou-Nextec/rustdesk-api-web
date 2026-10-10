@@ -8,7 +8,7 @@ const layout = () => import('@/layout/index.vue')
 
 // nome da rota filha -> grupo do menu
 const GROUPS = [
-  { name: 'NxGroupDevices', title: 'NxGroupDevices', icon: 'Monitor', children: ['Peer', 'DeviceGroup', 'NxSupport', 'NxUpdates'] },
+  { name: 'NxGroupDevices', title: 'NxGroupDevices', icon: 'Monitor', children: ['Peer', 'DeviceGroup', 'NxSupport', 'NxGenerator', 'NxUpdates'] },
   { name: 'NxGroupPeople', title: 'NxGroupPeople', icon: 'UserFilled', children: ['UserList', 'UserAdd', 'UserEdit', 'UserGroup'] },
   // quem acessa o quê: permissões por cliente e as listas que aparecem no app RustDesk
   { name: 'NxGroupAddressBook', title: 'NxGroupAddressBook', icon: 'Key', children: ['NxClientAccess', 'UserAddressBookName', 'UserAddressBook', 'UserTag'] },
@@ -41,6 +41,13 @@ export function applyNextecRoutes () {
     name: 'NxSupport',
     meta: { title: 'NxSupport', icon: 'Service' },
     component: () => import('./views/Support.vue'),
+  })
+  // Gerar cliente: atalho para o gerador de instaladores (rdgen) em /gerador; só admin (quem mais gera é decidido no gerador)
+  system.children.push({
+    path: '/user/generator',
+    name: 'NxGenerator',
+    meta: { title: 'NxGenerator', icon: 'Download' },
+    component: () => import('./views/Generator.vue'),
   })
   // Atualizações do app: envio do instalador e publicação para todos ou para um piloto (só admin; patch 0009 da API)
   system.children.push({
