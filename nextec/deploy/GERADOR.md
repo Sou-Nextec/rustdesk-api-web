@@ -42,12 +42,21 @@ O formulário fica atrás do login (Entra), como o painel. As chamadas do GitHub
 1. **Aplicação protegida:** em Access > Applications, adicione o caminho `painel-remoto.nex.tec.br/gerador` à aplicação do painel
    (ou crie outra com a mesma política do Entra).
 2. **Bypass das chamadas do GitHub:** crie uma aplicação com a política **Bypass** (Everyone) para estes caminhos do mesmo hostname:
-   - `painel-remoto.nex.tec.br/gerador/updategh`
    - `painel-remoto.nex.tec.br/gerador/cleanzip`
    - `painel-remoto.nex.tec.br/gerador/save_custom_client`
    - `painel-remoto.nex.tec.br/gerador/get_png`
    - `painel-remoto.nex.tec.br/gerador/get_zip`
-3. Nada de `/gerador/api/*` e `/gerador/generator` no bypass.
+3. Nada de `/gerador/api/*`, `/gerador/generator`, `/gerador/download` nem `/gerador/updategh` no bypass
+   (o status do build é lido da API do GitHub; o `updategh` não é usado).
+
+### Por que o bypass é seguro o suficiente
+Essas 4 rotas são chamadas pelo GitHub Actions, que não faz login no Entra. Elas se protegem sozinhas:
+- `save_custom_client` exige o token do build (vem dentro do pacote cifrado, o workflow devolve em `Authorization: Bearer`) e limita o tamanho.
+- `cleanzip` e `get_zip` só aceitam o nome exato `secrets_<uuid do build>.zip`.
+- `get_png` exige o uuid do build e só entrega logo e ícone.
+- O pacote `secrets_<uuid>.zip` é cifrado com `ZIP_PASSWORD`: use um valor longo e aleatório (64+ caracteres).
+  Para conferir o tamanho no servidor antigo, sem mostrar o valor: `sudo docker exec rdgen sh -c 'printf %s "$ZIP_PASSWORD" | wc -c'`.
+- Evite "senha permanente" no formulário: ela vai dentro desse pacote.
 
 ## 4. Segredo `GENURL` no GitHub
 
