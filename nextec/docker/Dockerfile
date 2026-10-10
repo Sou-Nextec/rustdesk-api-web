@@ -10,7 +10,7 @@
 # API_TAG:  versão do código da API compatível com essa imagem (veja /app/resources/version nela).
 # O build falha se as duas não baterem, para não misturar versões.
 
-ARG BASE_TAG=latest
+ARG BASE_TAG=v0.1.2
 ARG API_TAG=v2.6.29
 ARG NEXTEC_API_PATCH=1
 
@@ -33,6 +33,7 @@ COPY nextec/backend/*.patch /patches/
 RUN git apply /patches/*.patch
 # o repositório da API não versiona o go.sum; o workflow oficial também resolve as dependências no build
 RUN go mod tidy
+RUN CGO_ENABLED=1 go test ./service ./utils ./http/router ./http/controller/api ./http/controller/admin/my
 RUN CGO_ENABLED=1 go build -ldflags "-s -w -linkmode external -extldflags -static" -o /out/apimain ./cmd/apimain.go
 
 FROM lejianwen/rustdesk-server-s6:${BASE_TAG}

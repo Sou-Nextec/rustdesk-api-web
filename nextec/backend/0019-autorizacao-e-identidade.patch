@@ -1,0 +1,496 @@
+diff --git a/http/controller/admin/my/addressBookCollection.go b/http/controller/admin/my/addressBookCollection.go
+index af7b003..bade09e 100644
+--- a/http/controller/admin/my/addressBookCollection.go
++++ b/http/controller/admin/my/addressBookCollection.go
+@@ -112,6 +112,8 @@ func (abc *AddressBookCollection) Update(c *gin.Context) {
+ 		return
+ 	}
+ 
++	// Ownership is immutable through the personal endpoint.
++	f.UserId = ex.UserId
+ 	err := service.AllService.AddressBookService.UpdateCollection(f)
+ 	if err != nil {
+ 		response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
+diff --git a/http/controller/api/index.go b/http/controller/api/index.go
+index 4166834..0c08953 100644
+--- a/http/controller/api/index.go
++++ b/http/controller/api/index.go
+@@ -50,7 +50,7 @@ func (i *Index) Heartbeat(c *gin.Context) {
+ 		return
+ 	}
+ 	peer := service.AllService.PeerService.FindById(info.Id)
+-	if peer == nil || peer.RowId == 0 {
++	if peer == nil || peer.RowId == 0 || peer.Uuid == "" || peer.Uuid != info.Uuid {
+ 		c.JSON(http.StatusOK, gin.H{})
+ 		return
+ 	}
+diff --git a/http/controller/api/peer.go b/http/controller/api/peer.go
+index cd6c98a..3033c34 100644
+--- a/http/controller/api/peer.go
++++ b/http/controller/api/peer.go
+@@ -30,6 +30,10 @@ func (p *Peer) SysInfo(c *gin.Context) {
+ 		response.Error(c, response.TranslateMsg(c, "ParamsError")+err.Error())
+ 		return
+ 	}
++	if f.Id == "" || f.Uuid == "" {
++		response.Error(c, "Device ID and UUID are required")
++		return
++	}
+ 	fpe := f.ToPeer()
+ 	pe := service.AllService.PeerService.FindById(f.Id)
+ 	if pe.RowId == 0 {
+@@ -41,6 +45,12 @@ func (p *Peer) SysInfo(c *gin.Context) {
+ 			return
+ 		}
+ 	} else {
++		// An existing device identity cannot be replaced by a public sysinfo request.
++		// Reinstallation with a new UUID requires an administrator to reset the registration.
++		if pe.Uuid == "" || pe.Uuid != f.Uuid {
++			response.Error(c, "Device identity mismatch; contact the administrator")
++			return
++		}
+ 		if pe.UserId == 0 {
+ 			pe.UserId = service.AllService.UserService.FindLatestUserIdFromLoginLogByUuid(pe.Uuid, pe.Id)
+ 		}
+diff --git a/http/router/admin.go b/http/router/admin.go
+index 9948918..589c898 100644
+--- a/http/router/admin.go
++++ b/http/router/admin.go
+@@ -57,7 +57,7 @@ func Init(g *gin.Engine) {
+ 
+ func RustdeskCmdBind(adg *gin.RouterGroup) {
+ 	cont := &admin.Rustdesk{}
+-	rg := adg.Group("/rustdesk")
++	rg := adg.Group("/rustdesk").Use(middleware.AdminPrivilege())
+ 	rg.POST("/sendCmd", cont.SendCmd)
+ 	rg.GET("/cmdList", cont.CmdList)
+ 	rg.POST("/cmdDelete", cont.CmdDelete)
+diff --git a/service/nextec_secret.go b/service/nextec_secret.go
+index 31480c4..256b9ff 100644
+--- a/service/nextec_secret.go
++++ b/service/nextec_secret.go
+@@ -502,36 +502,66 @@ func NextecSecretReveal(peerID string) (*NextecRevealed, error) {
+ 
+ // ---------- conectar pelo painel ----------
+ 
+-// NextecUserSeesPeer diz se o usuário pode conectar na máquina: admin, máquina dele, lista dele ou lista compartilhada com ele.
++// NextecUserSeesPeer permite abrir uma conexão manual para uma máquina visível ao usuário.
+ func NextecUserSeesPeer(u *model.User, peerID string) bool {
+-	if u == nil || peerID == "" {
++	if u == nil || u.Id == 0 || peerID == "" {
+ 		return false
+ 	}
+ 	if AllService.UserService.IsAdmin(u) {
+ 		return true
+ 	}
+ 	var n int64
+-	DB.Model(&model.Peer{}).Where("id = ? and user_id = ?", peerID, u.Id).Count(&n)
+-	if n > 0 {
++	if DB.Model(&model.Peer{}).Where("id = ? AND user_id = ?", peerID, u.Id).Count(&n).Error == nil && n > 0 {
+ 		return true
+ 	}
+-	DB.Model(&model.AddressBook{}).Where("id = ? and user_id = ?", peerID, u.Id).Count(&n)
+-	if n > 0 {
++	if DB.Model(&model.AddressBook{}).Where("id = ? AND user_id = ?", peerID, u.Id).Count(&n).Error == nil && n > 0 {
+ 		return true
+ 	}
+-	cols := map[uint]bool{}
+-	for _, r := range AllService.AddressBookService.CollectionReadRules(u) {
+-		cols[r.CollectionId] = true
++	ids := []uint{}
++	for _, rule := range AllService.AddressBookService.CollectionReadRules(u) {
++		ids = append(ids, rule.CollectionId)
+ 	}
+-	if len(cols) == 0 {
++	if len(ids) == 0 {
+ 		return false
+ 	}
+-	ids := make([]uint, 0, len(cols))
+-	for id := range cols {
+-		ids = append(ids, id)
++	return DB.Model(&model.AddressBook{}).Where("id = ? AND collection_id IN ?", peerID, ids).Count(&n).Error == nil && n > 0
++}
++
++// NextecUserCanReadVault autoriza o cofre por dono real ou acesso ao cliente concedido por um administrador.
++// Favoritos e listas criadas pelo próprio usuário nunca concedem acesso a senhas.
++func NextecUserCanReadVault(u *model.User, peerID string) bool {
++	if u == nil || u.Id == 0 || peerID == "" {
++		return false
++	}
++	if AllService.UserService.IsAdmin(u) {
++		return true
++	}
++	peer := &model.Peer{}
++	if DB.Where("id = ?", peerID).First(peer).Error != nil {
++		return false
+ 	}
+-	DB.Model(&model.AddressBook{}).Where("id = ? and collection_id in ?", peerID, ids).Count(&n)
+-	return n > 0
++	if peer.UserId == u.Id {
++		return true
++	}
++	if peer.GroupId == 0 {
++		return false
++	}
++	group := &model.DeviceGroup{}
++	if DB.First(group, peer.GroupId).Error != nil || group.Name == "" {
++		return false
++	}
++	// ClientAccess maintains "Cliente: <device group>" lists. Check the real device group too:
++	// even an editable shared list cannot be used to insert an ID from another client.
++	var n int64
++	err := DB.Model(&model.AddressBook{}).
++		Joins("JOIN address_book_collections c ON c.id = address_books.collection_id AND c.user_id = address_books.user_id").
++		Joins("JOIN users owner ON owner.id = c.user_id AND owner.is_admin = ?", true).
++		Joins("JOIN address_book_collection_rules r ON r.collection_id = c.id AND r.user_id = c.user_id").
++		Where("address_books.id = ? AND LOWER(c.name) = LOWER(?) AND r.rule > 0", peerID, "Cliente: "+group.Name).
++		Where("(r.type = ? AND r.to_id = ?) OR (r.type = ? AND r.to_id = ? AND r.to_id > 0)",
++			model.ShareAddressBookRuleTypePersonal, u.Id, model.ShareAddressBookRuleTypeGroup, u.GroupId).
++		Count(&n).Error
++	return err == nil && n > 0
+ }
+ 
+ // NextecConnectPassword devolve a senha vigente de uma máquina gerenciada para quem pode conectar nela ("" se não houver).
+@@ -539,6 +569,9 @@ func NextecConnectPassword(u *model.User, peerID string) (string, bool) {
+ 	if !NextecUserSeesPeer(u, peerID) {
+ 		return "", false
+ 	}
++	if !NextecUserCanReadVault(u, peerID) {
++		return "", true // conexão manual continua disponível, sem entregar a senha do cofre
++	}
+ 	enabled, _ := effectivePolicy(peerID, peerGroup(peerID))
+ 	if !enabled {
+ 		return "", true
+diff --git a/service/peer.go b/service/peer.go
+index 42f1100..e49aaf2 100644
+--- a/service/peer.go
++++ b/service/peer.go
+@@ -34,21 +34,13 @@ func (ps *PeerService) FindByUserIdAndUuid(uuid string, userId uint) *model.Peer
+ 
+ // UuidBindUserId 绑定用户id
+ func (ps *PeerService) UuidBindUserId(deviceId string, uuid string, userId uint) {
+-	peer := ps.FindByUuid(uuid)
+-	// 如果存在则更新
+-	if peer.RowId > 0 {
+-		peer.UserId = userId
+-		ps.Update(peer)
+-	} else {
+-		// 不存在则创建
+-		/*if deviceId != "" {
+-			DB.Create(&model.Peer{
+-				Id:     deviceId,
+-				Uuid:   uuid,
+-				UserId: userId,
+-			})
+-		}*/
++	if deviceId == "" || uuid == "" || userId == 0 {
++		return
+ 	}
++	// Bind only this ID/UUID pair and never transfer an existing owner's device.
++	DB.Model(&model.Peer{}).
++		Where("id = ? AND uuid = ? AND (user_id = 0 OR user_id = ?)", deviceId, uuid, userId).
++		Update("user_id", userId)
+ }
+ 
+ // UuidUnbindUserId 解绑用户id, 用于用户注销
+diff --git a/service/user.go b/service/user.go
+index 8906ebc..990d7f9 100644
+--- a/service/user.go
++++ b/service/user.go
+@@ -293,7 +293,7 @@ func (us *UserService) UpdatePassword(u *model.User, password string) error {
+ 
+ // IsAdmin 是否管理员
+ func (us *UserService) IsAdmin(u *model.User) bool {
+-	return u != nil && *u.IsAdmin
++	return u != nil && u.IsAdmin != nil && *u.IsAdmin
+ }
+ 
+ // RouteNames
+diff --git a/service/nextec_security_test.go b/service/nextec_security_test.go
+new file mode 100644
+--- /dev/null
++++ b/service/nextec_security_test.go
+@@ -0,0 +1,99 @@
++package service
++
++import (
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"gorm.io/driver/sqlite"
++	"gorm.io/gorm"
++	"gorm.io/gorm/logger"
++	"testing"
++)
++
++func securityDB(t *testing.T) *gorm.DB {
++	t.Helper()
++	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := db.AutoMigrate(&model.Peer{}, &model.User{}, &model.DeviceGroup{}, &model.AddressBook{}, &model.AddressBookCollection{}, &model.AddressBookCollectionRule{}); err != nil {
++		t.Fatal(err)
++	}
++	oldDB, oldService := DB, AllService
++	DB, AllService = db, &Service{}
++	t.Cleanup(func() { DB, AllService = oldDB, oldService; sqlDB, _ := db.DB(); sqlDB.Close() })
++	return db
++}
++
++func TestVaultAuthorization(t *testing.T) {
++	db := securityDB(t)
++	admin, ordinary := true, false
++	u := &model.User{IdModel: model.IdModel{Id: 7}, Username: "tech", GroupId: 42, IsAdmin: &ordinary}
++	db.Create(u)
++	db.Create(&model.User{IdModel: model.IdModel{Id: 9}, Username: "admin", IsAdmin: &admin})
++	db.Create(&model.DeviceGroup{IdModel: model.IdModel{Id: 10}, Name: "Client A"})
++	db.Create(&model.DeviceGroup{IdModel: model.IdModel{Id: 11}, Name: "Client B"})
++	db.Create(&model.Peer{Id: "target", Uuid: "device", UserId: 8, GroupId: 10})
++	db.Create(&model.AddressBook{Id: "target", UserId: u.Id})
++	if NextecUserCanReadVault(u, "target") {
++		t.Fatal("personal bookmark granted vault access")
++	}
++	password, allowed := NextecConnectPassword(u, "target")
++	if password != "" || !allowed {
++		t.Fatal("manual bookmark connection must remain available without vault password")
++	}
++	col := &model.AddressBookCollection{UserId: u.Id, Name: "Cliente: Client A"}
++	db.Create(col)
++	db.Create(&model.AddressBook{Id: "target", UserId: u.Id, CollectionId: col.Id})
++	rule := &model.AddressBookCollectionRule{UserId: u.Id, CollectionId: col.Id, Type: model.ShareAddressBookRuleTypeGroup, ToId: 42, Rule: 3}
++	db.Create(rule)
++	if NextecUserCanReadVault(u, "target") {
++		t.Fatal("self-authored shared list granted vault access")
++	}
++	db.Model(col).Update("user_id", 9)
++	db.Model(&model.AddressBook{}).Where("collection_id = ?", col.Id).Update("user_id", 9)
++	if NextecUserCanReadVault(u, "target") {
++		t.Fatal("forged non-owner share granted access")
++	}
++	db.Model(rule).Update("user_id", 9)
++	if !NextecUserCanReadVault(u, "target") {
++		t.Fatal("administrator client share denied")
++	}
++	db.Model(&model.Peer{}).Where("id = ?", "target").Update("group_id", 11)
++	if NextecUserCanReadVault(u, "target") {
++		t.Fatal("editable list granted cross-client access")
++	}
++	db.Model(&model.Peer{}).Where("id = ?", "target").Update("group_id", 10)
++	db.Model(rule).Updates(map[string]interface{}{"type": model.ShareAddressBookRuleTypePersonal, "to_id": u.Id})
++	if !NextecUserCanReadVault(u, "target") {
++		t.Fatal("personal administrator share denied")
++	}
++	db.Model(rule).Update("rule", 0)
++	if NextecUserCanReadVault(u, "target") {
++		t.Fatal("revoked share still granted access")
++	}
++	db.Model(&model.Peer{}).Where("id = ?", "target").Update("user_id", u.Id)
++	if !NextecUserCanReadVault(u, "target") {
++		t.Fatal("real device owner denied")
++	}
++	if NextecUserCanReadVault(u, "missing") || NextecUserCanReadVault(nil, "target") {
++		t.Fatal("unknown identity allowed")
++	}
++}
++
++func TestDeviceBindingCannotTransferOwnership(t *testing.T) {
++	db := securityDB(t)
++	db.Create(&model.Peer{Id: "target", Uuid: "device", UserId: 8})
++	ps := &PeerService{}
++	ps.UuidBindUserId("target", "device", 7)
++	if ps.FindById("target").UserId != 8 {
++		t.Fatal("device transferred to another user")
++	}
++	db.Model(&model.Peer{}).Where("id = ?", "target").Update("user_id", 0)
++	ps.UuidBindUserId("different-id", "device", 7)
++	if ps.FindById("target").UserId != 0 {
++		t.Fatal("UUID alone bound a different ID")
++	}
++	ps.UuidBindUserId("target", "device", 7)
++	if ps.FindById("target").UserId != 7 {
++		t.Fatal("unowned matching device could not bind")
++	}
++}
+diff --git a/http/controller/api/identity_test.go b/http/controller/api/identity_test.go
+new file mode 100644
+--- /dev/null
++++ b/http/controller/api/identity_test.go
+@@ -0,0 +1,55 @@
++package api
++
++import (
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++	"gorm.io/driver/sqlite"
++	"gorm.io/gorm"
++	"gorm.io/gorm/logger"
++	"net/http/httptest"
++	"strings"
++	"testing"
++)
++
++func TestPublicDeviceIdentity(t *testing.T) {
++	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := db.AutoMigrate(&model.Peer{}, &model.LoginLog{}, &model.NextecPendingAssign{}); err != nil {
++		t.Fatal(err)
++	}
++	oldDB, oldService := service.DB, service.AllService
++	service.DB, service.AllService = db, &service.Service{}
++	t.Cleanup(func() { service.DB, service.AllService = oldDB, oldService; sqlDB, _ := db.DB(); sqlDB.Close() })
++	db.Create(&model.Peer{Id: "target", Uuid: "original", UserId: 8, GroupId: 10, Hostname: "old"})
++	r := gin.New()
++	r.POST("/sysinfo", (&Peer{}).SysInfo)
++	r.POST("/heartbeat", (&Index{}).Heartbeat)
++	for _, body := range []string{`{"id":"target","uuid":"attacker"}`, `{"id":"target"}`, `{"uuid":"original"}`} {
++		w := httptest.NewRecorder()
++		req := httptest.NewRequest("POST", "/sysinfo", strings.NewReader(body))
++		req.Header.Set("Content-Type", "application/json")
++		r.ServeHTTP(w, req)
++		if w.Code != 400 {
++			t.Fatalf("identity replacement accepted: %s: %d", body, w.Code)
++		}
++	}
++	w := httptest.NewRecorder()
++	req := httptest.NewRequest("POST", "/heartbeat", strings.NewReader(`{"id":"target","uuid":"attacker"}`))
++	req.Header.Set("Content-Type", "application/json")
++	r.ServeHTTP(w, req)
++	peer := service.AllService.PeerService.FindById("target")
++	if peer.Uuid != "original" || peer.UserId != 8 || peer.LastOnlineTime != 0 {
++		t.Fatal("mismatched identity modified the device")
++	}
++	w = httptest.NewRecorder()
++	req = httptest.NewRequest("POST", "/sysinfo", strings.NewReader(`{"id":"target","uuid":"original","hostname":"new"}`))
++	req.Header.Set("Content-Type", "application/json")
++	r.ServeHTTP(w, req)
++	peer = service.AllService.PeerService.FindById("target")
++	if w.Code != 200 || peer.Hostname != "new" || peer.UserId != 8 || peer.GroupId != 10 {
++		t.Fatal("valid metadata update failed or changed ownership")
++	}
++}
+diff --git a/http/router/commands_security_test.go b/http/router/commands_security_test.go
+new file mode 100644
+--- /dev/null
++++ b/http/router/commands_security_test.go
+@@ -0,0 +1,69 @@
++package router
++
++import (
++	"encoding/json"
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/global"
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++	"github.com/nicksnyder/go-i18n/v2/i18n"
++	log "github.com/sirupsen/logrus"
++	"golang.org/x/text/language"
++	"gorm.io/driver/sqlite"
++	"gorm.io/gorm"
++	"io"
++	"net/http/httptest"
++	"strings"
++	"testing"
++)
++
++func TestServerCommandsRequireAdministrator(t *testing.T) {
++	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := db.AutoMigrate(&model.ServerCmd{}); err != nil {
++		t.Fatal(err)
++	}
++	oldDB, oldService, oldLocalizer, oldLogger := service.DB, service.AllService, global.Localizer, global.Logger
++	service.DB, service.AllService = db, &service.Service{}
++	global.Logger = log.New()
++	global.Logger.SetOutput(io.Discard)
++	bundle := i18n.NewBundle(language.English)
++	global.Localizer = func(string) *i18n.Localizer { return i18n.NewLocalizer(bundle, "en") }
++	t.Cleanup(func() {
++		service.DB, service.AllService, global.Localizer, global.Logger = oldDB, oldService, oldLocalizer, oldLogger
++		sqlDB, _ := db.DB()
++		sqlDB.Close()
++	})
++	admin := false
++	r := gin.New()
++	g := r.Group("/api/admin")
++	g.Use(func(c *gin.Context) { c.Set("curUser", &model.User{IsAdmin: &admin}); c.Next() })
++	RustdeskCmdBind(g)
++	for _, path := range []string{"sendCmd", "cmdList", "cmdDelete", "cmdCreate"} {
++		method := "POST"
++		if path == "cmdList" {
++			method = "GET"
++		}
++		w := httptest.NewRecorder()
++		req := httptest.NewRequest(method, "/api/admin/rustdesk/"+path, strings.NewReader(`{}`))
++		req.Header.Set("Content-Type", "application/json")
++		r.ServeHTTP(w, req)
++		var result struct {
++			Code int `json:"code"`
++		}
++		if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || result.Code != 403 {
++			t.Fatalf("ordinary user reached %s: %s", path, w.Body.String())
++		}
++	}
++	admin = true
++	w := httptest.NewRecorder()
++	r.ServeHTTP(w, httptest.NewRequest("GET", "/api/admin/rustdesk/cmdList", nil))
++	var result struct {
++		Code int `json:"code"`
++	}
++	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil || result.Code != 0 {
++		t.Fatal("administrator command list denied")
++	}
++}
+diff --git a/http/controller/admin/my/collection_security_test.go b/http/controller/admin/my/collection_security_test.go
+new file mode 100644
+--- /dev/null
++++ b/http/controller/admin/my/collection_security_test.go
+@@ -0,0 +1,45 @@
++package my
++
++import (
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/global"
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++	"gorm.io/driver/sqlite"
++	"gorm.io/gorm"
++	"net/http/httptest"
++	"strings"
++	"testing"
++)
++
++func TestPersonalCollectionCannotForgeAdministratorOwner(t *testing.T) {
++	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := db.AutoMigrate(&model.AddressBookCollection{}); err != nil {
++		t.Fatal(err)
++	}
++	oldDB, oldService, oldValidator := service.DB, service.AllService, global.Validator.ValidStruct
++	service.DB, service.AllService = db, &service.Service{}
++	global.Validator.ValidStruct = func(*gin.Context, interface{}) []string { return nil }
++	t.Cleanup(func() {
++		service.DB, service.AllService, global.Validator.ValidStruct = oldDB, oldService, oldValidator
++		sqlDB, _ := db.DB()
++		sqlDB.Close()
++	})
++	col := &model.AddressBookCollection{IdModel: model.IdModel{Id: 1}, UserId: 7, Name: "personal"}
++	if err := db.Create(col).Error; err != nil {
++		t.Fatal(err)
++	}
++	r := gin.New()
++	r.POST("/update", func(c *gin.Context) { c.Set("curUser", &model.User{IdModel: model.IdModel{Id: 7}}) }, (&AddressBookCollection{}).Update)
++	w := httptest.NewRecorder()
++	req := httptest.NewRequest("POST", "/update", strings.NewReader(`{"id":1,"user_id":9,"name":"Cliente: Client A"}`))
++	req.Header.Set("Content-Type", "application/json")
++	r.ServeHTTP(w, req)
++	db.First(col, 1)
++	if w.Code != 200 || col.UserId != 7 || col.Name != "Cliente: Client A" {
++		t.Fatal("personal update changed collection ownership")
++	}
++}
