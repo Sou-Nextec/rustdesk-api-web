@@ -37,7 +37,7 @@ index 8fba177..c31d433 100644
  }
  
 diff --git a/service/user.go b/service/user.go
-index 9eb7c51..c848bba 100644
+index 8906ebc..c848bba 100644
 --- a/service/user.go
 +++ b/service/user.go
 @@ -104,7 +104,7 @@ func (us *UserService) Login(u *model.User, llog *model.LoginLog) *model.UserTok
@@ -49,32 +49,7 @@ index 9eb7c51..c848bba 100644
  	DB.Create(llog)
  	if llog.Uuid != "" {
  		AllService.PeerService.UuidBindUserId(llog.DeviceId, llog.Uuid, u.Id)
-@@ -375,6 +375,24 @@ func (us *UserService) RegisterByOauth(oauthUser *model.OauthUser, op string) (e
- 	return nil, user
- }
- 
-+// avatarCanBeReplaced: vazio, ou uma URL do Graph gravada por engano (exige token e não abre no navegador nem no app)
-+func avatarCanBeReplaced(current string) bool {
-+	return current == "" || strings.HasPrefix(current, "https://graph.microsoft.com/")
-+}
-+
-+// FillAvatarIfEmpty grava a foto vinda do login externo se o usuário ainda não tem uma (não sobrescreve a escolhida por ele)
-+func (us *UserService) FillAvatarIfEmpty(user *model.User, avatar string) {
-+	if user == nil || user.Id == 0 || avatar == "" || !avatarCanBeReplaced(user.Avatar) {
-+		return
-+	}
-+	upd := &model.User{}
-+	upd.Id = user.Id
-+	upd.Avatar = avatar
-+	if err := UpdateFields(upd, "avatar"); err == nil {
-+		user.Avatar = avatar
-+	}
-+}
-+
- // GenerateUsernameByOauth 生成用户名
- func (us *UserService) GenerateUsernameByOauth(name string) string {
- 	for us.IsUsernameExists(name) {
-@@ -452,6 +470,39 @@ func (us *UserService) TokenList(page uint, size uint, f func(tx *gorm.DB)) *mod
+@@ -470,6 +470,39 @@ func (us *UserService) TokenList(page uint, size uint, f func(tx *gorm.DB)) *mod
  	tx.Count(&res.Total)
  	tx.Scopes(Paginate(page, size))
  	tx.Find(&res.UserTokens)
