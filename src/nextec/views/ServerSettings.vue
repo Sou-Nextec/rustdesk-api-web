@@ -23,7 +23,7 @@
 
     <el-alert v-if="idOk === false || relayOk === false" type="warning" show-icon :closable="false" class="nx-alert"
               title="O painel não consegue enviar comandos ao servidor de ID e ao relay"
-              description="Os ajustes desta tela (relay, velocidade, IPs bloqueados, login obrigatório) são comandos que o painel envia ao hbbs e ao hbbr. O hbbs só aceita comandos vindos da própria máquina, então eles só funcionam quando a API e os dois serviços estão no mesmo contêiner. Com o servidor em contêiner separado, esta tela serve só para consulta. O acesso remoto dos dispositivos não é afetado."/>
+              description="Os ajustes desta tela (relay, velocidade, IPs bloqueados, login obrigatório) são comandos que o painel envia ao hbbs e ao hbbr. O hbbs só aceita comandos vindos da própria máquina; na stack Nextec o painel fala com um encaminhador ao lado deles (servidor:21125 e servidor:21127). Se esta mensagem aparece, o servidor de ID ou o encaminhador não está respondendo: confira o contêiner rustdesk-servidor no Portainer. O acesso remoto dos dispositivos não é afetado."/>
 
     <el-tabs v-model="tab" class="nx-tabs">
       <el-tab-pane label="Ajustes" name="simple">

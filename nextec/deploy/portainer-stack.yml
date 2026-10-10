@@ -18,8 +18,11 @@ services:
     image: lejianwen/rustdesk-server-s6:v0.1.2
     container_name: rustdesk-servidor
     restart: unless-stopped
-    # mesma base da imagem Nextec, só com o hbbs/hbbr ligados (a API roda no contêiner "rustdesk")
-    entrypoint: ["sh", "-c", "rm -f /etc/s6-overlay/s6-rc.d/user/contents.d/api; exec /init"]
+    # mesma base da imagem Nextec, só com o hbbs/hbbr ligados (a API roda no contêiner "rustdesk").
+    # Os dois laços "nc" são o encaminhador de comandos: o hbbs/hbbr só aceitam comandos vindos de 127.0.0.1, então o painel
+    # fala com servidor:21125 (hbbs) e servidor:21127 (hbbr), e o nc repassa pelo loopback. Essas portas não são publicadas
+    # no host, só existem na rede interna da stack.
+    entrypoint: ["sh", "-c", "rm -f /etc/s6-overlay/s6-rc.d/user/contents.d/api; (while :; do nc -lk -p 21125 -e nc 127.0.0.1 21115; sleep 1; done) & (while :; do nc -lk -p 21127 -e nc 127.0.0.1 21117; sleep 1; done) & exec /init"]
     ports:
       - "21115:21115"
       - "21116:21116"
@@ -48,6 +51,8 @@ services:
     environment:
       - TZ=America/Sao_Paulo
       - RUSTDESK_API_LANG=pt-BR
+      # comandos do hbbs/hbbr (Ajustes do servidor) pelo encaminhador do contêiner "servidor" (portas 21125 e 21127)
+      - NEXTEC_SERVER_CMD_HOST=servidor
       - RUSTDESK_API_RUSTDESK_ID_SERVER=${DOMINIO:-remoto.nex.tec.br}:21116
       - RUSTDESK_API_RUSTDESK_RELAY_SERVER=${DOMINIO:-remoto.nex.tec.br}:21117
       - RUSTDESK_API_RUSTDESK_API_SERVER=${URL_PAINEL:-https://painel-remoto.nex.tec.br}
