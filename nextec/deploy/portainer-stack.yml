@@ -9,7 +9,7 @@
 #   GERADOR_GH_USER      usuário do GitHub dono do repositório rdgen (padrão Sou-Nextec)
 #   GERADOR_GH_TOKEN     obrigatória para o gerador (token do GitHub com permissão de Actions no repositório rdgen)
 #   GERADOR_ZIP_SENHA    obrigatória para o gerador (a MESMA do segredo ZIP_PASSWORD do repositório rdgen)
-#   GERADOR_SECRET_KEY   obrigatória para o gerador (chave do Django, qualquer texto longo e aleatório)
+#   GERADOR_SECRET_KEY   opcional (se vazia, o gerador cria uma chave aleatória e guarda no volume)
 #   GERADOR_SH_SECRET    obrigatória para o gerador (senha da API do gerador; qualquer texto longo)
 #   Sem essas variáveis só o gerador não sobe; o painel e o servidor de ID não são afetados.
 services:

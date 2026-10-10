@@ -13,7 +13,7 @@ A imagem é `ghcr.io/sou-nextec/rdgen-nextec`, publicada pelo repositório `Sou-
 | `GERADOR_GH_USER` | `Sou-Nextec` (opcional, é o padrão) |
 | `GERADOR_GH_TOKEN` | o mesmo token do GitHub que o rdgen usa hoje (`GHBEARER` do compose antigo) |
 | `GERADOR_ZIP_SENHA` | o mesmo `ZIP_PASSWORD` do compose antigo (tem que ser igual ao segredo `ZIP_PASSWORD` do repositório `rdgen`) |
-| `GERADOR_SECRET_KEY` | o mesmo `SECRET_KEY` do compose antigo, ou qualquer texto longo e aleatório |
+| `GERADOR_SECRET_KEY` | opcional: deixe vazia e o gerador cria uma chave aleatória e guarda no volume |
 | `GERADOR_SH_SECRET` | o mesmo `SH_SECRET` do compose antigo, ou qualquer texto longo |
 
 Para ver os valores atuais no servidor antigo (não cole em chat nem em issue):
@@ -21,6 +21,8 @@ Para ver os valores atuais no servidor antigo (não cole em chat nem em issue):
 ```bash
 cd /caminho/do/rdgen && grep -E 'GHUSER|GHBEARER|ZIP_PASSWORD|SECRET_KEY|SH_SECRET' docker-compose.yml
 ```
+
+Se alguma obrigatória faltar, a página `/gerador/` mostra exatamente o que falta (em vez de erro genérico).
 
 ## 2. Túnel da Cloudflare (Zero Trust > Networks > Tunnels > o túnel do painel > Public hostnames)
 
