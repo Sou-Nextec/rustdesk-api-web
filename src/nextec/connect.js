@@ -1,21 +1,30 @@
 // Conectar por ID. Pede ao painel o link: em máquinas com senha automática ele já leva a senha vigente
 // (rustdesk://<id>?password=...), então quem pode acessar a máquina só clica e entra.
-// Sem permissão, sem rede ou em servidor sem o cofre, cai no link simples (<protocolo>://<id>).
+// Falhas de permissão ou rede são exibidas sem abrir uma conexão alternativa silenciosa.
 // O protocolo é o do app instalado (um app gerado como Nextec-Connect registra nextec-connect://); admin define em Gerar cliente.
-import { ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { getToken } from '@/utils/auth'
 import { connectSettings, connectNote } from './api'
 import { useQuickAccess } from './quick-access'
 
 function abrir (url) {
-  // Link no DOM e clique real: o Chrome bloqueia (about:blank#blocked) o clique em link solto depois de um fetch
-  const a = document.createElement('a')
-  a.href = url
-  a.rel = 'noopener'
-  a.style.display = 'none'
-  document.body.appendChild(a)
-  a.click()
-  setTimeout(() => a.remove(), 1000)
+  // The final click must keep browser user activation after the API request.
+  ElMessageBox.confirm(
+    'Abra o aplicativo instalado para iniciar a conexão. Se o navegador pedir, autorize a abertura do Nextec-Connect.',
+    'Conectar ao dispositivo', {
+      confirmButtonText: 'Abrir aplicativo', cancelButtonText: 'Cancelar',
+      beforeClose: (action, instance, done) => {
+        if (action === 'confirm') {
+          const a = document.createElement('a')
+          a.href = url
+          a.rel = 'noopener'
+          document.body.appendChild(a)
+          a.click()
+          a.remove()
+        }
+        done()
+      },
+    }).catch(() => {})
 }
 
 // Chamado na conexão (opcional, ligado pelo admin em Auditoria > Relatório mensal). O último número fica pré-preenchido na sessão.
@@ -68,15 +77,17 @@ export async function connectDevice (id) {
   try { useQuickAccess().touch(id) } catch (e) { /* recentes são opcionais */ }
   const mode = await ticketMode()
   if (mode !== 'off' && !(await askTicket(id, mode))) return
-  const { scheme } = await loadSettings()
-  const plain = `${scheme}://${encodeURIComponent(id)}`
   try {
     const res = await fetch(`${import.meta.env.VITE_SERVER_API}/my/connect-link?id=${encodeURIComponent(id)}`, {
       headers: { 'api-token': getToken() || '' },
     })
     const body = await res.json()
-    abrir(body && body.code === 0 && body.data?.url ? body.data.url : plain)
+    if (!res.ok || !body || body.code !== 0 || !body.data?.url) {
+      ElMessage.error(body?.msg || 'Não foi possível preparar a conexão. Verifique sua permissão e tente novamente.')
+      return
+    }
+    abrir(body.data.url)
   } catch (e) {
-    abrir(plain)
+    ElMessage.error('Não foi possível consultar o servidor para conectar. Tente novamente.')
   }
 }

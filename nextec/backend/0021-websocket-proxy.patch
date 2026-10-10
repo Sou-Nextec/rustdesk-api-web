@@ -1,0 +1,227 @@
+diff --git a/http/controller/web/index.go b/http/controller/web/index.go
+index 0bb689c..91103fb 100644
+--- a/http/controller/web/index.go
++++ b/http/controller/web/index.go
+@@ -1,9 +1,11 @@
+ package web
+ 
+ import (
++	"encoding/json"
+ 	"fmt"
+ 	"github.com/gin-gonic/gin"
+ 	"github.com/lejianwen/rustdesk-api/v2/global"
++	"net/url"
+ )
+ 
+ type Index struct {
+@@ -16,13 +18,25 @@ func (i *Index) Index(c *gin.Context) {
+ func (i *Index) ConfigJs(c *gin.Context) {
+ 	apiServer := global.Config.Rustdesk.ApiServer
+ 	magicQueryonline := global.Config.Rustdesk.WebclientMagicQueryonline
+-	tmp := fmt.Sprintf(`localStorage.setItem('api-server', '%v');
++	wsHost := global.Config.Rustdesk.WsHost
++	if wsHost == "" && NextecWebSocketHost() != "" {
++		if u, err := url.Parse(apiServer); err == nil && u.Host != "" {
++			if u.Scheme == "https" {
++				wsHost = "wss://" + u.Host
++			} else if u.Scheme == "http" {
++				wsHost = "ws://" + u.Host
++			}
++		}
++	}
++	apiJSON, _ := json.Marshal(apiServer)
++	wsJSON, _ := json.Marshal(wsHost)
++	tmp := fmt.Sprintf(`localStorage.setItem('api-server', %s);
+ const ws2_prefix = 'wc-';
+-localStorage.setItem(ws2_prefix+'api-server', '%v');
++localStorage.setItem(ws2_prefix+'api-server', %s);
+ 
+ window.webclient_magic_queryonline = %d;
+-window.ws_host = '%v';
+-`, apiServer, apiServer, magicQueryonline, global.Config.Rustdesk.WsHost)
++window.ws_host = %s;
++`, apiJSON, apiJSON, magicQueryonline, wsJSON)
+ 	//	tmp := `
+ 	//localStorage.setItem('api-server', "` + apiServer + `")
+ 	//const ws2_prefix = 'wc-'
+@@ -31,5 +45,6 @@ window.ws_host = '%v';
+ 	//window.webclient_magic_queryonline = ` + magicQueryonline + ``
+ 
+ 	c.Header("Content-Type", "application/javascript")
++	c.Header("Cache-Control", "no-store")
+ 	c.String(200, tmp)
+ }
+diff --git a/http/router/router.go b/http/router/router.go
+index 89a7a90..6d77564 100644
+--- a/http/router/router.go
++++ b/http/router/router.go
+@@ -15,6 +15,8 @@ func WebInit(g *gin.Engine) {
+ 	// rotas sempre registradas; a chave app.web-client é checada a cada requisição
+ 	wc := g.Group("/", middleware.WebClientEnabled())
+ 	wc.GET("/webclient-config/index.js", i.ConfigJs)
++	wc.GET("/ws/id", web.NextecWebSocket("21118"))
++	wc.GET("/ws/relay", web.NextecWebSocket("21119"))
+ 	wc.StaticFS("/webclient", http.Dir(global.Config.Gin.ResourcesPath+"/web"))
+ 	wc.StaticFS("/webclient2", http.Dir(global.Config.Gin.ResourcesPath+"/web2"))
+ 	g.StaticFS("/_admin", http.Dir(global.Config.Gin.ResourcesPath+"/admin"))
+diff --git a/http/controller/web/nextec_websocket.go b/http/controller/web/nextec_websocket.go
+new file mode 100644
+--- /dev/null
++++ b/http/controller/web/nextec_websocket.go
+@@ -0,0 +1,58 @@
++package web
++
++import (
++	"net"
++	"net/http"
++	"net/http/httputil"
++	"net/url"
++	"os"
++	"strings"
++
++	"github.com/gin-gonic/gin"
++)
++
++// The panel's HTTPS tunnel terminates TLS; hbbs/hbbr speak plain WebSocket internally.
++func NextecWebSocketHost() string {
++	if host := strings.TrimSpace(os.Getenv("NEXTEC_SERVER_WS_HOST")); host != "" {
++		return host
++	}
++	return strings.TrimSpace(os.Getenv("NEXTEC_SERVER_CMD_HOST"))
++}
++
++func NextecWebSocket(port string) gin.HandlerFunc {
++	return func(c *gin.Context) {
++		host := NextecWebSocketHost()
++		if host == "" {
++			c.String(http.StatusServiceUnavailable, "WebSocket server is not configured")
++			return
++		}
++		if !strings.EqualFold(c.GetHeader("Upgrade"), "websocket") {
++			c.String(http.StatusUpgradeRequired, "WebSocket upgrade required")
++			return
++		}
++		if origin := c.GetHeader("Origin"); origin != "" {
++			u, err := url.Parse(origin)
++			if err != nil || !strings.EqualFold(u.Host, c.Request.Host) {
++				c.String(http.StatusForbidden, "Cross-origin WebSocket is not allowed")
++				return
++			}
++		}
++		target := &url.URL{Scheme: "http", Host: net.JoinHostPort(host, port)}
++		proxy := httputil.NewSingleHostReverseProxy(target)
++		director := proxy.Director
++		proxy.Director = func(r *http.Request) {
++			director(r)
++			r.URL.Path = "/"
++			r.URL.RawPath = ""
++			// Browser authentication belongs to the tunnel, not the RustDesk transport.
++			r.Header.Del("Cookie")
++			r.Header.Del("Authorization")
++			r.Header.Del("Api-Token")
++			r.Header.Del("Cf-Access-Jwt-Assertion")
++		}
++		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
++			http.Error(w, "The RustDesk WebSocket server is unavailable", http.StatusBadGateway)
++		}
++		proxy.ServeHTTP(c.Writer, c.Request)
++	}
++}
+diff --git a/http/controller/web/nextec_websocket_test.go b/http/controller/web/nextec_websocket_test.go
+new file mode 100644
+--- /dev/null
++++ b/http/controller/web/nextec_websocket_test.go
+@@ -0,0 +1,93 @@
++package web
++
++import (
++	"bufio"
++	"fmt"
++	"io"
++	"net"
++	"net/http"
++	"net/http/httptest"
++	"net/url"
++	"testing"
++	"time"
++
++	"github.com/gin-gonic/gin"
++)
++
++func TestWebSocketProxyDuplexAndCredentialStripping(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	headers := make(chan http.Header, 1)
++	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
++		headers <- r.Header.Clone()
++		conn, _, err := w.(http.Hijacker).Hijack()
++		if err != nil {
++			t.Error(err)
++			return
++		}
++		defer conn.Close()
++		fmt.Fprint(conn, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
++		buf := make([]byte, 4)
++		if _, err := io.ReadFull(conn, buf); err == nil {
++			conn.Write(buf)
++		}
++	}))
++	defer backend.Close()
++	u, _ := url.Parse(backend.URL)
++	host, port, _ := net.SplitHostPort(u.Host)
++	t.Setenv("NEXTEC_SERVER_WS_HOST", host)
++	router := gin.New()
++	router.GET("/ws/id", NextecWebSocket(port))
++	front := httptest.NewServer(router)
++	defer front.Close()
++	fu, _ := url.Parse(front.URL)
++	conn, err := net.Dial("tcp", fu.Host)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer conn.Close()
++	conn.SetDeadline(time.Now().Add(5 * time.Second))
++	fmt.Fprintf(conn, "GET /ws/id HTTP/1.1\r\nHost: %s\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nOrigin: %s\r\nCookie: secret\r\nAuthorization: Bearer secret\r\nApi-Token: secret\r\nCf-Access-Jwt-Assertion: secret\r\n\r\n", fu.Host, front.URL)
++	reader := bufio.NewReader(conn)
++	resp, err := http.ReadResponse(reader, nil)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if resp.StatusCode != 101 {
++		t.Fatalf("status %d", resp.StatusCode)
++	}
++	conn.Write([]byte("ping"))
++	buf := make([]byte, 4)
++	if _, err := io.ReadFull(reader, buf); err != nil {
++		t.Fatal(err)
++	}
++	if string(buf) != "ping" {
++		t.Fatal("duplex relay failed")
++	}
++	h := <-headers
++	for _, name := range []string{"Cookie", "Authorization", "Api-Token", "Cf-Access-Jwt-Assertion"} {
++		if h.Get(name) != "" {
++			t.Fatalf("forwarded %s", name)
++		}
++	}
++}
++
++func TestWebSocketProxyRejectsInvalidRequests(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	t.Setenv("NEXTEC_SERVER_WS_HOST", "127.0.0.1")
++	router := gin.New()
++	router.GET("/ws/id", NextecWebSocket("21118"))
++	req := httptest.NewRequest("GET", "http://panel.test/ws/id", nil)
++	w := httptest.NewRecorder()
++	router.ServeHTTP(w, req)
++	if w.Code != 426 {
++		t.Fatalf("status %d", w.Code)
++	}
++	req = httptest.NewRequest("GET", "http://panel.test/ws/id", nil)
++	req.Header.Set("Upgrade", "websocket")
++	req.Header.Set("Origin", "https://evil.test")
++	w = httptest.NewRecorder()
++	router.ServeHTTP(w, req)
++	if w.Code != 403 {
++		t.Fatalf("status %d", w.Code)
++	}
++}
