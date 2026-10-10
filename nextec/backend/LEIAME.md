@@ -151,3 +151,9 @@ Com `NEXTEC_SERVER_CMD_HOST` definido (na stack: `servidor`), a rota `/rustdesk/
 `nc -lk -p <porta+10> -e nc 127.0.0.1 <porta>` repassam pelo loopback, único endereço de onde eles aceitam comandos. A porta de
 deslocamento pode mudar com `NEXTEC_SERVER_CMD_PORT_OFFSET`. Sem a variável, o comportamento original (127.0.0.1 e ::1) continua.
 A leitura da resposta ganhou prazo de 3 s: comandos de gravação não respondem nada e antes ficavam esperando o fim da conexão.
+
+## Patch 0019: autorização e identidade
+
+Cofre restrito ao dono real ou às listas de cliente administradas, comandos só para administradores, preservação do dono
+das listas e validação do par ID/UUID no cadastro, heartbeat e vínculo de usuário. Inclui testes executados pelo Dockerfile.
+Contrato e limites em [0019-LEIAME.md](0019-LEIAME.md).

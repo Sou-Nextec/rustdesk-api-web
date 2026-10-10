@@ -2,6 +2,12 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.9.4
+
+- **Permissões de acesso:** senhas automáticas respeitam o vínculo da máquina com o cliente e os acessos liberados pelo administrador. Favoritos continuam permitindo conexão manual.
+- **Ajustes do servidor:** comandos exigem conta de administrador.
+- **Cadastro de dispositivos:** validação do vínculo da máquina e proteção contra troca indevida do responsável.
+
 ## 2.9.3
 
 - **Gerar cliente:** novo item no menu Dispositivos (só administradores) que abre o gerador de instaladores já configurado com o servidor, a chave e a identidade da Nextec.

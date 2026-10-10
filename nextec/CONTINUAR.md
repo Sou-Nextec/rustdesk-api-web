@@ -114,7 +114,8 @@ Em ordem (detalhes em `nextec/PENDENCIAS.md`):
 | Visão do painel e o que é nosso por arquivo | `README.nextec.md` |
 | Pendências e ideias | `nextec/PENDENCIAS.md` |
 | Novidades por versão | `CHANGELOG.md` |
-| Patches da API (0001 a 0017) | `nextec/backend/LEIAME.md` |
+| Patches da API (0001 a 0018) | `nextec/backend/LEIAME.md` |
+| Correções locais de autorização e identidade (0019) | `nextec/backend/0019-LEIAME.md` |
 | Implantar o servidor do zero | `nextec/deploy/IMPLANTAR.md` |
 | Gerador na stack, túnel, Access, diagnóstico | `nextec/deploy/GERADOR.md` |
 | Fork do gerador (variáveis `NX_*`, segurança, CI) | `NEXTEC.md` no repositório `rdgen` |
@@ -126,3 +127,22 @@ Em ordem (detalhes em `nextec/PENDENCIAS.md`):
 Respostas em português do Brasil, curtas e estruturadas; sem travessão (nem meia-risca) em chat e documentos; nunca pedir
 segredos no chat; confirmar antes de ações irreversíveis ou que afetam produção; manter histórico de PRs; entregar análises e
 planos no próprio chat em Markdown (não como arquivo publicado).
+
+## 10. Correções em 10/10/2026, preparadas para PR
+
+- Patch 0019: autorização do cofre, comandos administrativos, UUID/heartbeat e dono das listas. Testes novos no patch;
+  o build da API passa a executá-los. A base do Dockerfile fica fixa em `v0.1.2`, como a stack e o CI.
+- Dependências do painel atualizadas dentro das versões principais atuais: Axios 1.20.0, Vue 3.5.43, Vite 6.4.4 e
+  dependências transitivas corrigidas. `npm audit`: 28 pacotes com alertas antes, zero após atualização. Build aprovado.
+- RDGen: formulário com CSRF; API com Bearer SH_SECRET e validação igual ao formulário; payload validado antes de exportar
+  variáveis para Actions; chamadas ao GitHub com timeout; downloads por streaming; arquivos ausentes retornam 404.
+  Testes e contrato atualizado em `NEXTEC.md` no repositório rdgen.
+- Publicação autorizada pelo dono: PRs para master no painel e no rdgen, com merge somente após CI aprovada.
+  O patch 0019 já leva o código e os testes da API na imagem do painel; não depende de merge no fork separado da API.
+  Os workflows agora também constroem e testam nos PRs, sem publicar nem acionar o Portainer. Publicar primeiro a imagem
+  do gerador e depois fazer o merge do painel, cujo webhook refaz a stack e baixa as imagens novas.
+- Inspect de produção confirmou GHBEARER, ZIP_PASSWORD e SH_SECRET vazios e healthcheck HTTP 503. Preencher
+  GERADOR_GH_TOKEN, GERADOR_ZIP_SENHA e GERADOR_SH_SECRET no Portainer e fazer Pull and redeploy. SECRET_KEY vazia é suportada.
+- SSH do usuário comum recusou a conexão. Produção, Cloudflare e geração real do instalador ainda precisam de validação.
+- O relatório oficial do plugin Codex Security ficou pendente por erro de acesso ao finalizar checkpoint-head.json.
+  A revisão não cobriu integralmente todos os arquivos, imagens, binários nem as configurações externas.
