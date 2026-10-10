@@ -81,3 +81,16 @@ e abra `https://painel-remoto.nex.tec.br/gerador/`. Gere um cliente de teste (Wi
 - Desligue o rdgen e o `frpc` do servidor antigo.
 - Se o pacote `rdgen-nextec` estiver privado no GHCR, o servidor precisa de `docker login ghcr.io` com um token `read:packages`
   (o mesmo que já baixa a imagem do painel).
+
+## Diagnóstico
+
+| Sintoma | Causa e o que fazer |
+|---|---|
+| `/gerador/` mostra "O gerador ainda não está configurado" e o contêiner fica `unhealthy` | Falta variável no Portainer (o aviso lista quais). Defina e faça Pull and redeploy |
+| `unhealthy` e a página dá 500 | Rode o comando de traceback do `NEXTEC.md` (repositório `rdgen`, seção "Desenvolver e testar") |
+| 502 em `/gerador/` | A rota do túnel aponta para um serviço que não existe ou o `rdgen` não subiu: `docker logs rdgen --tail 50` |
+| Build no GitHub termina mas o cliente não aparece | `GENURL` do repositório errado, ou `ZIP_PASSWORD` do GitHub diferente de `GERADOR_ZIP_SENHA` |
+| App gerado fica "Não está pronto" | Porta do servidor de ID 21117 a 21119 (o gerador novo recusa) ou UDP 21116 bloqueado |
+| Antivírus remove o instalador | Liberar por hash ou caminho; solução definitiva é assinatura digital |
+
+O `atualizar-servidor.sh` do repositório `rdgen` serve só ao servidor antigo e some junto com ele.

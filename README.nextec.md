@@ -5,6 +5,9 @@ O motor (hbbs, hbbr e API) continua sendo o original. Este fork só troca o pain
 
 O `README.md` do upstream recebeu só uma linha de apontamento no topo para este arquivo.
 
+**Quem está assumindo o projeto começa por `nextec/CONTINUAR.md`** (mapa dos repositórios, servidores, como publicar, estado atual
+e próximos passos). Gerador de clientes: `nextec/deploy/GERADOR.md`. Pendências: `nextec/PENDENCIAS.md`.
+
 ## O que é nosso e onde está
 
 Tudo que é da Nextec fica em arquivos próprios:
@@ -144,6 +147,9 @@ Para fixar a versão do motor: `--build-arg BASE_TAG=<tag>`.
 No `docker-compose.yml`, troque `image:` por `nextec/rustdesk-server-s6:dev` e defina `RUSTDESK_API_LANG=pt-BR` para que as mensagens do backend e os dados criados na primeira execução (como "Grupo padrão") saiam em português. Em bancos já criados, os nomes dos grupos padrão continuam como foram gravados e podem ser renomeados no painel.
 
 ## Correção na API (aplicada na imagem)
+
+A lista completa dos patches (0001 a 0017: cofre, atualizações, suporte avulso, instalação por cliente, políticas, chamados, ID sem
+espaços, mensagens do servidor, entre outros) está em `nextec/backend/LEIAME.md`. O texto abaixo descreve o primeiro deles.
 
 A imagem recompila a API (v2.6.29) com `nextec/backend/0001-admin-grava-campos-vazios.patch`, o mesmo enviado ao projeto original em https://github.com/lejianwen/rustdesk-api/pull/540:
 
