@@ -2,6 +2,11 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.9.8
+
+- **Segurança > Logins ativos:** mostra pessoa, origem, plataforma, IP e IDs do dispositivo quando o app os informa. Encerrar sessão revoga a credencial imediatamente.
+- A listagem mostra apenas logins válidos e não envia os tokens secretos ao navegador. Logins antigos podem não ter origem e IP registrados.
+
 ## 2.9.7
 
 - A configuracao do cliente web usa URL versionada para evitar cache de um endereco WebSocket antigo.
