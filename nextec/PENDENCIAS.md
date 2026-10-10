@@ -48,9 +48,6 @@ A revisão de 09/10/2026 (v2.8.0) cobriu as 27 telas do painel no celular (390 p
   (30 a 45 min por build). Só Windows e Linux por enquanto; Android e macOS ficam fora até haver necessidade.
 - **Gerador: Service Token do Access** no lugar do Bypass das 4 rotas chamadas pelo GitHub (exige enviar cabeçalho nos
   workflows). Com o endurecimento atual o risco restante é baixo.
-- **Ajustes do servidor com hbbs em contêiner separado.** O hbbs só aceita comandos de `127.0.0.1`, então relay, velocidade e IPs
-  bloqueados ficam só de consulta. Opção: `network_mode: "service:servidor"` no serviço `rustdesk` (e alias `rustdesk` na rede do
-  servidor para o túnel). Custo: recriar o servidor recria o painel. Decisão pendente do dono.
 - **Acesso SSH ao app03 como `leonam_daris`.** A chave do Bitwarden só está liberada para root; copiar para o usuário comum.
 - **Conta do Docker Hub no GitHub.** Evita falha do build da imagem por limite de requisições (erro 429 e timeout).
 - **Backup fora da VPS** de `data/` e `api/` (senhas, atualizações, app de suporte, configurações).

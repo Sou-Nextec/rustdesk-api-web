@@ -4,7 +4,7 @@ Ponto de entrada para quem assume o projeto (pessoa ou IA). Resume o mapa, o est
 Documentos de detalhe estão listados na seção "Onde está cada documentação". Nada aqui contém segredo: tokens, senhas e
 chaves ficam no Portainer e nos segredos do GitHub, e nunca devem ser colados em chat, issue ou arquivo.
 
-Atualizado em 10/10/2026 (painel v2.9.1).
+Atualizado em 10/10/2026 (painel v2.9.2).
 
 ## 1. O que é
 
@@ -72,8 +72,9 @@ Variáveis da stack (Portainer > stack > Environment variables): `TUNNEL_TOKEN`,
   `git -c credential.helper= -c "credential.helper=!gh auth git-credential" push`.
 - **Porta do servidor de ID no gerador:** nunca 21117 a 21119 (o app fica "Não está pronto"). O gerador novo já recusa.
 - **Nome do app:** só letras sem acento, números e hífen (`Nextec-Connect`); o instalador do RustDesk recusa o resto.
-- **Comandos do hbbs (Ajustes do servidor):** o hbbs só aceita comandos de `127.0.0.1`. Com hbbs em contêiner separado do painel
-  a tela fica só de consulta (ver `PENDENCIAS.md`).
+- **Comandos do hbbs (Ajustes do servidor):** o hbbs só aceita comandos de `127.0.0.1`. Na stack, o contêiner `servidor` roda um
+  encaminhador (`nc`, portas internas 21125 e 21127) e o painel usa `NEXTEC_SERVER_CMD_HOST=servidor` (patch 0018). Não use
+  `network_mode: service:servidor`: reiniciar o servidor deixa o painel sem rede até recriá-lo (testado).
 - **Antivírus:** Acronis EDR bloqueia executáveis de acesso remoto sem assinatura (`ML:Generic.MaliciousExe`). Solução definitiva
   é assinatura digital (adiada por custo); até lá, liberar por hash, processo ou caminho.
 - **Segredos:** nunca em chat. O `GERADOR_ZIP_SENHA` precisa ser igual ao segredo `ZIP_PASSWORD` do repositório `rdgen`.
@@ -83,7 +84,7 @@ Variáveis da stack (Portainer > stack > Environment variables): `TUNNEL_TOKEN`,
 Entregue e em produção:
 - Painel v2.9.1: cofre de senhas, atualizações do app com piloto, suporte avulso, políticas e sessões, relatório mensal, fila de
   atendimento, acesso rápido, instalação por cliente, tabelas em cartões no celular, máscara de ID, avisos de erro em português.
-- API com patches 0001 a 0017 (`nextec/backend/LEIAME.md`).
+- API com patches 0001 a 0018 (`nextec/backend/LEIAME.md`).
 - Gerador: imagem publicada, rodando na stack do app03, endurecido (token por build, `cleanzip` e `get_zip` com nomes exatos),
   só Windows e Linux, padrões Nextec travados (`NX_*`), ícone e logo Nextec, `SECRET_KEY` automática, aviso de configuração.
 
@@ -104,8 +105,7 @@ Em ordem (detalhes em `nextec/PENDENCIAS.md`):
 2. Gerador, fase 2: "modo simples" (plataforma, nome do cliente e senha; "Avançado" para o resto).
 3. Gerador, fase 3: botão "Gerar cliente" no painel e publicação do resultado em Atualizações.
 4. Gerador, fase 4: opção "só MSI" e cache do Flutter/Rust nos workflows (hoje 30 a 45 min por build).
-5. Decidir sobre os comandos do hbbs (compartilhar a rede do contêiner do servidor; ver `PENDENCIAS.md`).
-6. Backup fora da VPS (`data/`, `api/` e volumes do gerador), Docker Hub autenticado no GitHub, assinatura digital.
+5. Backup fora da VPS (`data/`, `api/` e volumes do gerador), Docker Hub autenticado no GitHub, assinatura digital.
 
 ## 8. Onde está cada documentação
 

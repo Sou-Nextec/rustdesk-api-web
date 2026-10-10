@@ -143,3 +143,11 @@ salvos), pulando os que causariam conflito com um ID já existente (aviso no log
 `NextecCmdErrorMessage` (`service/nextec_cmderr.go`) traduz o erro de rede ao enviar comandos para o hbbs/hbbr
 (recusado, tempo esgotado, host não encontrado, conexão encerrada) em texto em português. A rota `/rustdesk/sendCmd` passa a
 devolvê-lo no lugar do erro cru. O hbbs só aceita comandos de 127.0.0.1; com servidor em contêiner separado a recusa é esperada.
+
+## Patch 0018: comandos do hbbs/hbbr por encaminhador
+
+Com `NEXTEC_SERVER_CMD_HOST` definido (na stack: `servidor`), a rota `/rustdesk/sendCmd` envia o comando para
+`host:(porta + 10)`: 21125 para o hbbs (21115) e 21127 para o hbbr (21117). Ao lado do hbbs/hbbr, no contêiner `servidor`, laços
+`nc -lk -p <porta+10> -e nc 127.0.0.1 <porta>` repassam pelo loopback, único endereço de onde eles aceitam comandos. A porta de
+deslocamento pode mudar com `NEXTEC_SERVER_CMD_PORT_OFFSET`. Sem a variável, o comportamento original (127.0.0.1 e ::1) continua.
+A leitura da resposta ganhou prazo de 3 s: comandos de gravação não respondem nada e antes ficavam esperando o fim da conexão.
