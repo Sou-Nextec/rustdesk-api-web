@@ -22,29 +22,29 @@ $id = 'SIM' + (Get-Random -Minimum 1000000 -Maximum 9999999)
 
 # Regressão: instalador elevado e tarefa SYSTEM precisam operar no perfil do serviço,
 # e uma falha do RustDesk ao aplicar a senha não pode ser confirmada no painel.
-$perfilServico = Join-Path $pasta 'perfil-servico'
 $mock = Join-Path $pasta 'rustdesk-mock.cmd'
 $mockScript = Join-Path $pasta 'rustdesk-mock.ps1'
 New-Item -ItemType Directory -Path $pasta -Force | Out-Null
 @'
 param([Parameter(ValueFromRemainingArguments = $true)][string[]]$RustDeskArgs)
 Set-Content -Path $env:NX_TEST_RUSTDESK_MARKER -Value $env:APPDATA
-if ($env:APPDATA -ne $env:NX_TEST_RUSTDESK_APPDATA) { Write-Output 'perfil RustDesk incorreto'; exit 91 }
+if ($env:APPDATA -ne $env:NX_TEST_RUSTDESK_EXPECTED_APPDATA) { Write-Output 'APPDATA foi alterado'; exit 91 }
 if ($RustDeskArgs[0] -eq '--get-id') { Write-Output $env:NX_TEST_RUSTDESK_ID; exit 0 }
-if ($RustDeskArgs[0] -eq '--password' -and $env:NX_TEST_RUSTDESK_FAIL_PASSWORD -eq '1') { exit 7 }
+if ($RustDeskArgs[0] -eq '--password' -and $env:NX_TEST_RUSTDESK_FAIL_PASSWORD -eq '1') { Write-Output 'IPC error'; exit 7 }
+if ($RustDeskArgs[0] -eq '--password') { Write-Output 'Done!'; exit 0 }
 exit 0
 '@ | Set-Content -Path $mockScript -Encoding UTF8
 '@echo off' | Set-Content -Path $mock -Encoding ASCII
 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0rustdesk-mock.ps1" %*' | Add-Content -Path $mock -Encoding ASCII
 'exit /b %errorlevel%' | Add-Content -Path $mock -Encoding ASCII
 $idServico = [string](Get-Random -Minimum 100000000 -Maximum 999999999)
-$env:NX_TEST_RUSTDESK_APPDATA = $perfilServico
+$env:NX_TEST_RUSTDESK_EXPECTED_APPDATA = $env:APPDATA
 $env:NX_TEST_RUSTDESK_ID = $idServico
 $env:NX_TEST_RUSTDESK_MARKER = Join-Path $pasta 'perfil-usado.txt'
 $env:NX_TEST_RUSTDESK_FAIL_PASSWORD = '0'
 $pastaServico = "$pasta-servico"
 $oServico = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $agente -Instalar -Painel $base -ChaveAgente $key -Simular -Exe $mock -PastaDados $pastaServico 2>&1 | Out-String
-Ok 'cadastro usa o ID retornado no perfil do serviço' ($oServico -match "ID do RustDesk: $idServico" -and (Get-Content $env:NX_TEST_RUSTDESK_MARKER -Raw).Trim() -eq $perfilServico)
+Ok 'cadastro consulta o mesmo ID e mantém APPDATA do processo' ($oServico -match "ID do RustDesk: $idServico" -and (Get-Content $env:NX_TEST_RUSTDESK_MARKER -Raw).Trim() -eq $env:NX_TEST_RUSTDESK_EXPECTED_APPDATA)
 $null = Api 'POST' '/api/admin/nextec/secrets/policy' @{ kind = 'peer'; ref = $idServico; enabled = $true; interval_minutes = 15 } $tok
 $cfgAgente = Get-Content "$pastaServico\agente-senha.json" -Raw | ConvertFrom-Json
 $cfgAgente.id = if ($idServico -eq '999999999') { '999999998' } else { '999999999' }
@@ -65,7 +65,7 @@ $null = Api 'POST' '/api/admin/nextec/secrets/unenroll' @{ id = $idServico } $to
 $null = Api 'POST' '/api/admin/nextec/secrets/policy' @{ kind = 'peer'; ref = $idServico; enabled = $false; interval_minutes = 15; remove = $true } $tok
 Remove-Item $pastaServico -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item $env:NX_TEST_RUSTDESK_MARKER -Force -ErrorAction SilentlyContinue
-Remove-Item Env:NX_TEST_RUSTDESK_APPDATA, Env:NX_TEST_RUSTDESK_ID, Env:NX_TEST_RUSTDESK_MARKER, Env:NX_TEST_RUSTDESK_FAIL_PASSWORD -ErrorAction SilentlyContinue
+Remove-Item Env:NX_TEST_RUSTDESK_EXPECTED_APPDATA, Env:NX_TEST_RUSTDESK_ID, Env:NX_TEST_RUSTDESK_MARKER, Env:NX_TEST_RUSTDESK_FAIL_PASSWORD -ErrorAction SilentlyContinue
 
 # instala (simulado) com o Windows PowerShell 5.1
 $o1 = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $agente -Instalar -Painel $base -ChaveAgente $key -Simular -Id $id -PastaDados $pasta 2>&1 | Out-String

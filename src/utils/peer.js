@@ -2,5 +2,5 @@
 import { connectLink } from '@/nextec/connect'
 
 export const connectByClient = (id) => {
-  connectLink(id)
+  return connectLink(id)
 }

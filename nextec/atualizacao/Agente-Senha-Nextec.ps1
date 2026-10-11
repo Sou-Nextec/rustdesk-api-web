@@ -37,6 +37,127 @@ $Log    = Join-Path $PastaDados 'agente-senha.log'
 $Tarefa = 'Nextec Acesso - Senha'
 Add-Type -AssemblyName System.Security
 
+function Get-NextecServiceExecutablePath {
+  param([Parameter(Mandatory)]$Service)
+
+  $commandLine = [string]$Service.PathName
+  if ($commandLine -notmatch '(?i)(?:^|\s)--service(?:\s|$)') { return $null }
+  if ($commandLine -match '^\s*"([^"]+\.exe)"(?=\s|$)') { return $Matches[1] }
+  if ($commandLine -match '^\s*(.+?\.exe)(?=\s|$)') { return $Matches[1].Trim('"') }
+  return $null
+}
+
+function Get-NextecServiceProfileRoot {
+  param(
+    [Parameter(Mandatory)][string]$ServiceAccount,
+    [string]$WindowsDirectory = $env:WinDir,
+    [string]$ProfileRootBase
+  )
+
+  $account = $ServiceAccount.Trim().ToLowerInvariant()
+  if ($account -match '^(localservice|nt authority\\localservice)$') {
+    if ($ProfileRootBase) { return (Join-Path $ProfileRootBase 'LocalService\AppData\Roaming') }
+    return (Join-Path $WindowsDirectory 'ServiceProfiles\LocalService\AppData\Roaming')
+  }
+  if ($account -match '^(localsystem|nt authority\\system|system)$') {
+    if ($ProfileRootBase) { return (Join-Path $ProfileRootBase 'SystemProfile\AppData\Roaming') }
+    return (Join-Path $WindowsDirectory 'System32\config\systemprofile\AppData\Roaming')
+  }
+  if ($account -match '^(networkservice|nt authority\\networkservice)$') {
+    if ($ProfileRootBase) { return (Join-Path $ProfileRootBase 'NetworkService\AppData\Roaming') }
+    return (Join-Path $WindowsDirectory 'ServiceProfiles\NetworkService\AppData\Roaming')
+  }
+  throw "identity_conflict: conta de serviço não reconhecida ('$ServiceAccount')."
+}
+
+function Get-NextecPeerId {
+  param([Parameter(Mandatory)][string]$ExePath)
+
+  # No Windows, o CLI consulta o IPC do cliente instalado; APPDATA não escolhe o serviço ativo.
+  $output = (& $ExePath --get-id 2>&1 | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0) {
+    throw "identity_conflict: o cliente não conseguiu consultar o ID via IPC (código $LASTEXITCODE)."
+  }
+  $lines = @($output -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+  if ($lines.Count -eq 0 -or $lines[-1] -notmatch '^\d{6,}$') {
+    throw 'identity_conflict: o cliente não retornou um PeerId válido via IPC.'
+  }
+  return $lines[-1]
+}
+
+function Assert-NextecPasswordApplied {
+  param([Parameter(Mandatory)]$Result)
+
+  # Contrato confirmado no upstream RustDesk 1.5.0: sucesso IPC imprime Done!;
+  # builds sem esse contrato precisam ser verificados antes de serem declarados compatíveis.
+  if ($Result.ExitCode -ne 0) { throw 'password_apply_failed: o cliente recusou a aplicação da senha.' }
+  $lines = @(([string]$Result.Output -split "`r?`n") | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+  if ($lines.Count -eq 0 -or $lines[-1] -cne 'Done!') {
+    throw 'password_apply_failed: o cliente não confirmou a aplicação via IPC.'
+  }
+}
+
+function Get-NextecInstalledClient {
+  [CmdletBinding()]
+  param(
+    [object[]]$Services,
+    [string]$WindowsDirectory = $env:WinDir,
+    [string]$ProfileRootBase,
+    [scriptblock]$PeerIdReader
+  )
+
+  if ($null -eq $Services) {
+    $Services = @(Get-CimInstance -ClassName Win32_Service -ErrorAction Stop)
+  }
+
+  $candidates = @(
+    foreach ($service in $Services) {
+      $exePath = Get-NextecServiceExecutablePath -Service $service
+      if (-not $exePath) { continue }
+      $exeName = [IO.Path]::GetFileNameWithoutExtension($exePath)
+      if ([string]$service.Name -ine $exeName) { continue }
+      if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) { continue }
+      [pscustomobject]@{ Service = $service; ExePath = [IO.Path]::GetFullPath($exePath) }
+    }
+  )
+
+  if ($candidates.Count -eq 0) {
+    throw 'identity_conflict: nenhum serviço instalado do RustDesk/Nextec foi encontrado.'
+  }
+  if ($candidates.Count -gt 1) {
+    $names = ($candidates | ForEach-Object { [string]$_.Service.Name }) -join ', '
+    throw "identity_conflict: múltiplos serviços/instalações encontrados ($names). Corrija a instalação antes de continuar."
+  }
+
+  $candidate = $candidates[0]
+  $service = $candidate.Service
+  $appName = [IO.Path]::GetFileNameWithoutExtension($candidate.ExePath)
+  $profileRoot = Get-NextecServiceProfileRoot -ServiceAccount ([string]$service.StartName) `
+    -WindowsDirectory $WindowsDirectory -ProfileRootBase $ProfileRootBase
+  $configRoot = Join-Path (Join-Path $profileRoot $appName) 'config'
+  $configFiles = @()
+  if (Test-Path -LiteralPath $configRoot -PathType Container) {
+    $configFiles = @(Get-ChildItem -LiteralPath $configRoot -File -Filter '*.toml' -ErrorAction SilentlyContinue)
+  }
+  if ($configFiles.Count -eq 0) {
+    throw "identity_conflict: configuração do perfil do serviço não encontrada em '$configRoot'."
+  }
+
+  if ($PeerIdReader) { $peerId = [string](& $PeerIdReader $service $candidate.ExePath) }
+  else { $peerId = [string](Get-NextecPeerId -ExePath $candidate.ExePath) }
+  if ($peerId -notmatch '^\d{6,}$') { throw 'identity_conflict: PeerId vazio ou inválido.' }
+
+  $version = [Diagnostics.FileVersionInfo]::GetVersionInfo($candidate.ExePath).FileVersion
+  [pscustomobject]@{
+    ExePath = $candidate.ExePath
+    ServiceName = [string]$service.Name
+    ServiceAccount = [string]$service.StartName
+    ConfigRoot = [IO.Path]::GetFullPath($configRoot)
+    PeerId = $peerId
+    ComponentVersion = [string]$version
+  }
+}
+
 function Escrever([string]$msg) {
   if (-not (Test-Path $PastaDados)) { New-Item -ItemType Directory -Path $PastaDados -Force | Out-Null }
   if ((Test-Path $Log) -and (Get-Item $Log).Length -gt 1MB) { Move-Item $Log "$Log.antigo" -Force }
@@ -59,60 +180,86 @@ function Revelar([string]$b64) {
   return [Text.Encoding]::UTF8.GetString($b)
 }
 
-function AcharExe {
-  if ($Exe) { return $Exe }
-  $svc = Get-CimInstance Win32_Service | Where-Object { $_.PathName -match '--service' -and $_.PathName -match 'Program Files' } |
-    Sort-Object @{ Expression = { if ($_.Name -match '^RustDesk$') { 0 } else { 1 } } }, Name | Select-Object -First 1
-  if (-not $svc) { throw 'Não encontrei o serviço do RustDesk. Instale o app (instalação completa, não o portátil) ou informe -Exe.' }
-  if ($svc.PathName -match '^"([^"]+)"') { return $Matches[1] }
-  return ($svc.PathName -split ' --service')[0].Trim()
+function Assert-NextecNoReparsePoints {
+  param([Parameter(Mandatory)][string]$Path)
+
+  $current = [IO.Path]::GetFullPath($Path)
+  while ($current) {
+    if (Test-Path -LiteralPath $current) {
+      $item = Get-Item -LiteralPath $current -Force
+      if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+        throw 'Pasta ou arquivo do agente redirecionado; operação interrompida.'
+      }
+    }
+    $parent = [IO.Path]::GetDirectoryName($current.TrimEnd([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar))
+    if (-not $parent -or $parent -eq $current) { break }
+    $current = $parent
+  }
 }
 
-function PastaAppDataServico {
-  if ($Simular -and $env:NX_TEST_RUSTDESK_APPDATA) { return $env:NX_TEST_RUSTDESK_APPDATA }
-  $svc = Get-CimInstance Win32_Service | Where-Object { $_.PathName -match '--service' -and $_.PathName -match 'Program Files' } |
-    Sort-Object @{ Expression = { if ($_.Name -match '^RustDesk$') { 0 } else { 1 } } }, Name | Select-Object -First 1
-  if (-not $svc) { throw 'Não encontrei o serviço do RustDesk para localizar o perfil que contém o ID ativo.' }
+function New-NextecSecureAcl {
+  param([switch]$Directory)
 
-  $conta = ([string]$svc.StartName).Trim().ToLowerInvariant()
-  $raiz = if ($conta -match '^(localservice|nt authority\\localservice)$') {
-    Join-Path $env:WinDir 'ServiceProfiles\LocalService\AppData\Roaming'
-  } elseif ($conta -match '^(localsystem|nt authority\\system|system)$') {
-    Join-Path $env:WinDir 'System32\config\systemprofile\AppData\Roaming'
-  } elseif ($conta -match '^(networkservice|nt authority\\networkservice)$') {
-    Join-Path $env:WinDir 'ServiceProfiles\NetworkService\AppData\Roaming'
-  } else {
-    throw "A conta do serviço RustDesk ('$($svc.StartName)') não é reconhecida. O agente parou para não cadastrar outro ID."
+  $systemSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-18')
+  $adminSid = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
+  $acl = if ($Directory) { [Security.AccessControl.DirectorySecurity]::new() } else { [Security.AccessControl.FileSecurity]::new() }
+  $acl.SetAccessRuleProtection($true, $false)
+  $acl.SetOwner($adminSid)
+  $inheritance = if ($Directory) { [Security.AccessControl.InheritanceFlags]::ContainerInherit -bor [Security.AccessControl.InheritanceFlags]::ObjectInherit } else { [Security.AccessControl.InheritanceFlags]::None }
+  foreach ($sid in @($systemSid, $adminSid)) {
+    $rule = [Security.AccessControl.FileSystemAccessRule]::new($sid, [Security.AccessControl.FileSystemRights]::FullControl, $inheritance, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)
+    $acl.AddAccessRule($rule)
   }
+  return $acl
+}
 
-  $config = Join-Path $raiz 'RustDesk\config'
-  if (-not (Test-Path (Join-Path $config 'RustDesk2.toml')) -and -not (Test-Path (Join-Path $config 'RustDesk.toml'))) {
-    throw "O perfil do serviço RustDesk ainda não tem configuração em '$config'. Abra o Nextec-Connect uma vez e tente novamente; nenhum ID alternativo foi cadastrado."
+function ProtegerPastaAgente {
+  Assert-NextecNoReparsePoints -Path $PastaDados
+  New-Item -ItemType Directory -Path $PastaDados -Force | Out-Null
+  Assert-NextecNoReparsePoints -Path $PastaDados
+
+  $managedFiles = @(
+    $Config,
+    $Log,
+    "$Log.antigo",
+    (Join-Path $PastaDados 'Agente-Senha-Nextec.ps1')
+  )
+  foreach ($path in $managedFiles) {
+    Assert-NextecNoReparsePoints -Path $path
+    if (Test-Path -LiteralPath $path) {
+      if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "identity_conflict: arquivo esperado do agente não é arquivo regular ('$path')." }
+    }
   }
-  return $raiz
+  Set-Acl -LiteralPath $PastaDados -AclObject (New-NextecSecureAcl -Directory)
+  foreach ($path in $managedFiles) {
+    Assert-NextecNoReparsePoints -Path $path
+    if (Test-Path -LiteralPath $path) { Set-Acl -LiteralPath $path -AclObject (New-NextecSecureAcl) }
+  }
+}
+
+function ClienteInstalado {
+  if ($Simular) {
+    if (-not $Exe) { return $null }
+    return [pscustomobject]@{ ExePath = [IO.Path]::GetFullPath($Exe); PeerId = (Get-NextecPeerId -ExePath $Exe) }
+  }
+  $cliente = Get-NextecInstalledClient
+  if ($Exe -and [IO.Path]::GetFullPath($Exe) -ine $cliente.ExePath) {
+    throw 'identity_conflict: -Exe não corresponde ao executável do único serviço instalado.'
+  }
+  return $cliente
 }
 
 function InvocarRustDesk([string[]]$Argumentos) {
-  $caminho = AcharExe
-  $appDataAnterior = $env:APPDATA
-  try {
-    # RustDesk instalado guarda a identidade atendida pelo serviço no perfil do serviço,
-    # diferente do perfil do administrador que executa o instalador do agente.
-    $env:APPDATA = PastaAppDataServico
-    $saida = & $caminho @Argumentos 2>&1
-    $codigo = $LASTEXITCODE
-  } finally {
-    $env:APPDATA = $appDataAnterior
-  }
+  $cliente = ClienteInstalado
+  if (-not $cliente) { throw 'identity_conflict: descoberta indisponível no modo de simulação.' }
+  $saida = & $cliente.ExePath @Argumentos 2>&1
+  $codigo = $LASTEXITCODE
   return [pscustomobject]@{ ExitCode = $codigo; Output = (@($saida) -join "`n").Trim() }
 }
 
 function MeuId {
   if ($Simular -and -not $Exe) { if (-not $Id) { throw 'No modo -Simular informe -Id.' }; return $Id }
-  $r = InvocarRustDesk -Argumentos @('--get-id')
-  if ($r.ExitCode -ne 0) { throw "O RustDesk não conseguiu ler o ID do serviço (código $($r.ExitCode)): $($r.Output)" }
-  if ($r.Output -notmatch '(\d{6,})') { throw "Não consegui ler o ID ativo do serviço RustDesk (saída: $($r.Output))." }
-  return $Matches[1]
+  return (ClienteInstalado).PeerId
 }
 
 function SenhaForte {
@@ -138,6 +285,7 @@ if ($Instalar) {
   if (-not $Simular) {
     $admin = (New-Object Security.Principal.WindowsPrincipal ([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     if (-not $admin) { throw 'Execute como administrador.' }
+    ProtegerPastaAgente
   }
   $script:PainelUrl = $Painel.TrimEnd('/')
   $meuId = MeuId
@@ -153,12 +301,14 @@ if ($Instalar) {
   New-Item -ItemType Directory -Path $PastaDados -Force | Out-Null
   @{ painel = $script:PainelUrl; id = $meuId; token = (Proteger $r.token) } | ConvertTo-Json | Set-Content -Path $Config -Encoding UTF8
   if (-not $Simular) {
-    & icacls.exe $Config /inheritance:r /grant:r 'SYSTEM:(F)' 'Administrators:(F)' | Out-Null
     $copia = Join-Path $PastaDados 'Agente-Senha-Nextec.ps1'
-    if ($MyInvocation.MyCommand.Path -ne $copia) { Copy-Item $MyInvocation.MyCommand.Path $copia -Force }
+    if ([IO.Path]::GetFullPath($MyInvocation.MyCommand.Path) -ne [IO.Path]::GetFullPath($copia)) {
+      Copy-Item -LiteralPath $MyInvocation.MyCommand.Path -Destination $copia -Force
+    }
+    $powershellExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
     $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$copia`" -Executar"
     if ($Exe) { $arg += " -Exe `"$Exe`"" }
-    $acao = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arg
+    $acao = New-ScheduledTaskAction -Execute $powershellExe -Argument $arg
     $gatilho = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 5) -RepetitionDuration (New-TimeSpan -Days 3650)
     $conf = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 4) -MultipleInstances IgnoreNew
     Register-ScheduledTask -TaskName $Tarefa -Action $acao -Trigger $gatilho -Settings $conf -User 'SYSTEM' -RunLevel Highest -Force | Out-Null
@@ -185,6 +335,7 @@ if ($Instalar) {
 }
 
 if ($Executar) {
+  ProtegerPastaAgente
   try {
     $cfg = Get-Content $Config -Raw | ConvertFrom-Json
     $script:PainelUrl = $cfg.painel
@@ -206,10 +357,7 @@ if ($Executar) {
       Escrever '[simulação] --password aplicada'
     } else {
       $aplicacao = InvocarRustDesk -Argumentos @('--password', $nova)
-      if ($aplicacao.ExitCode -ne 0) {
-        $detalhe = if ($aplicacao.Output) { ": $($aplicacao.Output)" } else { '' }
-        throw "O RustDesk recusou a senha (código $($aplicacao.ExitCode))$detalhe"
-      }
+      Assert-NextecPasswordApplied -Result $aplicacao
     }
     Chamar '/api/nextec/agent/confirm' @{ id = $meuId; token = $token } | Out-Null
     Escrever 'Senha trocada e confirmada.'
