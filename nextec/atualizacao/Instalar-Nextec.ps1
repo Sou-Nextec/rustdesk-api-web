@@ -24,6 +24,10 @@
 
 .PARAMETER Silencioso
   Usado pela tarefa agendada: sem mensagens na tela.
+
+.PARAMETER Registrar
+  Registra o atualizador incluído no instalador, sem baixar manifesto ou MSI.
+  Exige administrador. Funciona offline e mantém o estado de versão e sequência.
 #>
 [CmdletBinding()]
 param(
@@ -32,6 +36,7 @@ param(
   [string]$ChaveCliente = '',
   [switch]$Forcar,
   [switch]$SoVerificar,
+  [switch]$Registrar,
   [switch]$Silencioso
 )
 
@@ -42,6 +47,25 @@ $Tarefa  = 'Nextec Acesso - Atualizacao'
 $ChaveReg = 'HKLM:\SOFTWARE\Nextec\Acesso'
 $script:PastaSegura = $false
 $script:ReleaseVerificada = $false
+$script:OrigemAtualizador = $PSCommandPath
+
+function RegistrarAtualizador {
+  if ($SoVerificar) { throw 'Registrar e SoVerificar não podem ser usados juntos.' }
+  $meu = $script:OrigemAtualizador
+  $fixo = Join-Path $Pasta 'Instalar-Nextec.ps1'
+  if (-not $meu) { throw 'O registro exige executar o arquivo do atualizador.' }
+  if ([IO.Path]::GetFullPath($meu) -ne [IO.Path]::GetFullPath($fixo)) {
+    Copy-Item -LiteralPath $meu -Destination $fixo -Force
+  }
+  ProtegerPastaAtualizador
+  $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$fixo`" -UrlBase `"$UrlBase`" -Silencioso"
+  $acao = New-ScheduledTaskAction -Execute (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -Argument $arg
+  $gatilho = New-ScheduledTaskTrigger -Daily -At '12:30'
+  $gatilho.RandomDelay = [TimeSpan]::FromHours(2)
+  $conf = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 1) -MultipleInstances IgnoreNew
+  Register-ScheduledTask -TaskName $Tarefa -Action $acao -Trigger $gatilho -Settings $conf -User 'SYSTEM' -RunLevel Highest -Force | Out-Null
+  Escrever "Tarefa agendada: $Tarefa (todo dia, perto das 12:30)"
+}
 
 function Get-DownloadConnect([string]$Url, [long]$Limite, [string]$Destino = '') {
   $uri = [Uri]$Url
@@ -229,6 +253,9 @@ try {
   $baseUri = [Uri]$UrlBase
   if (-not $baseUri.IsAbsoluteUri -or $baseUri.Scheme -ne 'https' -or $baseUri.Query -or $baseUri.Fragment -or $baseUri.UserInfo -or $UrlBase.Contains('"')) { throw 'Endereço de atualização inválido; use HTTPS.' }
   $UrlBase = $baseUri.AbsoluteUri.TrimEnd('/')
+  # Called by EXE/MSI after installing their trusted, bundled updater.
+  # Registration must work offline and never download or install another package.
+  if ($Registrar) { RegistrarAtualizador; return }
 
   # 1. versão instalada (marca gravada por este script) e ID do RustDesk (o painel usa para piloto e acompanhamento)
   $instalada = $null
@@ -296,19 +323,7 @@ try {
   Remove-Item $msi -Force -ErrorAction SilentlyContinue
 
   # 5. tarefa diária de atualização (copia o script para um lugar fixo)
-  $meu = $MyInvocation.MyCommand.Path
-  $fixo = Join-Path $Pasta 'Instalar-Nextec.ps1'
-  if ($meu -and ($meu -ne $fixo)) { Copy-Item -Path $meu -Destination $fixo -Force }
-  if (Test-Path $fixo) {
-    $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$fixo`" -UrlBase `"$UrlBase`" -Silencioso"
-    $acao = New-ScheduledTaskAction -Execute (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -Argument $arg
-    $gatilho = New-ScheduledTaskTrigger -Daily -At '12:30'
-    $gatilho.RandomDelay = [TimeSpan]::FromHours(2)
-    $conf = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 1) -MultipleInstances IgnoreNew
-    Register-ScheduledTask -TaskName $Tarefa -Action $acao -Trigger $gatilho -Settings $conf `
-      -User 'SYSTEM' -RunLevel Highest -Force | Out-Null
-    Escrever "Tarefa agendada: $Tarefa (todo dia, perto das 12:30)"
-  }
+  RegistrarAtualizador
 }
 catch {
   Escrever "ERRO: $($_.Exception.Message)"

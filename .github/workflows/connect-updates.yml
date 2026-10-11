@@ -24,3 +24,5 @@ jobs:
           $tokens = $null; $errors = $null
           [Management.Automation.Language.Parser]::ParseFile("$PWD/nextec/atualizacao/Instalar-Nextec.ps1", [ref]$tokens, [ref]$errors) | Out-Null
           if ($errors.Count) { throw $errors[0].Message }
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File nextec/atualizacao/test_registration.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Registration tests failed' }
