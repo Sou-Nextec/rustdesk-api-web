@@ -226,12 +226,12 @@
 
     <!-- como instalar -->
     <el-dialog v-model="installVisible" title="Instalar em uma máquina" width="min(640px, 92vw)">
-      <p class="nx-help nx-help-top">Rode como administrador (PowerShell) na máquina. O script instala a versão publicada para ela e cria uma tarefa que confere todo dia.</p>
+      <p class="nx-help nx-help-top">Rode uma vez como administrador no servidor. Se abriu o EXE usando “Executar sem instalar”, use o botão Instalar nele para configurar o serviço; a execução portátil não cria uma tarefa do sistema. O comando abaixo registra o verificador e instala a versão autorizada, se houver.</p>
       <div class="nx-cmd">
         <code>{{ installCmd }}</code>
         <el-button size="small" @click="copy(installCmd)"><el-icon><el-icon-CopyDocument/></el-icon><span>Copiar comando</span></el-button>
       </div>
-      <p class="nx-help">Sem versão publicada, o script só cria a tarefa e espera. Para forçar a reinstalação, acrescente <code>-Forcar</code>.</p>
+      <p class="nx-help">Mesmo sem versão publicada, o script cria ou atualiza a tarefa <code>Nextec Acesso - Atualizacao</code> na Biblioteca do Agendador de Tarefas. O script e o log ficam em <code>%ProgramData%\Nextec\Acesso</code>. Para forçar a reinstalação, acrescente <code>-Forcar</code>.</p>
       <template #footer><el-button type="primary" @click="installVisible = false">Fechar</el-button></template>
     </el-dialog>
   </section>
