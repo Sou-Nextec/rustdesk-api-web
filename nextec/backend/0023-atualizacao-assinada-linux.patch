@@ -108,7 +108,7 @@ diff --git a/http/controller/api/nextec_update.go b/http/controller/api/nextec_u
 diff --git a/http/router/admin.go b/http/router/admin.go
 --- a/http/router/admin.go
 +++ b/http/router/admin.go
-@@ -1,2 +1,3 @@
+@@ -84,2 +84,3 @@
  	rg.POST("/updates/upload", upd.Upload)
 +	rg.POST("/updates/signature", upd.Signature)
  	rg.POST("/updates/rollout", upd.Rollout)
