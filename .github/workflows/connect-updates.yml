@@ -1,0 +1,26 @@
+name: Validar assinatura das atualizacoes Connect
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'nextec/atualizacao/**'
+      - 'nextec/backend/0023-signed-connect-updates.patch'
+      - '.github/workflows/connect-updates.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  signature:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verificar assinatura, adulteracao e repeticao
+        shell: pwsh
+        run: |
+          python nextec/atualizacao/test_manifest.py -v
+          if ($LASTEXITCODE -ne 0) { throw 'Signature tests failed' }
+          $tokens = $null; $errors = $null
+          [Management.Automation.Language.Parser]::ParseFile("$PWD/nextec/atualizacao/Instalar-Nextec.ps1", [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors.Count) { throw $errors[0].Message }

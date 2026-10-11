@@ -2,6 +2,12 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.9.9
+
+- Atualizações do app recebem autorização por manifesto assinado com a chave RSA do monitoramento Nextec. O painel valida se o manifesto corresponde ao MSI enviado antes de publicar.
+- O novo script de atualização valida assinatura, produto, vencimento, sequência, tamanho e hash do MSI. Releases sem autorização válida ficam aguardando no painel.
+- O atualizador protege sua pasta contra escrita por usuários comuns antes de registrar a tarefa SYSTEM. A instalação dentro dos pacotes EXE/MSI e a migração de instalações antigas continuam pendentes de teste Windows.
+
 ## 2.9.8
 
 - **Segurança > Logins ativos:** mostra pessoa, origem, plataforma, IP e IDs do dispositivo quando o app os informa. Encerrar sessão revoga a credencial imediatamente.
