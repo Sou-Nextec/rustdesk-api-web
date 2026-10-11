@@ -2,6 +2,19 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.10.1
+
+- Cabeçalho compacto em tablets: os botões não cobrem o título da página.
+
+## 2.10.0
+
+- **Gerar cliente > Itens gerados:** histórico persistente, versões do pacote e da base RustDesk, carteira, downloads e progresso aproximado por etapas dentro do painel.
+- **Enviar para Atualizações:** transfere o MSI do gerador com validação de tamanho e SHA-256. A publicação automática continua exigindo manifesto assinado.
+- Publicações específicas por cliente ou máquina preservam a versão geral. Pacotes específicos não podem virar o download geral dos analistas.
+- O administrador pode disponibilizar uma versão aos analistas. O botão Conectar oferece baixar o aplicativo.
+- Máquinas sem checagem são indicadas como pendentes; telas de atualização usam cartões em tablets.
+- O gerador 2.0.7 oferece executar o EXE sem instalar ou instalar com checagem diária. Instalação e reparo do MSI foram testados na CI com Windows Server 2022.
+
 ## 2.9.9
 
 - Atualizações do app recebem autorização por manifesto assinado com a chave RSA do monitoramento Nextec. O painel valida se o manifesto corresponde ao MSI enviado antes de publicar.

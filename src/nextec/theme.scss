@@ -650,6 +650,13 @@ html.dark #app .login-container .login-card {
 }
 
 // ---------- Responsivo ----------
+@media (min-width: 769px) and (max-width: 1100px) {
+  #app .app-header.el-header { padding: 0 16px; gap: 8px; }
+  #app .app-header.el-header::before { flex: 1 1 0; min-width: 0; }
+  #app .app-header.el-header .ex-icon { flex: 0 0 36px; }
+  #app .setting .nickname { display: none; }
+  #app .setting > .menu-item:nth-child(-n+2) { display: none; }
+}
 @media (max-width: 768px) {
   // menu lateral: recolhido some por completo; aberto vira painel sobre o conteúdo
   #app .app-left:has(.menus.el-menu--collapse) { width: 0 !important; overflow: hidden; }
