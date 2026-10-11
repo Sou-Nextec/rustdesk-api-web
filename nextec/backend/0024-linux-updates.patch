@@ -1,0 +1,320 @@
+diff --git a/http/controller/admin/nextec_update.go b/http/controller/admin/nextec_update.go
+index 522495f..57d6adf 100644
+--- a/http/controller/admin/nextec_update.go
++++ b/http/controller/admin/nextec_update.go
+@@ -48,7 +48,7 @@ func nextecUpdateMsg(err error) string {
+ 	case errors.Is(err, service.ErrNextecBadVersion):
+ 		return "Versão inválida. Use números separados por ponto, como 2.0.1."
+ 	case errors.Is(err, service.ErrNextecBadFile):
+-		return "Arquivo inválido. Envie o instalador .msi (ou .exe), com até 300 MB."
++		return "Arquivo inválido. Envie o MSI ou um pacote Linux .deb de arquitetura suportada, com até 300 MB."
+ 	case errors.Is(err, service.ErrNextecVersionTaken):
+ 		return "Essa versão já foi enviada. Use um número novo."
+ 	case errors.Is(err, service.ErrNextecInUse):
+@@ -86,7 +86,7 @@ func (n *NextecUpdate) Upload(c *gin.Context) {
+ 	}
+ 	defer f.Close()
+ 	u := service.AllService.UserService.CurUser(c)
+-	r, err := service.NextecReleaseSave(u, c.PostForm("version"), c.PostForm("notes"), fh.Filename, f)
++	r, err := service.NextecReleaseSave(u, c.PostForm("version"), c.PostForm("notes"), fh.Filename, c.PostForm("platform"), f)
+ 	if err != nil {
+ 		response.Fail(c, 101, nextecUpdateMsg(err))
+ 		return
+@@ -126,3 +126,5 @@ func (n *NextecUpdate) Delete(c *gin.Context) {
+ 	service.NextecSecretAuditAdd(service.AllService.UserService.CurUser(c), "", "update_delete", nextecIP(c), "")
+ 	response.Success(c, nil)
+ }
+diff --git a/http/controller/api/nextec_update.go b/http/controller/api/nextec_update.go
+index ec9cbf4..cbe6548 100644
+--- a/http/controller/api/nextec_update.go
++++ b/http/controller/api/nextec_update.go
+@@ -1,6 +1,8 @@
+ package api
+ 
+ import (
++	"encoding/base64"
++	"encoding/json"
+ 	"net/http"
+ 	"regexp"
+ 
+@@ -12,7 +14,7 @@ import (
+ // O instalador não tem segredo (leva o endereço do servidor e a chave pública), mas só são servidos arquivos que o admin enviou.
+ type NextecUpdate struct{}
+ 
+-var nextecUpdateFileName = regexp.MustCompile(`^nextec-acesso-[0-9.]{5,24}\.(msi|exe)$`)
++var nextecUpdateFileName = regexp.MustCompile(`^nextec-acesso-[0-9.]{5,24}(?:-(amd64|arm64))?\.(msi|exe|deb)$`)
+ 
+ func updateIP(c *gin.Context) string {
+ 	if ip := c.GetHeader("CF-Connecting-IP"); ip != "" {
+@@ -29,8 +31,27 @@ func (u *NextecUpdate) Manifest(c *gin.Context) {
+ 	targetVersion := ""
+ 	out := gin.H{"windows": nil, "linux": nil}
+ 	if signed := service.NextecReleaseSignature(target); signed != nil {
+-		targetVersion = target.Version
+-		out["windows"] = gin.H{"versao": target.Version, "arquivo": "files/" + target.FileName, "sha256": target.Sha256, "manifesto": signed.Manifest, "assinatura": signed.Signature}
++		var manifest struct {
++			Windows *struct { File string `json:"arquivo"`; Hash string `json:"sha256"`; Size int64 `json:"tamanho"` } `json:"windows"`
++			Linux map[string]struct { File string `json:"arquivo"`; Hash string `json:"sha256"`; Size int64 `json:"tamanho"` } `json:"linux"`
++		}
++		raw, err := base64.StdEncoding.DecodeString(signed.Manifest)
++		if err == nil && json.Unmarshal(raw, &manifest) == nil {
++			if c.Query("platform") == "linux" {
++				arch := c.Query("arch")
++				if (arch == "amd64" || arch == "arm64") {
++					expectedFile := target.LinuxAMD64FileName
++					if arch == "arm64" { expectedFile = target.LinuxARM64FileName }
++					if asset, ok := manifest.Linux[arch]; ok && expectedFile != "" && asset.File == "files/"+expectedFile {
++						targetVersion = target.Version
++						out["linux"] = gin.H{"versao": target.Version, "arquivo": asset.File, "sha256": asset.Hash, "tamanho": asset.Size, "manifesto": signed.Manifest, "assinatura": signed.Signature}
++					}
++				}
++			} else if manifest.Windows != nil && target.FileName != "" {
++				targetVersion = target.Version
++				out["windows"] = gin.H{"versao": target.Version, "arquivo": manifest.Windows.File, "sha256": manifest.Windows.Hash, "tamanho": manifest.Windows.Size, "manifesto": signed.Manifest, "assinatura": signed.Signature}
++			}
++		}
+ 	}
+ 	service.NextecUpdateSeen(id, installed, targetVersion, updateIP(c))
+ 	c.Header("Cache-Control", "no-store")
+@@ -50,5 +71,9 @@ func (u *NextecUpdate) File(c *gin.Context) {
+ 		return
+ 	}
+ 	c.Header("Cache-Control", "no-store")
+-	c.FileAttachment(service.NextecReleasePath(r), r.FileName)
++	path := service.NextecReleasePathForFile(r, name)
++	if path == "" { c.Status(http.StatusNotFound); return }
++	c.FileAttachment(path, name)
+ }
+diff --git a/model/nextec_update.go b/model/nextec_update.go
+index 8541775..3d0b3b3 100644
+--- a/model/nextec_update.go
++++ b/model/nextec_update.go
+@@ -1,6 +1,6 @@
+ package model
+ 
+-// NextecAppRelease é uma versão do app (MSI/EXE gerado pelo rdgen) guardada no servidor para as máquinas se atualizarem.
++// NextecAppRelease guarda os instaladores de uma versão do Nextec Connect.
+ type NextecAppRelease struct {
+ 	Signed     bool   `json:"signed" gorm:"-"`
+ 	Id         uint   `json:"id" gorm:"primaryKey"`
+@@ -8,6 +8,12 @@ type NextecAppRelease struct {
+ 	FileName   string `json:"file_name" gorm:"size:128;not null"`
+ 	Sha256     string `json:"sha256" gorm:"size:64;not null"`
+ 	Size       int64  `json:"size"`
++	LinuxAMD64FileName string `json:"linux_amd64_file_name,omitempty" gorm:"size:128"`
++	LinuxAMD64Sha256   string `json:"linux_amd64_sha256,omitempty" gorm:"size:64"`
++	LinuxAMD64Size     int64  `json:"linux_amd64_size,omitempty"`
++	LinuxARM64FileName string `json:"linux_arm64_file_name,omitempty" gorm:"size:128"`
++	LinuxARM64Sha256   string `json:"linux_arm64_sha256,omitempty" gorm:"size:64"`
++	LinuxARM64Size     int64  `json:"linux_arm64_size,omitempty"`
+ 	Notes      string `json:"notes" gorm:"size:1000"`
+ 	UploadedBy string `json:"uploaded_by" gorm:"size:64"`
+ 	CreatedAt  int64  `json:"created_at"`
+@@ -21,3 +27,5 @@ type NextecAppInstall struct {
+ 	SeenAt  int64  `json:"seen_at"`
+ 	Ip      string `json:"ip" gorm:"size:64"`
+ }
+diff --git a/service/nextec_update.go b/service/nextec_update.go
+index 75d96c4..40230da 100644
+--- a/service/nextec_update.go
++++ b/service/nextec_update.go
+@@ -124,7 +124,7 @@ func NextecReleaseByVersion(v string) *model.NextecAppRelease {
+ 
+ func NextecReleaseByFile(name string) *model.NextecAppRelease {
+ 	r := &model.NextecAppRelease{}
+-	if DB.Where("file_name = ?", name).First(r).Error != nil {
++	if DB.Where("file_name = ? OR linux_amd64_file_name = ? OR linux_arm64_file_name = ?", name, name, name).First(r).Error != nil {
+ 		return nil
+ 	}
+ 	return r
+@@ -134,19 +134,38 @@ func NextecReleasePath(r *model.NextecAppRelease) string {
+ 	return filepath.Join(nextecUpdateDir, r.FileName)
+ }
+ 
++func NextecReleasePathForFile(r *model.NextecAppRelease, name string) string {
++	if r == nil || (name != r.FileName && name != r.LinuxAMD64FileName && name != r.LinuxARM64FileName) {
++		return ""
++	}
++	return filepath.Join(nextecUpdateDir, name)
++}
++
+ // NextecReleaseSave guarda o instalador enviado: confere versão, extensão e cabeçalho do arquivo, calcula o SHA-256
+ // e nunca sobrescreve uma versão existente.
+-func NextecReleaseSave(u *model.User, version, notes, originalName string, src io.Reader) (*model.NextecAppRelease, error) {
++func NextecReleaseSave(u *model.User, version, notes, originalName, platform string, src io.Reader) (*model.NextecAppRelease, error) {
+ 	version = strings.TrimSpace(version)
+ 	if !nextecVersionPattern.MatchString(version) {
+ 		return nil, ErrNextecBadVersion
+ 	}
+ 	ext := strings.ToLower(filepath.Ext(originalName))
+-	if ext != ".msi" && ext != ".exe" {
++	if platform == "" {
++		if ext == ".msi" || ext == ".exe" {
++			platform = "windows"
++		}
++	}
++	if platform != "windows" && platform != "linux-amd64" && platform != "linux-arm64" {
+ 		return nil, ErrNextecBadFile
+ 	}
+-	if NextecReleaseByVersion(version) != nil {
+-		return nil, ErrNextecVersionTaken
++	if (platform == "windows" && ext != ".msi" && ext != ".exe") || (strings.HasPrefix(platform, "linux-") && ext != ".deb") {
++		return nil, ErrNextecBadFile
++	}
++	r := NextecReleaseByVersion(version)
++	if platform == "windows" && r != nil { return nil, ErrNextecVersionTaken }
++	if platform != "windows" {
++		if r == nil || r.FileName == "" || !strings.HasSuffix(strings.ToLower(r.FileName), ".msi") { return nil, ErrNextecNoRelease }
++		if platform == "linux-amd64" && r.LinuxAMD64FileName != "" { return nil, ErrNextecVersionTaken }
++		if platform == "linux-arm64" && r.LinuxARM64FileName != "" { return nil, ErrNextecVersionTaken }
+ 	}
+ 	if err := os.MkdirAll(nextecUpdateDir, 0755); err != nil {
+ 		return nil, err
+@@ -183,14 +202,23 @@ func NextecReleaseSave(u *model.User, version, notes, originalName string, src i
+ 		return nil, ErrNextecBadFile
+ 	}
+ 	name := fmt.Sprintf("nextec-acesso-%s%s", version, ext)
++	if platform == "linux-amd64" { name = fmt.Sprintf("nextec-acesso-%s-amd64.deb", version) }
++	if platform == "linux-arm64" { name = fmt.Sprintf("nextec-acesso-%s-arm64.deb", version) }
+ 	if err := os.Chmod(tmp.Name(), 0644); err != nil {
+ 		return nil, err
+ 	}
+ 	if err := os.Rename(tmp.Name(), filepath.Join(nextecUpdateDir, name)); err != nil {
+ 		return nil, err
+ 	}
+-	r := &model.NextecAppRelease{
+-		Version: version, FileName: name, Sha256: hex.EncodeToString(h.Sum(nil)), Size: size,
++	digest := hex.EncodeToString(h.Sum(nil))
++	if platform != "windows" {
++		if platform == "linux-amd64" { r.LinuxAMD64FileName, r.LinuxAMD64Sha256, r.LinuxAMD64Size = name, digest, size }
++		if platform == "linux-arm64" { r.LinuxARM64FileName, r.LinuxARM64Sha256, r.LinuxARM64Size = name, digest, size }
++		if err := DB.Save(r).Error; err != nil { _ = os.Remove(filepath.Join(nextecUpdateDir, name)); return nil, err }
++		return r, nil
++	}
++	r = &model.NextecAppRelease{
++		Version: version, FileName: name, Sha256: digest, Size: size,
+ 		Notes: truncate(strings.TrimSpace(notes), 1000), CreatedAt: time.Now().Unix(),
+ 	}
+ 	if u != nil {
+@@ -209,6 +237,8 @@ func nextecMagicOk(ext string, head []byte) bool {
+ 		return len(head) >= 8 && string(head[:8]) == "\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1"
+ 	case ".exe":
+ 		return len(head) >= 2 && head[0] == 'M' && head[1] == 'Z'
++	case ".deb":
++		return len(head) >= 8 && string(head[:8]) == "!<arch>\n"
+ 	}
+ 	return false
+ }
+@@ -233,7 +263,9 @@ func NextecReleaseDelete(id uint) error {
+ 	if err := DB.Delete(r).Error; err != nil {
+ 		return err
+ 	}
+-	_ = os.Remove(NextecReleasePath(r))
++	for _, name := range []string{r.FileName, r.LinuxAMD64FileName, r.LinuxARM64FileName} {
++		if name != "" { _ = os.Remove(filepath.Join(nextecUpdateDir, name)) }
++	}
+ 	return nil
+ }
+ 
+@@ -294,3 +326,5 @@ func NextecUpdateInstalls() (res []*model.NextecAppInstall) {
+ 	DB.Order("seen_at desc").Limit(5000).Find(&res)
+ 	return res
+ }
+diff --git a/service/nextec_update_signature.go b/service/nextec_update_signature.go
+index 6c28916..001bcbf 100644
+--- a/service/nextec_update_signature.go
++++ b/service/nextec_update_signature.go
+@@ -31,11 +31,14 @@ type nextecSignedManifest struct {
+ 	Version  string    `json:"versao"`
+ 	Issued   time.Time `json:"publicado_em"`
+ 	Expires  time.Time `json:"valido_ate"`
+-	Windows  struct {
++	Windows  *nextecSignedAsset `json:"windows"`
++	Linux map[string]nextecSignedAsset `json:"linux"`
++}
++
++type nextecSignedAsset struct {
+ 		File string `json:"arquivo"`
+ 		Hash string `json:"sha256"`
+ 		Size int64  `json:"tamanho"`
+-	} `json:"windows"`
+ }
+ 
+ func nextecVerifySignedRelease(r *model.NextecAppRelease, envelope NextecSignedRelease, key *rsa.PublicKey, now time.Time) error {
+@@ -61,7 +64,38 @@ func nextecVerifySignedRelease(r *model.NextecAppRelease, envelope NextecSignedR
+ 	if m.Issued.After(now.Add(5*time.Minute)) || !m.Expires.After(now) || !m.Expires.After(m.Issued) || m.Expires.Sub(m.Issued) > 30*24*time.Hour {
+ 		return ErrNextecReleaseSignature
+ 	}
+-	if m.Version != r.Version || m.Windows.File != "files/"+r.FileName || m.Windows.Hash != r.Sha256 || m.Windows.Size != r.Size || r.FileName != "nextec-acesso-"+r.Version+".msi" {
++	if m.Version != r.Version {
++		return ErrNextecReleaseSignature
++	}
++	assets := 0
++	if r.FileName != "" {
++		if m.Windows == nil || m.Windows.File != "files/"+r.FileName || m.Windows.Hash != r.Sha256 || m.Windows.Size != r.Size || r.FileName != "nextec-acesso-"+r.Version+".msi" {
++			return ErrNextecReleaseSignature
++		}
++		assets++
++	} else if m.Windows != nil {
++		return ErrNextecReleaseSignature
++	}
++	for _, item := range []struct{ arch, name, hash string; size int64 }{
++		{"amd64", r.LinuxAMD64FileName, r.LinuxAMD64Sha256, r.LinuxAMD64Size},
++		{"arm64", r.LinuxARM64FileName, r.LinuxARM64Sha256, r.LinuxARM64Size},
++	} {
++		signed, ok := m.Linux[item.arch]
++		if item.name == "" {
++			if ok { return ErrNextecReleaseSignature }
++			continue
++		}
++		if !ok || item.name != "nextec-acesso-"+r.Version+"-"+item.arch+".deb" || signed.File != "files/"+item.name || signed.Hash != item.hash || signed.Size != item.size || len(item.hash) != 64 || item.size < 8 || item.size > 300<<20 {
++			return ErrNextecReleaseSignature
++		}
++		assets++
++	}
++	for arch := range m.Linux {
++		if arch != "amd64" && arch != "arm64" {
++			return ErrNextecReleaseSignature
++		}
++	}
++	if len(m.Linux) > 2 || assets == 0 {
+ 		return ErrNextecReleaseSignature
+ 	}
+ 	return nil
+@@ -97,3 +131,5 @@ func NextecReleaseSignature(r *model.NextecAppRelease) *NextecSignedRelease {
+ 	}
+ 	return &envelope
+ }
+diff --git a/service/nextec_update_signature_test.go b/service/nextec_update_signature_test.go
+index bcfca48..37aeb7f 100644
+--- a/service/nextec_update_signature_test.go
++++ b/service/nextec_update_signature_test.go
+@@ -20,7 +20,7 @@ func TestNextecSignedRelease(t *testing.T) {
+ 	}
+ 	now := time.Now().UTC().Truncate(time.Second)
+ 	release := &model.NextecAppRelease{Version: "2.0.3", FileName: "nextec-acesso-2.0.3.msi", Sha256: strings.Repeat("a", 64), Size: 100}
+-	m := nextecSignedManifest{Product: "nextec-connect", Format: 1, Sequence: 5, Version: release.Version, Issued: now, Expires: now.Add(time.Hour)}
++	m := nextecSignedManifest{Product: "nextec-connect", Format: 1, Sequence: 5, Version: release.Version, Issued: now, Expires: now.Add(time.Hour), Windows: &nextecSignedAsset{}}
+ 	m.Windows.File = "files/" + release.FileName
+ 	m.Windows.Hash = release.Sha256
+ 	m.Windows.Size = release.Size
+@@ -40,6 +40,12 @@ func TestNextecSignedRelease(t *testing.T) {
+ 	if err := nextecVerifySignedRelease(release, valid, &key.PublicKey, now); err != nil {
+ 		t.Fatal(err)
+ 	}
++	linuxRelease := &model.NextecAppRelease{
++		Version: release.Version, FileName: release.FileName, Sha256: release.Sha256, Size: release.Size,
++		LinuxAMD64FileName: "nextec-acesso-2.0.3-amd64.deb", LinuxAMD64Sha256: strings.Repeat("b", 64), LinuxAMD64Size: 200,
++	}
++	m.Linux = map[string]nextecSignedAsset{"amd64": {File: "files/" + linuxRelease.LinuxAMD64FileName, Hash: linuxRelease.LinuxAMD64Sha256, Size: linuxRelease.LinuxAMD64Size}}
++	if err := nextecVerifySignedRelease(linuxRelease, sign(m), &key.PublicKey, now); err != nil { t.Fatalf("signed Linux package rejected: %v", err) }
+ 	if err := nextecVerifySignedRelease(release, valid, nextecReleaseTrustKey(), now); err == nil {
+ 		t.Fatal("Untrusted signer accepted")
+ 	}
+@@ -72,3 +78,5 @@ func TestNextecSignedRelease(t *testing.T) {
+ 		t.Fatal("Tampered bytes accepted")
+ 	}
+ }
++
++
+
