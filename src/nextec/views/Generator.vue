@@ -1,6 +1,5 @@
 <template>
   <section class="nx-gen" aria-label="Gerar cliente">
-    <!-- abre o gerador de clientes (rdgen) no mesmo domínio; o login é o do Cloudflare Access -->
     <div class="nx-card">
       <div class="nx-card-head">
         <div>
@@ -8,18 +7,24 @@
           <p class="nx-sub">Cria o instalador do app já configurado com o servidor, a chave e a identidade da Nextec.</p>
         </div>
         <div class="nx-actions">
-          <el-button type="primary" size="large" @click="open">
-            <el-icon><el-icon-TopRight/></el-icon><span>Abrir o gerador</span>
+          <el-button @click="open">
+            <el-icon><el-icon-TopRight/></el-icon><span>Abrir em outra aba</span>
           </el-button>
         </div>
       </div>
-      <p class="nx-note">
-        Só administradores e pessoas autorizadas geram clientes. Se o gerador mostrar
-        “Você não está autorizado”, peça a um administrador para incluir o seu e-mail na lista.
-      </p>
+      <div v-if="!frameReady" class="nx-frame-status" role="status" aria-live="polite">
+        <template v-if="frameDelayed">
+          <p>O gerador ainda não respondeu. Abra em outra aba para verificar o acesso ou tente novamente.</p>
+          <el-button @click="reloadFrame">Tentar novamente</el-button>
+        </template>
+        <template v-else><el-skeleton :rows="3" animated /><p>Carregando o gerador…</p></template>
+      </div>
+      <iframe ref="frame" :key="frameKey" src="/gerador/" title="Gerador de clientes Nextec"
+        class="nx-generator-frame" :style="{ height: frameHeight + 'px' }" @load="syncTheme" />
     </div>
 
-    <!-- protocolo que o botão Conectar do painel abre no computador do técnico -->
+    <el-collapse class="nx-gen-options">
+    <el-collapse-item title="Configuração do botão Conectar e orientações" name="options">
     <div class="nx-card">
       <div class="nx-card-head">
         <div>
@@ -65,25 +70,65 @@
           <router-link to="/user/updates">Atualizações do app</router-link>.</li>
       </ul>
     </div>
+    </el-collapse-item>
+    </el-collapse>
   </section>
 </template>
 
 <script setup>
-  import { onMounted, ref } from 'vue'
+  import { onMounted, onBeforeUnmount, ref } from 'vue'
   import { ElMessage } from 'element-plus'
   import { connectScheme, connectSchemeSave } from '@/nextec/api'
+  import { generatorHeight } from '@/nextec/generator-frame.mjs'
 
-  // o gerador responde em /gerador/ (túnel da Cloudflare); abre em nova aba para não perder o painel
   const open = () => { window.open('/gerador/', '_blank', 'noopener') }
+  const frame = ref(null)
+  const frameKey = ref(0)
+  const frameReady = ref(false)
+  const frameDelayed = ref(false)
+  const frameHeight = ref(720)
+  let frameTimer
+  let themeObserver
+  const syncTheme = () => frame.value?.contentWindow?.postMessage({
+    type: 'nextec-generator-theme', dark: document.documentElement.classList.contains('dark')
+  }, window.location.origin)
+  const receiveFrame = (event) => {
+    const height = generatorHeight(event, window.location.origin, frame.value?.contentWindow)
+    if (height === null) return
+    frameHeight.value = height
+    frameReady.value = true
+    frameDelayed.value = false
+    clearTimeout(frameTimer)
+    syncTheme()
+  }
+  const startTimer = () => {
+    clearTimeout(frameTimer)
+    frameTimer = setTimeout(() => { if (!frameReady.value) frameDelayed.value = true }, 15000)
+  }
+  const reloadFrame = () => {
+    frameReady.value = false
+    frameDelayed.value = false
+    frameKey.value++
+    startTimer()
+  }
 
   const scheme = ref('rustdesk')
   const loadingScheme = ref(true)
   const savingScheme = ref(false)
 
   onMounted(async () => {
+    window.addEventListener('message', receiveFrame)
+    themeObserver = new MutationObserver(syncTheme)
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
+    startTimer()
     const res = await connectScheme().catch(() => false)
     if (res && res.data && res.data.scheme) scheme.value = res.data.scheme
     loadingScheme.value = false
+  })
+  onBeforeUnmount(() => {
+    window.removeEventListener('message', receiveFrame)
+    themeObserver?.disconnect()
+    clearTimeout(frameTimer)
   })
 
   const saveScheme = async () => {
@@ -99,6 +144,9 @@
 
 <style scoped lang="scss">
   .nx-gen { width: 100%; }
+  .nx-generator-frame { display: block; border: 0; width: 100%; background: var(--nx-bg); }
+  .nx-frame-status { padding: 20px 22px; color: var(--nx-text-muted); }
+  .nx-gen-options { margin-top: 16px; }
   .nx-card { background: var(--nx-surface); border-radius: var(--nx-radius-card); box-shadow: var(--nx-shadow-card); overflow: hidden; margin-bottom: 16px; }
   .nx-card-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 16px 22px; }
   .nx-card-head + .nx-list, .nx-card-head + .nx-note { border-top: 1px solid var(--nx-divider); }
