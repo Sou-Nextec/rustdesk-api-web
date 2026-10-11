@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
-$repo = Split-Path $PSScriptRoot -Parent
-$updater = Join-Path $repo 'atualizacao\Instalar-Nextec.ps1'
-$updatesUi = Join-Path (Split-Path $repo -Parent) '..\src\nextec\views\Updates.vue'
+$repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
+$updater = Join-Path $repo 'nextec\atualizacao\Instalar-Nextec.ps1'
+$updatesUi = Join-Path $repo 'src\nextec\views\Updates.vue'
 $tokens = $null
 $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($updater, [ref]$tokens, [ref]$errors)
