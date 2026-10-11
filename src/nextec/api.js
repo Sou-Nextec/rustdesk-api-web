@@ -51,6 +51,9 @@ export const updatesOverview = () => request({ url: '/nextec/updates' })
 export const updatesSignature = (data) => request({ url: '/nextec/updates/signature', method: 'post', data })
 export const updatesRollout = (data) => request({ url: '/nextec/updates/rollout', method: 'post', data })
 export const updatesDelete = (id) => request({ url: '/nextec/updates/delete', method: 'post', data: { id } })
+export const importGeneratedRelease = (uuid) => request({ url: '/nextec/updates/import', method: 'post', data: { uuid }, timeout: 300000 })
+export const updatesInternal = (id, enabled) => request({ url: '/nextec/updates/internal', method: 'post', data: { id, enabled } })
+export const availableApp = () => request({ url: '/my/app-version' })
 // o envio do instalador usa XMLHttpRequest direto (progresso), em src/nextec/views/Updates.vue
 
 // patch 0010: suporte avulso (página pública /suporte, app de suporte e lista aguardando atendimento)

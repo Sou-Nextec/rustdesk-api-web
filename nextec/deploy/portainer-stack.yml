@@ -60,6 +60,8 @@ services:
       - RUSTDESK_API_RUSTDESK_ID_SERVER=${DOMINIO:-remoto.nex.tec.br}:21116
       - RUSTDESK_API_RUSTDESK_RELAY_SERVER=${DOMINIO:-remoto.nex.tec.br}:21117
       - RUSTDESK_API_RUSTDESK_API_SERVER=${URL_PAINEL:-https://painel-remoto.nex.tec.br}
+      - NX_RDGEN_INTERNAL_URL=http://rdgen:8000
+      - NX_RDGEN_SHARED_SECRET=${GERADOR_SH_SECRET:-${SH_SECRET:-}}
       - RUSTDESK_API_KEY_FILE=/data/id_ed25519.pub
       - RUSTDESK_API_RUSTDESK_KEY_FILE=/data/id_ed25519.pub
     volumes:

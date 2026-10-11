@@ -16,7 +16,11 @@ function New-ScheduledTaskAction {
   if ($Argument -match '-Registrar' -or $Argument -notmatch '-Silencioso') { throw 'Task must check updates, not register again' }
   return @{ Execute = $Execute; Argument = $Argument }
 }
-function New-ScheduledTaskTrigger { param([switch]$Daily, $At) return @{ RandomDelay = $null } }
+function New-ScheduledTaskTrigger {
+  param([switch]$Daily, $At, [TimeSpan]$RandomDelay)
+  if ($RandomDelay -ne [TimeSpan]::FromHours(2)) { throw 'Random delay must be passed through the cmdlet for ISO-8601 encoding' }
+  return @{ RandomDelay = 'PT2H' }
+}
 function New-ScheduledTaskSettingsSet { param([switch]$StartWhenAvailable, [switch]$AllowStartIfOnBatteries, [switch]$DontStopIfGoingOnBatteries, $ExecutionTimeLimit, $MultipleInstances) if ($MultipleInstances -ne 'IgnoreNew') { throw 'Concurrent task execution allowed' }; return @{} }
 function Register-ScheduledTask {
   param($TaskName, $Action, $Trigger, $Settings, $User, $RunLevel, [switch]$Force)

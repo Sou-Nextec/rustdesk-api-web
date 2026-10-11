@@ -12,6 +12,9 @@
           </el-button>
         </div>
       </div>
+      <el-tabs v-model="tab" class="nx-generator-tabs"><el-tab-pane label="Novo instalador" name="new"/><el-tab-pane label="Itens gerados" name="generated"/></el-tabs>
+      <GeneratedClients v-if="tab === 'generated'" />
+      <div v-show="tab === 'new'">
       <div v-if="!frameReady" class="nx-frame-status" role="status" aria-live="polite">
         <template v-if="frameDelayed">
           <p>O gerador ainda não respondeu. Abra em outra aba para verificar o acesso ou tente novamente.</p>
@@ -21,6 +24,7 @@
       </div>
       <iframe ref="frame" :key="frameKey" src="/gerador/" title="Gerador de clientes Nextec"
         class="nx-generator-frame" :style="{ height: frameHeight + 'px' }" @load="syncTheme" />
+      </div>
     </div>
 
     <el-collapse class="nx-gen-options">
@@ -80,6 +84,9 @@
   import { ElMessage } from 'element-plus'
   import { connectScheme, connectSchemeSave } from '@/nextec/api'
   import { generatorHeight } from '@/nextec/generator-frame.mjs'
+  import { generationEvent } from '@/nextec/generation-catalog.mjs'
+  import GeneratedClients from './GeneratedClients.vue'
+  const tab = ref('generated')
 
   const open = () => { window.open('/gerador/', '_blank', 'noopener') }
   const frame = ref(null)
@@ -93,6 +100,11 @@
     type: 'nextec-generator-theme', dark: document.documentElement.classList.contains('dark')
   }, window.location.origin)
   const receiveFrame = (event) => {
+    if (generationEvent(event, window.location.origin, frame.value?.contentWindow)) {
+      tab.value = 'generated'
+      reloadFrame()
+      return
+    }
     const height = generatorHeight(event, window.location.origin, frame.value?.contentWindow)
     if (height === null) return
     frameHeight.value = height
@@ -144,6 +156,7 @@
 
 <style scoped lang="scss">
   .nx-gen { width: 100%; }
+  .nx-generator-tabs { padding: 0 20px; }
   .nx-generator-frame { display: block; border: 0; width: 100%; background: var(--nx-bg); }
   .nx-frame-status { padding: 20px 22px; color: var(--nx-text-muted); }
   .nx-gen-options { margin-top: 16px; }
