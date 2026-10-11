@@ -1,7 +1,7 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $base = 'http://localhost:21114'
-$agente = 'C:\Users\Leonam Daris\Documents\Projetos Programacao\RustyDesk Admin\rustdesk-api-web\nextec\atualizacao\Agente-Senha-Nextec.ps1'
-$pasta = 'C:\Temp\nx-agente-teste'
+$agente = Join-Path (Split-Path $PSScriptRoot -Parent) 'atualizacao\Agente-Senha-Nextec.ps1'
+$pasta = Join-Path $env:TEMP 'nx-agente-teste'
 Remove-Item $pasta -Recurse -Force -ErrorAction SilentlyContinue
 $res = New-Object System.Collections.Generic.List[object]
 function Ok($n, $c, $d = '') { $res.Add([pscustomobject]@{ Teste = $n; Passou = [bool]$c; Detalhe = $d }) }
@@ -111,5 +111,3 @@ $null = Api 'POST' '/api/admin/nextec/secrets/unenroll' @{ id = 'VAULT999111' } 
 Remove-Item $pasta, "$pasta-2" -Recurse -Force -ErrorAction SilentlyContinue
 $res | Format-Table -AutoSize -Wrap | Out-String -Width 200
 "Passaram: $(($res | Where-Object Passou).Count) de $($res.Count)"
-
-
