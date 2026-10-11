@@ -76,7 +76,7 @@ Nenhum destes itens pode ser apresentado como produção pronta apenas pela conc
 
 ## T3: validacao transacional
 
-- PowerShell 5.1: nove casos passaram, incluindo proposta divergente recusada antes de aplicar a senha.
+- PowerShell 5.1: dez casos passaram, incluindo proposta divergente recusada antes de aplicar a senha.
 - Linux/CGO no APP03, container isolado CPU1/RAM1200m sem volumes de producao: service e http/controller/api passaram.
 - A primeira execucao encontrou fixture com GORM default:true que ignorava Enabled:false; fixture agora grava e verifica explicitamente o estado persistido. Reexecucao verde.
 - Testes de revogacao entre autenticacao e operacao verificam que token revogado nao recebe pendencia nem confirma senha.

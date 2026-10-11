@@ -106,3 +106,11 @@ $proposalOperation='op-other'
 try { Invoke-NextecPasswordCycle $cfg; throw 'Expected proposal rejection' } catch { Assert ($_.Exception.Message -match 'proposal_failed') 'Unexpected proposal error' }
 Assert ($applied -eq 0) 'Mismatched proposal applied locally'
 Write-Host 'PASS Transaction_RejectsUnexpectedProposal'
+
+Reset-Case
+$response.operation=$null; $response.rotate=$false; $response.managed=$false
+$cfg | Add-Member pending_password 'protected:old-secret'
+$cfg | Add-Member applied_operation_id 'confirmed-op'
+Invoke-NextecPasswordCycle $cfg
+Assert (-not $cfg.pending_password -and -not $cfg.applied_operation_id -and $applied -eq 0) 'Completed operation retained local secret'
+Write-Host 'PASS Transaction_ClearsCompletedJournal'

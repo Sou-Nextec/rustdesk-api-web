@@ -324,6 +324,12 @@ function Invoke-NextecPasswordCycle([psobject]$Cfg) {
         throw 'invalid_operation: operacao de senha incompleta.'
       }
     }
+    if (-not $operation -and ($Cfg.pending_password -or $Cfg.applied_operation_id)) {
+      foreach ($name in @('pending_operation_id','pending_version','pending_password','applied_operation_id','applied_pending_version')) {
+        Set-NextecStateValue $Cfg $name $null
+      }
+      Save-NextecAgentState $Cfg
+    }
     if (-not $state.managed) {
       # Uma politica desligada nunca aplica outra senha. Reconciliar apenas o que o journal prova aplicado.
       if ($operation -and $Cfg.applied_operation_id -eq $operation.operation_id -and
