@@ -1,4 +1,4 @@
-﻿$ErrorActionPreference = 'Stop'
+$ErrorActionPreference = 'Stop'
 $base = 'http://localhost:21114'
 $agente = 'C:\Users\Leonam Daris\Documents\Projetos Programacao\RustyDesk Admin\rustdesk-api-web\nextec\atualizacao\Agente-Senha-Nextec.ps1'
 $pasta = 'C:\Temp\nx-agente-teste'
@@ -19,6 +19,53 @@ Ok 'sintaxe do agente (parser)' ($e.Count -eq 0)
 $tok = (Api 'POST' '/api/admin/login' @{ username = 'admin'; password = $env:NX_TESTE_SENHA; platform = 'web' } $null).data.token
 $key = (Api 'POST' '/api/admin/nextec/secrets/agent-key' @{} $tok).data.key
 $id = 'SIM' + (Get-Random -Minimum 1000000 -Maximum 9999999)
+
+# Regressão: instalador elevado e tarefa SYSTEM precisam operar no perfil do serviço,
+# e uma falha do RustDesk ao aplicar a senha não pode ser confirmada no painel.
+$perfilServico = Join-Path $pasta 'perfil-servico'
+$mock = Join-Path $pasta 'rustdesk-mock.cmd'
+$mockScript = Join-Path $pasta 'rustdesk-mock.ps1'
+New-Item -ItemType Directory -Path $pasta -Force | Out-Null
+@'
+param([Parameter(ValueFromRemainingArguments = $true)][string[]]$RustDeskArgs)
+Set-Content -Path $env:NX_TEST_RUSTDESK_MARKER -Value $env:APPDATA
+if ($env:APPDATA -ne $env:NX_TEST_RUSTDESK_APPDATA) { Write-Output 'perfil RustDesk incorreto'; exit 91 }
+if ($RustDeskArgs[0] -eq '--get-id') { Write-Output $env:NX_TEST_RUSTDESK_ID; exit 0 }
+if ($RustDeskArgs[0] -eq '--password' -and $env:NX_TEST_RUSTDESK_FAIL_PASSWORD -eq '1') { exit 7 }
+exit 0
+'@ | Set-Content -Path $mockScript -Encoding UTF8
+'@echo off' | Set-Content -Path $mock -Encoding ASCII
+'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0rustdesk-mock.ps1" %*' | Add-Content -Path $mock -Encoding ASCII
+'exit /b %errorlevel%' | Add-Content -Path $mock -Encoding ASCII
+$idServico = [string](Get-Random -Minimum 100000000 -Maximum 999999999)
+$env:NX_TEST_RUSTDESK_APPDATA = $perfilServico
+$env:NX_TEST_RUSTDESK_ID = $idServico
+$env:NX_TEST_RUSTDESK_MARKER = Join-Path $pasta 'perfil-usado.txt'
+$env:NX_TEST_RUSTDESK_FAIL_PASSWORD = '0'
+$pastaServico = "$pasta-servico"
+$oServico = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $agente -Instalar -Painel $base -ChaveAgente $key -Simular -Exe $mock -PastaDados $pastaServico 2>&1 | Out-String
+Ok 'cadastro usa o ID retornado no perfil do serviço' ($oServico -match "ID do RustDesk: $idServico" -and (Get-Content $env:NX_TEST_RUSTDESK_MARKER -Raw).Trim() -eq $perfilServico)
+$null = Api 'POST' '/api/admin/nextec/secrets/policy' @{ kind = 'peer'; ref = $idServico; enabled = $true; interval_minutes = 15 } $tok
+$cfgAgente = Get-Content "$pastaServico\agente-senha.json" -Raw | ConvertFrom-Json
+$cfgAgente.id = if ($idServico -eq '999999999') { '999999998' } else { '999999999' }
+$cfgAgente | ConvertTo-Json | Set-Content "$pastaServico\agente-senha.json" -Encoding UTF8
+$idDivergente = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $agente -Executar -Simular -Exe $mock -PastaDados $pastaServico 2>&1 | Out-String
+Ok 'ID divergente interrompe a troca antes de falar com o painel' ($idDivergente -match 'vinculado ao ID')
+$cfgAgente.id = $idServico
+$cfgAgente | ConvertTo-Json | Set-Content "$pastaServico\agente-senha.json" -Encoding UTF8
+$env:NX_TEST_RUSTDESK_FAIL_PASSWORD = '1'
+$null = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $agente -Executar -Simular -Exe $mock -PastaDados $pastaServico 2>&1 | Out-String
+$falha = (Api 'POST' '/api/admin/nextec/secrets/reveal' @{ id = $idServico } $tok).data
+Ok 'falha ao aplicar senha não confirma uma senha ativa' (-not $falha.password -and $falha.pending.Length -eq 24)
+$env:NX_TEST_RUSTDESK_FAIL_PASSWORD = '0'
+$null = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $agente -Executar -Simular -Exe $mock -PastaDados $pastaServico 2>&1 | Out-String
+$sucesso = (Api 'POST' '/api/admin/nextec/secrets/reveal' @{ id = $idServico } $tok).data
+Ok 'aplicação bem sucedida confirma a senha no painel' ($sucesso.password.Length -eq 24 -and $sucesso.version -eq 1)
+$null = Api 'POST' '/api/admin/nextec/secrets/unenroll' @{ id = $idServico } $tok
+$null = Api 'POST' '/api/admin/nextec/secrets/policy' @{ kind = 'peer'; ref = $idServico; enabled = $false; interval_minutes = 15; remove = $true } $tok
+Remove-Item $pastaServico -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item $env:NX_TEST_RUSTDESK_MARKER -Force -ErrorAction SilentlyContinue
+Remove-Item Env:NX_TEST_RUSTDESK_APPDATA, Env:NX_TEST_RUSTDESK_ID, Env:NX_TEST_RUSTDESK_MARKER, Env:NX_TEST_RUSTDESK_FAIL_PASSWORD -ErrorAction SilentlyContinue
 
 # instala (simulado) com o Windows PowerShell 5.1
 $o1 = & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $agente -Instalar -Painel $base -ChaveAgente $key -Simular -Id $id -PastaDados $pasta 2>&1 | Out-String
@@ -64,4 +111,5 @@ $null = Api 'POST' '/api/admin/nextec/secrets/unenroll' @{ id = 'VAULT999111' } 
 Remove-Item $pasta, "$pasta-2" -Recurse -Force -ErrorAction SilentlyContinue
 $res | Format-Table -AutoSize -Wrap | Out-String -Width 200
 "Passaram: $(($res | Where-Object Passou).Count) de $($res.Count)"
+
 
