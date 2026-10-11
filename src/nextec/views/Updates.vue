@@ -170,7 +170,14 @@
     </el-dialog>
 
     <el-dialog v-model="authorization.visible" title="Autorizar atualização" width="min(520px, 92vw)" :close-on-click-modal="false">
-      <p>Selecione o manifesto e a assinatura criados no seu computador com a chave do monitoramento. A chave privada permanece no seu computador.</p>
+      <el-alert type="info" :closable="false" show-icon title="A chave privada fica no computador de assinatura">
+        <template #default><span>O navegador recebe apenas o manifesto e a assinatura. Não envie a chave privada nem a senha dela ao painel.</span></template>
+      </el-alert>
+      <ol class="nx-sign-steps">
+        <li>Na máquina segura que guarda a chave do monitoramento, gere o manifesto para a versão <strong>{{ authorization.version }}</strong>. O OpenSSL pede a senha no terminal.</li>
+        <li>Selecione abaixo <code>manifesto-connect.json</code> e <code>manifesto-connect.json.sig</code>.</li>
+        <li>Depois de autorizar, publique primeiro para um grupo piloto e confira o resultado.</li>
+      </ol>
       <el-form label-position="top">
         <el-form-item label="Manifesto Connect (.json)">
           <input type="file" accept=".json" :disabled="authorization.busy" @change="authorization.manifest = $event.target.files[0]">
@@ -484,6 +491,9 @@
   .nx-mcard-actions { display: flex; gap: 8px; margin-top: 4px; .el-button { margin: 0; } }
   .nx-pager { padding: 12px 18px; border-top: 1px solid var(--nx-divider); display: flex; justify-content: flex-end; }
   .nx-help { margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: var(--nx-text-muted); code { font-size: 12px; } }
+  .nx-sign-steps { margin: 14px 0; padding-left: 22px; color: var(--nx-text); font-size: 13px; line-height: 1.55; }
+  .nx-sign-steps li + li { margin-top: 6px; }
+  .nx-sign-steps code { padding: 1px 5px; border-radius: 5px; background: var(--nx-field); }
   .nx-help-top { margin: 0 0 14px; font-size: 13px; }
   .nx-mode-help { margin: 10px 0 16px; }
   .nx-modes { display: flex; }
