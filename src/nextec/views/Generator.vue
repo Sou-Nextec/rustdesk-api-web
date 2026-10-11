@@ -13,6 +13,11 @@
         </div>
       </div>
       <el-tabs v-model="tab" class="nx-generator-tabs"><el-tab-pane label="Novo instalador" name="new"/><el-tab-pane label="Itens gerados" name="generated"/></el-tabs>
+      <ol class="nx-gen-flow" aria-label="Etapas para gerar e publicar um cliente">
+        <li><span>1</span><div><strong>Gerar</strong><small>Crie o instalador com a identidade Nextec.</small></div></li>
+        <li><span>2</span><div><strong>Conferir</strong><small>Baixe e teste em Itens gerados.</small></div></li>
+        <li><span>3</span><div><strong>Atualizar</strong><small>Envie, autorize e publique no piloto.</small></div></li>
+      </ol>
       <GeneratedClients v-if="tab === 'generated'" />
       <div v-show="tab === 'new'">
       <div v-if="!frameReady" class="nx-frame-status" role="status" aria-live="polite">
@@ -157,6 +162,12 @@
 <style scoped lang="scss">
   .nx-gen { width: 100%; }
   .nx-generator-tabs { padding: 0 20px; }
+  .nx-gen-flow { list-style: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; margin: 0 20px 14px; padding: 0; }
+  .nx-gen-flow li { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 10px 12px; border: 1px solid var(--nx-divider); border-radius: 12px; background: var(--nx-bg); }
+  .nx-gen-flow li > span { display: grid; place-items: center; flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--nx-tint); color: var(--nx-accent); font-weight: 700; }
+  .nx-gen-flow strong, .nx-gen-flow small { display: block; }
+  .nx-gen-flow strong { color: var(--nx-text); font-size: 13px; }
+  .nx-gen-flow small { margin-top: 2px; color: var(--nx-text-muted); font-size: 11px; line-height: 1.35; }
   .nx-generator-frame { display: block; border: 0; width: 100%; background: var(--nx-bg); }
   .nx-frame-status { padding: 20px 22px; color: var(--nx-text-muted); }
   .nx-gen-options { margin-top: 16px; }
@@ -173,6 +184,8 @@
   .nx-list { margin: 0; padding: 14px 22px 16px 40px; font-size: 14px; line-height: 1.6; color: var(--nx-text); li + li { margin-top: 6px; } }
   code { padding: 1px 6px; border-radius: 6px; background: var(--nx-field); font-size: 13px; }
   @media (max-width: 560px) {
+    .nx-gen-flow { grid-template-columns: minmax(0, 1fr); margin: 0 14px 12px; gap: 6px; }
+    .nx-gen-flow li { padding: 8px 10px; }
     .nx-actions { width: 100%; .el-button { flex: 1 1 auto; } }
   }
 </style>

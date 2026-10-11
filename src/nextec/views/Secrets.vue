@@ -29,7 +29,12 @@
         </el-table-column>
         <el-table-column label="Senha automática" min-width="150">
           <template #default="{ row }">
-            <span v-if="row.managed"><span class="nx-dot is-on" aria-hidden="true"></span>Ligada, troca a cada {{ every(row.interval_minutes) }}</span>
+            <template v-if="row.managed && row.enrolled">
+              <span><span class="nx-dot is-on" aria-hidden="true"></span>Ligada, troca a cada {{ every(row.interval_minutes) }}</span>
+            </template>
+            <el-tooltip v-else-if="row.managed" content="A regra está configurada, mas só começa a trocar a senha depois que o agente Nextec for instalado nesta máquina." placement="top">
+              <span class="nx-warn-text"><span class="nx-dot is-warn" aria-hidden="true"></span>Regra pronta · agente pendente</span>
+            </el-tooltip>
             <span v-else class="nx-muted"><span class="nx-dot is-off" aria-hidden="true"></span>Desligada</span>
           </template>
         </el-table-column>
@@ -49,14 +54,18 @@
               <div>Versão {{ row.version }}, trocada {{ ago(row.active_at) }}</div>
               <div class="nx-muted nx-small">{{ row.managed ? 'próxima ' + until(row.next_rotation_at) : 'regra desligada' }}</div>
             </template>
-            <span v-else class="nx-muted">{{ row.enrolled && row.managed ? 'Aguardando a primeira troca' : 'Sem senha ainda' }}</span>
+            <span v-else class="nx-muted">{{ row.managed && !row.enrolled ? 'Aguardando instalação do agente' : row.enrolled && row.managed ? 'Aguardando a primeira troca' : 'Sem senha ainda' }}</span>
           </template>
         </el-table-column>
         <el-table-column label="Ações" width="200" fixed="right">
           <template #default="{ row }">
             <div class="nx-row-actions">
-              <el-button size="small" :disabled="!row.has_password && !row.pending" @click="reveal(row)">Ver senha</el-button>
-              <el-button size="small" :disabled="!row.enrolled || !row.managed" @click="rotate(row)">Trocar agora</el-button>
+              <el-tooltip :content="secretActionState(row).revealReason" :disabled="secretActionState(row).canReveal" placement="top">
+                <span class="nx-disabled-action"><el-button size="small" :disabled="!secretActionState(row).canReveal" @click="reveal(row)">Ver senha</el-button></span>
+              </el-tooltip>
+              <el-tooltip :content="secretActionState(row).rotateReason" :disabled="secretActionState(row).canRotate" placement="top">
+                <span class="nx-disabled-action"><el-button size="small" :disabled="!secretActionState(row).canRotate" @click="rotate(row)">Trocar agora</el-button></span>
+              </el-tooltip>
               <el-dropdown trigger="click" @command="cmd => onRow(cmd, row)">
                 <el-button size="small" aria-label="Mais ações"><el-icon><el-icon-MoreFilled/></el-icon></el-button>
                 <template #dropdown>
@@ -177,6 +186,7 @@
   import { computed, onMounted, reactive, ref } from 'vue'
   import { fmtId, rawId } from '@/nextec/id'
   import { ElMessage, ElMessageBox } from 'element-plus'
+  import { secretActionState } from '@/nextec/secret-actions.mjs'
   import { list as groupList } from '@/api/device_group'
   import { list as peerList } from '@/api/peer'
   import { timeAgo } from '@/utils/time'
@@ -342,6 +352,7 @@
     &.is-warn { background: #9A5B00; box-shadow: 0 0 0 3px #FEF3C7; }
   }
   .nx-row-actions { display: flex; gap: 6px; flex-wrap: nowrap; .el-button { margin: 0 !important; } }
+  .nx-disabled-action { display: inline-flex; }
   .nx-pager { padding: 12px 18px; border-top: 1px solid var(--nx-divider); display: flex; justify-content: flex-end; }
   .nx-help { margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: var(--nx-text-muted); }
   .nx-help-top { margin: 0 0 14px; font-size: 13px; }

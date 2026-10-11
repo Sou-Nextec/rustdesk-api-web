@@ -90,9 +90,11 @@
         </el-table-column>
         <el-table-column label="Nome do computador" prop="hostname" min-width="150"/>
         <el-table-column label="Usuário" prop="username" min-width="120"/>
-        <el-table-column label="Cliente" min-width="120">
+        <el-table-column label="Cliente" min-width="170">
           <template #default="{ row }">
-            <el-tag v-if="groupName(row.group_id)">{{ groupName(row.group_id) }}</el-tag>
+            <el-tooltip v-if="groupName(row.group_id)" :content="groupName(row.group_id)" placement="top" :show-after="500">
+              <el-tag class="nx-device-client-tag" disable-transitions>{{ groupName(row.group_id) }}</el-tag>
+            </el-tooltip>
             <span v-else class="nx-muted">Sem cliente</span>
           </template>
         </el-table-column>
@@ -588,6 +590,8 @@
   .nx-card { background: var(--nx-surface); border-radius: var(--nx-radius-card); box-shadow: var(--nx-shadow-card); overflow: hidden; }
   .nx-id { font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; font-size: 13px; white-space: nowrap; }
   :deep(td .cell:has(.nx-id)) { white-space: nowrap; }
+  :deep(.nx-device-client-tag) { display: inline-flex; max-width: 100%; white-space: nowrap; overflow: hidden; vertical-align: middle; }
+  :deep(.nx-device-client-tag .el-tag__content) { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .nx-sec-head {
     display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap;
     padding: 12px 18px; background: var(--nx-bg); border-top: 1px solid var(--nx-divider); font-size: 14px; color: var(--nx-text);
