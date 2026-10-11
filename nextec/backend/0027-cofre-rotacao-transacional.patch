@@ -1,0 +1,962 @@
+diff --git a/http/controller/api/nextec_agent.go b/http/controller/api/nextec_agent.go
+index 2d3500e..2342971 100644
+--- a/http/controller/api/nextec_agent.go
++++ b/http/controller/api/nextec_agent.go
+@@ -12,10 +12,13 @@ import (
+ type NextecAgent struct{}
+ 
+ type nextecAgentForm struct {
+-	Key      string `json:"key"`
+-	Id       string `json:"id"`
+-	Token    string `json:"token"`
+-	Password string `json:"password"`
++	Key            string   `json:"key"`
++	Id             string   `json:"id"`
++	Token          string   `json:"token"`
++	Password       string   `json:"password"`
++	Capabilities   []string `json:"capabilities"`
++	OperationID    string   `json:"operation_id"`
++	PendingVersion int      `json:"pending_version"`
+ }
+ 
+ func agentIP(c *gin.Context) string {
+@@ -33,6 +36,8 @@ func agentFail(c *gin.Context, err error) {
+ 		c.JSON(http.StatusConflict, gin.H{"error": "already enrolled"})
+ 	case errors.Is(err, service.ErrNextecBadPassword), errors.Is(err, service.ErrNextecNoPending):
+ 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
++	case errors.Is(err, service.ErrNextecOperationConflict), errors.Is(err, service.ErrNextecOperationRequired):
++		c.JSON(http.StatusConflict, gin.H{"error": "operation conflict or upgrade required"})
+ 	case errors.Is(err, service.ErrNextecBadAgentAuth):
+ 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+ 	default:
+@@ -62,16 +67,12 @@ func (a *NextecAgent) Sync(c *gin.Context) {
+ 		c.JSON(http.StatusBadRequest, gin.H{"error": "bad request"})
+ 		return
+ 	}
+-	s, err := service.NextecAgentSyncState(agentIP(c), f.Id, f.Token)
++	s, err := service.NextecAgentSyncStateWithCapabilities(agentIP(c), f.Id, f.Token, f.Capabilities)
+ 	if err != nil {
+ 		agentFail(c, err)
+ 		return
+ 	}
+-	c.JSON(http.StatusOK, gin.H{
+-		"managed": s.Managed, "rotate": s.Rotate, "interval_minutes": s.Interval,
+-		// ajustes que o agente aplica no RustDesk para entrar só com a senha, sem alguém aprovar
+-		"approve_mode": "password", "verification_method": "use-permanent-password",
+-	})
++	c.JSON(http.StatusOK, s)
+ }
+ 
+ // Password POST /api/nextec/agent/password {id, token, password}: guarda a senha nova como pendente
+@@ -81,10 +82,24 @@ func (a *NextecAgent) Password(c *gin.Context) {
+ 		c.JSON(http.StatusBadRequest, gin.H{"error": "bad request"})
+ 		return
+ 	}
+-	if err := service.NextecAgentPropose(agentIP(c), f.Id, f.Token, f.Password); err != nil {
++	var err error
++	if f.OperationID != "" || f.PendingVersion != 0 {
++		if f.OperationID == "" || f.PendingVersion <= 0 {
++			c.JSON(http.StatusBadRequest, gin.H{"error": "operation_id and pending_version are required"})
++			return
++		}
++		err = service.NextecAgentProposeTransaction(agentIP(c), f.Id, f.Token, f.OperationID, f.PendingVersion, f.Password)
++	} else {
++		err = service.NextecAgentPropose(agentIP(c), f.Id, f.Token, f.Password)
++	}
++	if err != nil {
+ 		agentFail(c, err)
+ 		return
+ 	}
++	if f.OperationID != "" {
++		c.JSON(http.StatusOK, gin.H{"ok": true, "operation_id": f.OperationID, "pending_version": f.PendingVersion})
++		return
++	}
+ 	c.JSON(http.StatusOK, gin.H{"ok": true})
+ }
+ 
+@@ -95,9 +110,23 @@ func (a *NextecAgent) Confirm(c *gin.Context) {
+ 		c.JSON(http.StatusBadRequest, gin.H{"error": "bad request"})
+ 		return
+ 	}
+-	if err := service.NextecAgentConfirm(agentIP(c), f.Id, f.Token); err != nil {
++	var err error
++	if f.OperationID != "" || f.PendingVersion != 0 {
++		if f.OperationID == "" || f.PendingVersion <= 0 {
++			c.JSON(http.StatusBadRequest, gin.H{"error": "operation_id and pending_version are required"})
++			return
++		}
++		err = service.NextecAgentConfirmTransaction(agentIP(c), f.Id, f.Token, f.OperationID, f.PendingVersion)
++	} else {
++		err = service.NextecAgentConfirm(agentIP(c), f.Id, f.Token)
++	}
++	if err != nil {
+ 		agentFail(c, err)
+ 		return
+ 	}
++	if f.OperationID != "" {
++		c.JSON(http.StatusOK, gin.H{"ok": true, "active_version": f.PendingVersion})
++		return
++	}
+ 	c.JSON(http.StatusOK, gin.H{"ok": true})
+ }
+diff --git a/model/nextec_secret.go b/model/nextec_secret.go
+index 504b421..efdf7ea 100644
+--- a/model/nextec_secret.go
++++ b/model/nextec_secret.go
+@@ -13,16 +13,20 @@ type NextecSecretPolicy struct {
+ 
+ // NextecDeviceSecret é o estado da senha de uma máquina. As senhas ficam criptografadas (AES-GCM).
+ type NextecDeviceSecret struct {
+-	Id             uint   `gorm:"primaryKey" json:"id"`
+-	PeerId         string `gorm:"not null;uniqueIndex" json:"peer_id"`
+-	TokenHash      string `gorm:"not null;default:''" json:"-"`
+-	ActiveEnc      string `gorm:"not null;default:''" json:"-"`
+-	PendingEnc     string `gorm:"not null;default:''" json:"-"`
+-	Version        int    `gorm:"not null;default:0" json:"version"`
+-	ActiveAt       int64  `gorm:"not null;default:0" json:"active_at"`
+-	NextRotationAt int64  `gorm:"not null;default:0" json:"next_rotation_at"`
+-	ForceRotate    bool   `gorm:"not null;default:false" json:"force_rotate"`
+-	LastSeenAt     int64  `gorm:"not null;default:0" json:"last_seen_at"`
++	Id               uint   `gorm:"primaryKey" json:"id"`
++	PeerId           string `gorm:"not null;uniqueIndex" json:"peer_id"`
++	TokenHash        string `gorm:"not null;default:''" json:"-"`
++	ActiveEnc        string `gorm:"not null;default:''" json:"-"`
++	PendingEnc       string `gorm:"not null;default:''" json:"-"`
++	Version          int    `gorm:"not null;default:0" json:"version"`
++	ProtocolVersion  int    `gorm:"not null;default:0" json:"-"`
++	PendingOperation string `gorm:"not null;default:'';index" json:"-"`
++	PendingVersion   int    `gorm:"not null;default:0" json:"-"`
++	LastOperationID  string `gorm:"not null;default:''" json:"-"`
++	ActiveAt         int64  `gorm:"not null;default:0" json:"active_at"`
++	NextRotationAt   int64  `gorm:"not null;default:0" json:"next_rotation_at"`
++	ForceRotate      bool   `gorm:"not null;default:false" json:"force_rotate"`
++	LastSeenAt       int64  `gorm:"not null;default:0" json:"last_seen_at"`
+ 	TimeModel
+ }
+ 
+diff --git a/service/nextec_secret.go b/service/nextec_secret.go
+index 256b9ff..6cf063f 100644
+--- a/service/nextec_secret.go
++++ b/service/nextec_secret.go
+@@ -17,6 +17,7 @@ import (
+ 
+ 	"github.com/lejianwen/rustdesk-api/v2/global"
+ 	"github.com/lejianwen/rustdesk-api/v2/model"
++	"gorm.io/gorm"
+ )
+ 
+ // Cofre de senhas dos servidores (Nextec): cada máquina marcada recebe uma senha permanente do RustDesk
+@@ -32,19 +33,22 @@ const (
+ )
+ 
+ var (
+-	ErrNextecBadAgentAuth   = errors.New("agent auth failed")
+-	ErrNextecAlreadyEnroll  = errors.New("already enrolled")
+-	ErrNextecBadPassword    = errors.New("invalid password format")
+-	ErrNextecNoPending      = errors.New("no pending password")
+-	ErrNextecTooManyFails   = errors.New("too many failures")
+-	nextecPasswordPattern   = regexp.MustCompile(`^[A-Za-z0-9]{16,64}$`)
+-	nextecVaultKeyOnce      sync.Once
+-	nextecVaultKeyValue     []byte
+-	nextecVaultKeyErr       error
+-	nextecFailMu            sync.Mutex
+-	nextecFailures          = map[string][]int64{}
+-	nextecFailureWindowSecs = int64(600)
+-	nextecFailureLimit      = 10
++	ErrNextecBadAgentAuth      = errors.New("agent auth failed")
++	ErrNextecAlreadyEnroll     = errors.New("already enrolled")
++	ErrNextecBadPassword       = errors.New("invalid password format")
++	ErrNextecNoPending         = errors.New("no pending password")
++	ErrNextecTooManyFails      = errors.New("too many failures")
++	ErrNextecOperationConflict = errors.New("password operation conflict")
++	ErrNextecOperationRequired = errors.New("transaction capability required")
++	errNextecCASRetry          = errors.New("retry password operation CAS")
++	nextecPasswordPattern      = regexp.MustCompile(`^[A-Za-z0-9]{16,64}$`)
++	nextecVaultKeyOnce         sync.Once
++	nextecVaultKeyValue        []byte
++	nextecVaultKeyErr          error
++	nextecFailMu               sync.Mutex
++	nextecFailures             = map[string][]int64{}
++	nextecFailureWindowSecs    = int64(600)
++	nextecFailureLimit         = 10
+ )
+ 
+ // ---------- criptografia ----------
+@@ -285,6 +289,13 @@ func agentAuth(ip, peerID, token string) (*model.NextecDeviceSecret, error) {
+ 	return d, nil
+ }
+ 
++func agentSnapshotCurrent(d *model.NextecDeviceSecret, peerID string) bool {
++	var count int64
++	return d != nil && DB.Model(&model.NextecDeviceSecret{}).
++		Where("id = ? AND peer_id = ? AND token_hash = ?", d.Id, peerID, d.TokenHash).
++		Count(&count).Error == nil && count == 1
++}
++
+ // NextecAgentEnroll cadastra a máquina e devolve o token dela. Máquina já cadastrada só volta a cadastrar depois de o admin remover o agente.
+ func NextecAgentEnroll(ip, key, peerID string) (string, error) {
+ 	if !nextecFailCheck(ip) {
+@@ -311,33 +322,180 @@ func NextecAgentEnroll(ip, key, peerID string) (string, error) {
+ }
+ 
+ type NextecAgentSync struct {
+-	Managed  bool `json:"managed"`
+-	Rotate   bool `json:"rotate"`
+-	Interval int  `json:"interval_minutes"`
++	Managed            bool                  `json:"managed"`
++	Rotate             bool                  `json:"rotate"`
++	Interval           int                   `json:"interval_minutes"`
++	ApproveMode        string                `json:"approve_mode"`
++	VerificationMethod string                `json:"verification_method"`
++	TransactionV1      bool                  `json:"transaction_v1"`
++	UpgradeRequired    bool                  `json:"upgrade_required"`
++	Recovery           bool                  `json:"recovery"`
++	Operation          *NextecAgentOperation `json:"operation,omitempty"`
++}
++
++type NextecAgentOperation struct {
++	OperationID     string `json:"operation_id"`
++	PendingVersion  int    `json:"pending_version"`
++	PendingPassword string `json:"pending_password"`
+ }
+ 
+-// NextecAgentSyncState diz ao agente se a máquina é gerenciada e se está na hora de trocar a senha.
++// NextecAgentSyncState mantém a chamada Go legada disponível para clientes ainda sem negociação de capacidade.
+ func NextecAgentSyncState(ip, peerID, token string) (*NextecAgentSync, error) {
++	return NextecAgentSyncStateWithCapabilities(ip, peerID, token, nil)
++}
++
++// NextecAgentSyncStateWithCapabilities não faz downgrade do protocolo negociado por dispositivo.
++func NextecAgentSyncStateWithCapabilities(ip, peerID, token string, capabilities []string) (*NextecAgentSync, error) {
+ 	d, err := agentAuth(ip, peerID, token)
+ 	if err != nil {
+ 		return nil, err
+ 	}
+ 	now := time.Now().Unix()
+-	DB.Model(d).Update("last_seen_at", now)
++	seen := DB.Model(&model.NextecDeviceSecret{}).
++		Where("id = ? AND peer_id = ? AND token_hash = ?", d.Id, peerID, d.TokenHash).
++		Update("last_seen_at", now)
++	if seen.Error != nil {
++		return nil, seen.Error
++	}
++	if seen.RowsAffected != 1 {
++		return nil, ErrNextecBadAgentAuth
++	}
+ 	enabled, interval := effectivePolicy(peerID, peerGroup(peerID))
+-	if !enabled {
+-		return &NextecAgentSync{}, nil
++	if !hasNextecCapability(capabilities, "transaction_v1") {
++		if d.ProtocolVersion > 0 {
++			return &NextecAgentSync{
++				Managed: enabled, Interval: interval, ApproveMode: "password",
++				VerificationMethod: "use-permanent-password", TransactionV1: true,
++				UpgradeRequired: true,
++			}, nil
++		}
++		if !enabled {
++			return &NextecAgentSync{UpgradeRequired: true, ApproveMode: "password", VerificationMethod: "use-permanent-password"}, nil
++		}
++		rotate := d.ActiveEnc == "" || d.ForceRotate || now >= d.NextRotationAt
++		return &NextecAgentSync{
++			Managed: true, Rotate: rotate, Interval: interval, UpgradeRequired: true,
++			ApproveMode: "password", VerificationMethod: "use-permanent-password",
++		}, nil
++	}
++	return nextecAgentSyncTransaction(d.Id, peerID, d.TokenHash, enabled, interval)
++}
++
++func hasNextecCapability(capabilities []string, name string) bool {
++	for _, capability := range capabilities {
++		if capability == name {
++			return true
++		}
++	}
++	return false
++}
++
++func nextecAgentSyncTransaction(deviceID uint, peerID, tokenHash string, enabled bool, interval int) (*NextecAgentSync, error) {
++	for attempt := 0; attempt < 4; attempt++ {
++		state := &NextecAgentSync{
++			Managed: enabled, Interval: interval, ApproveMode: "password",
++			VerificationMethod: "use-permanent-password", TransactionV1: true,
++		}
++		err := DB.Transaction(func(tx *gorm.DB) error {
++			d := &model.NextecDeviceSecret{}
++			if err := tx.Where("id = ? AND peer_id = ? AND token_hash = ?", deviceID, peerID, tokenHash).First(d).Error; err != nil {
++				return ErrNextecBadAgentAuth
++			}
++			// Al migrar um agente, associa qualquer segredo legacy pendente a uma operação nova sem
++			// trocar nem descartar a senha que o agente talvez já tenha aplicado.
++			if d.ProtocolVersion == 0 && d.PendingOperation == "" {
++				updates := map[string]interface{}{"protocol_version": 1}
++				if d.PendingEnc != "" {
++					updates["pending_operation"] = randomHex(32)
++					updates["pending_version"] = d.Version + 1
++				}
++				res := tx.Model(&model.NextecDeviceSecret{}).
++					Where("id = ? AND peer_id = ? AND token_hash = ? AND protocol_version = 0 AND version = ? AND pending_operation = '' AND pending_enc = ?", d.Id, peerID, tokenHash, d.Version, d.PendingEnc).
++					Updates(updates)
++				if res.Error != nil {
++					return res.Error
++				}
++				if res.RowsAffected != 1 {
++					return errNextecCASRetry
++				}
++				d.ProtocolVersion = 1
++				if operationID, ok := updates["pending_operation"].(string); ok {
++					d.PendingOperation = operationID
++					d.PendingVersion = d.Version + 1
++				}
++			}
++			// Recupera também operações sem segredo, por exemplo se o processo caiu antes da proposta.
++			if d.PendingOperation == "" && d.PendingEnc != "" {
++				operationID := randomHex(32)
++				pendingVersion := d.Version + 1
++				res := tx.Model(&model.NextecDeviceSecret{}).
++					Where("id = ? AND peer_id = ? AND token_hash = ? AND protocol_version = 1 AND version = ? AND pending_operation = '' AND pending_enc = ?", d.Id, peerID, tokenHash, d.Version, d.PendingEnc).
++					Updates(map[string]interface{}{"pending_operation": operationID, "pending_version": pendingVersion})
++				if res.Error != nil {
++					return res.Error
++				}
++				if res.RowsAffected != 1 {
++					return errNextecCASRetry
++				}
++				d.PendingOperation, d.PendingVersion = operationID, pendingVersion
++			}
++			if d.PendingOperation != "" {
++				password, err := vaultDecrypt(d.PendingEnc)
++				if err != nil {
++					return err
++				}
++				state.Recovery = true
++				state.Managed = enabled
++				state.Rotate = enabled
++				state.Operation = &NextecAgentOperation{
++					OperationID: d.PendingOperation, PendingVersion: d.PendingVersion,
++					PendingPassword: password,
++				}
++				return nil
++			}
++			if !enabled {
++				state.Managed = false
++				return nil
++			}
++			now := time.Now().Unix()
++			if d.ActiveEnc != "" && !d.ForceRotate && now < d.NextRotationAt {
++				return nil
++			}
++			operationID := randomHex(32)
++			pendingVersion := d.Version + 1
++			res := tx.Model(&model.NextecDeviceSecret{}).
++				Where("id = ? AND peer_id = ? AND token_hash = ? AND protocol_version = 1 AND version = ? AND pending_operation = '' AND pending_enc = ''", d.Id, peerID, tokenHash, d.Version).
++				Updates(map[string]interface{}{"pending_operation": operationID, "pending_version": pendingVersion})
++			if res.Error != nil {
++				return res.Error
++			}
++			if res.RowsAffected != 1 {
++				return errNextecCASRetry
++			}
++			state.Rotate = true
++			state.Operation = &NextecAgentOperation{OperationID: operationID, PendingVersion: pendingVersion}
++			return nil
++		})
++		if errors.Is(err, errNextecCASRetry) {
++			continue
++		}
++		if err != nil {
++			return nil, err
++		}
++		return state, nil
+ 	}
+-	rotate := d.ActiveEnc == "" || d.ForceRotate || now >= d.NextRotationAt
+-	return &NextecAgentSync{Managed: true, Rotate: rotate, Interval: interval}, nil
++	return nil, ErrNextecOperationConflict
+ }
+ 
+-// NextecAgentPropose guarda a senha nova como pendente (a antiga continua valendo até o agente confirmar).
++// NextecAgentPropose guarda a senha nova como pendente para agente legacy ainda não negociado.
+ func NextecAgentPropose(ip, peerID, token, password string) error {
+ 	d, err := agentAuth(ip, peerID, token)
+ 	if err != nil {
+ 		return err
+ 	}
++	if d.ProtocolVersion > 0 {
++		return ErrNextecOperationRequired
++	}
+ 	if !nextecPasswordPattern.MatchString(password) {
+ 		return ErrNextecBadPassword
+ 	}
+@@ -345,15 +503,69 @@ func NextecAgentPropose(ip, peerID, token, password string) error {
+ 	if err != nil {
+ 		return err
+ 	}
+-	return DB.Model(d).Update("pending_enc", enc).Error
++	res := DB.Model(&model.NextecDeviceSecret{}).
++		Where("id = ? AND peer_id = ? AND token_hash = ? AND protocol_version = 0 AND version = ? AND pending_operation = '' AND pending_enc = ?", d.Id, peerID, d.TokenHash, d.Version, d.PendingEnc).
++		Update("pending_enc", enc)
++	if res.Error != nil {
++		return res.Error
++	}
++	if res.RowsAffected != 1 {
++		if !agentSnapshotCurrent(d, peerID) {
++			return ErrNextecBadAgentAuth
++		}
++		return ErrNextecOperationConflict
++	}
++	return nil
+ }
+ 
+-// NextecAgentConfirm promove a senha pendente a ativa, depois de o agente aplicá-la na máquina.
++// NextecAgentProposeTransaction guarda uma única senha para operação/versão anunciadas pelo sync.
++func NextecAgentProposeTransaction(ip, peerID, token, operationID string, pendingVersion int, password string) error {
++	d, err := agentAuth(ip, peerID, token)
++	if err != nil {
++		return err
++	}
++	if !nextecPasswordPattern.MatchString(password) {
++		return ErrNextecBadPassword
++	}
++	if operationID == "" || pendingVersion <= 0 {
++		return ErrNextecOperationConflict
++	}
++	enc, err := vaultEncrypt(password)
++	if err != nil {
++		return err
++	}
++	res := DB.Model(&model.NextecDeviceSecret{}).
++		Where("id = ? AND peer_id = ? AND token_hash = ? AND protocol_version = 1 AND pending_operation = ? AND pending_version = ? AND version = ? AND pending_enc = ''", d.Id, peerID, d.TokenHash, operationID, pendingVersion, pendingVersion-1).
++		Update("pending_enc", enc)
++	if res.Error != nil {
++		return res.Error
++	}
++	if res.RowsAffected == 1 {
++		return nil
++	}
++	current := &model.NextecDeviceSecret{}
++	if DB.Where("id = ? AND peer_id = ? AND token_hash = ?", d.Id, peerID, d.TokenHash).First(current).Error == nil && current.ProtocolVersion == 1 &&
++		current.PendingOperation == operationID && current.PendingVersion == pendingVersion && current.PendingEnc != "" {
++		existing, decryptErr := vaultDecrypt(current.PendingEnc)
++		if decryptErr == nil && subtle.ConstantTimeCompare([]byte(existing), []byte(password)) == 1 {
++			return nil
++		}
++	}
++	if !agentSnapshotCurrent(d, peerID) {
++		return ErrNextecBadAgentAuth
++	}
++	return ErrNextecOperationConflict
++}
++
++// NextecAgentConfirm promove a senha pendente legacy somente antes da negociação v1.
+ func NextecAgentConfirm(ip, peerID, token string) error {
+ 	d, err := agentAuth(ip, peerID, token)
+ 	if err != nil {
+ 		return err
+ 	}
++	if d.ProtocolVersion > 0 {
++		return ErrNextecOperationRequired
++	}
+ 	if d.PendingEnc == "" {
+ 		return ErrNextecNoPending
+ 	}
+@@ -362,14 +574,74 @@ func NextecAgentConfirm(ip, peerID, token string) error {
+ 		interval = NextecSecretDefaultInterval
+ 	}
+ 	now := time.Now().Unix()
+-	err = DB.Model(d).Updates(map[string]interface{}{
+-		"active_enc": d.PendingEnc, "pending_enc": "", "version": d.Version + 1,
++	res := DB.Model(&model.NextecDeviceSecret{}).
++		Where("id = ? AND peer_id = ? AND token_hash = ? AND protocol_version = 0 AND version = ? AND pending_operation = '' AND pending_enc = ?", d.Id, peerID, d.TokenHash, d.Version, d.PendingEnc).
++		Updates(map[string]interface{}{
++			"active_enc": d.PendingEnc, "pending_enc": "", "version": d.Version + 1,
++			"active_at": now, "next_rotation_at": now + int64(interval)*60, "force_rotate": false,
++		})
++	if res.Error != nil {
++		return res.Error
++	}
++	if res.RowsAffected != 1 {
++		if !agentSnapshotCurrent(d, peerID) {
++			return ErrNextecBadAgentAuth
++		}
++		return ErrNextecOperationConflict
++	}
++	NextecSecretAuditAdd(nil, peerID, "rotated", ip, "versão "+strconv.Itoa(d.Version+1))
++	return nil
++}
++
++// NextecAgentConfirmTransaction confirma apenas a operação anunciada, sem permitir promoção atrasada.
++func NextecAgentConfirmTransaction(ip, peerID, token, operationID string, pendingVersion int) error {
++	d, err := agentAuth(ip, peerID, token)
++	if err != nil {
++		return err
++	}
++	if operationID == "" || pendingVersion <= 0 {
++		return ErrNextecOperationConflict
++	}
++	if d.Version == pendingVersion && d.LastOperationID == operationID {
++		current := &model.NextecDeviceSecret{}
++		if DB.Where("id = ? AND peer_id = ? AND token_hash = ?", d.Id, peerID, d.TokenHash).First(current).Error == nil &&
++			current.Version == pendingVersion && current.LastOperationID == operationID {
++			return nil
++		}
++		return ErrNextecBadAgentAuth
++	}
++	if d.ProtocolVersion != 1 || d.PendingOperation != operationID || d.PendingVersion != pendingVersion ||
++		d.Version+1 != pendingVersion || d.PendingEnc == "" {
++		return ErrNextecOperationConflict
++	}
++	_, interval := effectivePolicy(peerID, peerGroup(peerID))
++	if interval == 0 {
++		interval = NextecSecretDefaultInterval
++	}
++	now := time.Now().Unix()
++	updates := map[string]interface{}{
++		"active_enc": d.PendingEnc, "pending_enc": "", "version": pendingVersion,
++		"pending_operation": "", "pending_version": 0, "last_operation_id": operationID,
+ 		"active_at": now, "next_rotation_at": now + int64(interval)*60, "force_rotate": false,
+-	}).Error
+-	if err == nil {
+-		NextecSecretAuditAdd(nil, peerID, "rotated", ip, "versão "+strconv.Itoa(d.Version+1))
+ 	}
+-	return err
++	res := DB.Model(&model.NextecDeviceSecret{}).
++		Where("id = ? AND peer_id = ? AND token_hash = ? AND protocol_version = 1 AND version = ? AND pending_operation = ? AND pending_version = ? AND pending_enc = ?", d.Id, peerID, d.TokenHash, pendingVersion-1, operationID, pendingVersion, d.PendingEnc).
++		Updates(updates)
++	if res.Error != nil {
++		return res.Error
++	}
++	if res.RowsAffected != 1 {
++		current := &model.NextecDeviceSecret{}
++		if DB.Where("id = ? AND peer_id = ? AND token_hash = ?", d.Id, peerID, d.TokenHash).First(current).Error == nil && current.Version == pendingVersion && current.LastOperationID == operationID {
++			return nil
++		}
++		if !agentSnapshotCurrent(d, peerID) {
++			return ErrNextecBadAgentAuth
++		}
++		return ErrNextecOperationConflict
++	}
++	NextecSecretAuditAdd(nil, peerID, "rotated", ip, "versão "+strconv.Itoa(pendingVersion))
++	return nil
+ }
+ 
+ // ---------- painel (admin) ----------
+diff --git a/service/nextec_secret_transaction_test.go b/service/nextec_secret_transaction_test.go
+new file mode 100644
+index 0000000..e51da0a
+--- /dev/null
++++ b/service/nextec_secret_transaction_test.go
+@@ -0,0 +1,414 @@
++package service
++
++import (
++	"bytes"
++	"encoding/base64"
++	"errors"
++	"sync"
++	"testing"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"github.com/sirupsen/logrus"
++	"gorm.io/driver/sqlite"
++	"gorm.io/gorm"
++	"gorm.io/gorm/logger"
++)
++
++func transactionTestDB(t *testing.T, protocolVersion, activeVersion int, policyEnabled bool) (*gorm.DB, string, string) {
++	t.Helper()
++	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := db.AutoMigrate(&model.Peer{}, &model.DeviceGroup{}, &model.NextecSecretPolicy{}, &model.NextecDeviceSecret{}, &model.NextecSecretAudit{}); err != nil {
++		t.Fatal(err)
++	}
++	sqlDB, err := db.DB()
++	if err != nil {
++		t.Fatal(err)
++	}
++	sqlDB.SetMaxOpenConns(1)
++	oldDB, oldService, oldLogger := DB, AllService, Logger
++	oldVaultOnce, oldVaultKey, oldVaultErr := nextecVaultKeyOnce, nextecVaultKeyValue, nextecVaultKeyErr
++	DB, AllService, Logger = db, &Service{}, logrus.New()
++	nextecVaultKeyOnce, nextecVaultKeyValue, nextecVaultKeyErr = sync.Once{}, nil, nil
++	t.Setenv("NEXTEC_VAULT_KEY", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x27}, 32)))
++	t.Cleanup(func() {
++		DB, AllService, Logger = oldDB, oldService, oldLogger
++		nextecVaultKeyOnce, nextecVaultKeyValue, nextecVaultKeyErr = oldVaultOnce, oldVaultKey, oldVaultErr
++		_ = sqlDB.Close()
++	})
++	peerID, token := "transaction-peer", "valid-agent-token"
++	activeEnc := ""
++	if activeVersion > 0 {
++		activeEnc, err = vaultEncrypt("CurrentPassword123456")
++		if err != nil {
++			t.Fatal(err)
++		}
++	}
++	if err := db.Create(&model.Peer{Id: peerID, Uuid: "device-uuid"}).Error; err != nil {
++		t.Fatal(err)
++	}
++	device := &model.NextecDeviceSecret{
++		PeerId: peerID, TokenHash: sha256Hex(token), ActiveEnc: activeEnc,
++		Version: activeVersion, ProtocolVersion: protocolVersion,
++	}
++	if err := db.Create(device).Error; err != nil {
++		t.Fatal(err)
++	}
++	policy := &model.NextecSecretPolicy{Kind: "peer", Ref: peerID, Enabled: policyEnabled, IntervalMinutes: 15}
++	if err := db.Create(policy).Error; err != nil {
++		t.Fatal(err)
++	}
++	// GORM may omit a zero-valued bool on INSERT when the column has `default:true`.
++	// Write it explicitly so disabled-policy tests actually exercise the off state.
++	if err := db.Model(&model.NextecSecretPolicy{}).Where("id = ?", policy.Id).Update("enabled", policyEnabled).Error; err != nil {
++		t.Fatal(err)
++	}
++	storedPolicy := &model.NextecSecretPolicy{}
++	if err := db.Where("id = ?", policy.Id).First(storedPolicy).Error; err != nil {
++		t.Fatal(err)
++	}
++	if storedPolicy.Enabled != policyEnabled {
++		t.Fatalf("test policy fixture enabled=%v, want %v", storedPolicy.Enabled, policyEnabled)
++	}
++	return db, peerID, token
++}
++
++func TestAgentTransactionRecoversSamePendingAndConfirmIsIdempotent(t *testing.T) {
++	db, peerID, token := transactionTestDB(t, 0, 3, true)
++	ip := "transaction-recovery-test"
++	capabilities := []string{"transaction_v1"}
++	first, err := NextecAgentSyncStateWithCapabilities(ip, peerID, token, capabilities)
++	if err != nil || !first.Rotate || first.Operation == nil || first.Operation.PendingVersion != 4 || first.Operation.PendingPassword != "" {
++		t.Fatalf("initial transaction sync = %#v, err=%v", first, err)
++	}
++	retry, err := NextecAgentSyncStateWithCapabilities(ip, peerID, token, capabilities)
++	if err != nil || retry.Operation == nil || retry.Operation.OperationID != first.Operation.OperationID || retry.Operation.PendingVersion != 4 {
++		t.Fatalf("operation changed on repeated sync: first=%#v retry=%#v err=%v", first, retry, err)
++	}
++
++	password := "NewPassword987654321"
++	if err := NextecAgentProposeTransaction(ip, peerID, token, first.Operation.OperationID, 4, password); err != nil {
++		t.Fatal(err)
++	}
++	// A proposal retry after a lost HTTP response is idempotent only for the same password.
++	if err := NextecAgentProposeTransaction(ip, peerID, token, first.Operation.OperationID, 4, password); err != nil {
++		t.Fatalf("same proposal retry failed: %v", err)
++	}
++	recovered, err := NextecAgentSyncStateWithCapabilities(ip, peerID, token, capabilities)
++	if err != nil || !recovered.Recovery || recovered.Operation == nil || recovered.Operation.OperationID != first.Operation.OperationID ||
++		recovered.Operation.PendingVersion != 4 || recovered.Operation.PendingPassword != password {
++		t.Fatalf("sync did not recover the same pending operation: %#v err=%v", recovered, err)
++	}
++
++	if err := NextecAgentConfirmTransaction(ip, peerID, token, first.Operation.OperationID, 4); err != nil {
++		t.Fatal(err)
++	}
++	beforeRetry := &model.NextecDeviceSecret{}
++	if err := db.Where("peer_id = ?", peerID).First(beforeRetry).Error; err != nil {
++		t.Fatal(err)
++	}
++	if err := NextecAgentConfirmTransaction(ip, peerID, token, first.Operation.OperationID, 4); err != nil {
++		t.Fatalf("repeat confirmation was not idempotent: %v", err)
++	}
++	afterRetry := &model.NextecDeviceSecret{}
++	if err := db.Where("peer_id = ?", peerID).First(afterRetry).Error; err != nil {
++		t.Fatal(err)
++	}
++	active, err := vaultDecrypt(afterRetry.ActiveEnc)
++	if err != nil || active != password || afterRetry.Version != 4 || afterRetry.LastOperationID != first.Operation.OperationID ||
++		afterRetry.ActiveAt != beforeRetry.ActiveAt {
++		t.Fatalf("confirmation retry changed active state: %#v active=%q err=%v", afterRetry, active, err)
++	}
++	var rotatedAudits int64
++	if err := db.Model(&model.NextecSecretAudit{}).Where("peer_id = ? AND action = ?", peerID, "rotated").Count(&rotatedAudits).Error; err != nil || rotatedAudits != 1 {
++		t.Fatalf("confirm audit count=%d err=%v", rotatedAudits, err)
++	}
++}
++
++func TestAgentTransactionCASRejectsCompetingProposalAndStaleConfirm(t *testing.T) {
++	db, peerID, token := transactionTestDB(t, 0, 2, true)
++	ip := "transaction-cas-test"
++	state, err := NextecAgentSyncStateWithCapabilities(ip, peerID, token, []string{"transaction_v1"})
++	if err != nil || state.Operation == nil || state.Operation.PendingVersion != 3 {
++		t.Fatalf("transaction sync = %#v err=%v", state, err)
++	}
++	operationID := state.Operation.OperationID
++	firstPassword := "FirstPassword123456"
++	if err := NextecAgentProposeTransaction(ip, peerID, token, operationID, 3, firstPassword); err != nil {
++		t.Fatal(err)
++	}
++	if err := NextecAgentProposeTransaction(ip, peerID, token, operationID, 3, "OtherPassword123456"); !errors.Is(err, ErrNextecOperationConflict) {
++		t.Fatalf("competing proposal error = %v", err)
++	}
++	if err := NextecAgentConfirmTransaction(ip, peerID, token, "old-operation", 3); !errors.Is(err, ErrNextecOperationConflict) {
++		t.Fatalf("stale operation confirmation error = %v", err)
++	}
++	device := &model.NextecDeviceSecret{}
++	if err := db.Where("peer_id = ?", peerID).First(device).Error; err != nil {
++		t.Fatal(err)
++	}
++	active, _ := vaultDecrypt(device.ActiveEnc)
++	pending, _ := vaultDecrypt(device.PendingEnc)
++	if device.Version != 2 || active != "CurrentPassword123456" || pending != firstPassword {
++		t.Fatalf("competing/stale request changed secrets: version=%d active=%q pending=%q", device.Version, active, pending)
++	}
++	if err := NextecAgentConfirmTransaction(ip, peerID, token, operationID, 3); err != nil {
++		t.Fatal(err)
++	}
++	if err := db.Model(&model.NextecDeviceSecret{}).Where("peer_id = ?", peerID).Update("force_rotate", true).Error; err != nil {
++		t.Fatal(err)
++	}
++	next, err := NextecAgentSyncStateWithCapabilities(ip, peerID, token, []string{"transaction_v1"})
++	if err != nil || next.Operation == nil || next.Operation.OperationID == operationID || next.Operation.PendingVersion != 4 {
++		t.Fatalf("next operation = %#v err=%v", next, err)
++	}
++	if err := NextecAgentConfirmTransaction(ip, peerID, token, operationID, 4); !errors.Is(err, ErrNextecOperationConflict) {
++		t.Fatalf("old operation promoted newer pending secret: %v", err)
++	}
++	device = &model.NextecDeviceSecret{}
++	if err := db.Where("peer_id = ?", peerID).First(device).Error; err != nil {
++		t.Fatal(err)
++	}
++	if device.Version != 3 || device.PendingOperation != next.Operation.OperationID || device.PendingVersion != 4 {
++		t.Fatalf("stale confirm changed newer operation: %#v", device)
++	}
++}
++
++func TestAgentLegacyCompatibilityAndNegotiatedFailClosed(t *testing.T) {
++	_, peerID, token := transactionTestDB(t, 0, 0, true)
++	ip := "legacy-compat-test"
++	legacy, err := NextecAgentSyncStateWithCapabilities(ip, peerID, token, nil)
++	if err != nil || !legacy.Managed || !legacy.Rotate || !legacy.UpgradeRequired || legacy.Operation != nil {
++		t.Fatalf("legacy response changed unexpectedly: %#v err=%v", legacy, err)
++	}
++	if err := NextecAgentPropose(ip, peerID, token, "LegacyPassword123456"); err != nil {
++		t.Fatalf("legacy proposal blocked before negotiation: %v", err)
++	}
++	if err := NextecAgentConfirm(ip, peerID, token); err != nil {
++		t.Fatalf("legacy confirmation blocked before negotiation: %v", err)
++	}
++	if err := DB.Model(&model.NextecDeviceSecret{}).Where("peer_id = ?", peerID).Update("force_rotate", true).Error; err != nil {
++		t.Fatal(err)
++	}
++	state, err := NextecAgentSyncStateWithCapabilities(ip, peerID, token, []string{"transaction_v1"})
++	if err != nil || !state.TransactionV1 || state.Operation == nil {
++		t.Fatalf("transaction negotiation failed: %#v err=%v", state, err)
++	}
++	if err := NextecAgentPropose(ip, peerID, token, "IgnoredLegacyPassword123"); !errors.Is(err, ErrNextecOperationRequired) {
++		t.Fatalf("legacy proposal after negotiation = %v", err)
++	}
++	if err := NextecAgentConfirm(ip, peerID, token); !errors.Is(err, ErrNextecOperationRequired) {
++		t.Fatalf("legacy confirmation after negotiation = %v", err)
++	}
++	device := &model.NextecDeviceSecret{}
++	if err := DB.Where("peer_id = ?", peerID).First(device).Error; err != nil {
++		t.Fatal(err)
++	}
++	if device.Version != 1 || device.ProtocolVersion != 1 || device.PendingEnc != "" {
++		t.Fatalf("legacy calls changed negotiated state: %#v", device)
++	}
++}
++
++func TestAgentTransactionMigratesLegacyPendingAndPolicyOffOnlyRecovers(t *testing.T) {
++	db, peerID, token := transactionTestDB(t, 0, 5, false)
++	legacyPassword := "LegacyPendingPassword123"
++	legacyEnc, err := vaultEncrypt(legacyPassword)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := db.Model(&model.NextecDeviceSecret{}).Where("peer_id = ?", peerID).Update("pending_enc", legacyEnc).Error; err != nil {
++		t.Fatal(err)
++	}
++	state, err := NextecAgentSyncStateWithCapabilities("migration-test", peerID, token, []string{"transaction_v1"})
++	if err != nil || state.Managed || state.Rotate || !state.Recovery || state.Operation == nil ||
++		state.Operation.PendingVersion != 6 || state.Operation.PendingPassword != legacyPassword {
++		t.Fatalf("legacy pending recovery with policy off = %#v err=%v", state, err)
++	}
++	device := &model.NextecDeviceSecret{}
++	if err := db.Where("peer_id = ?", peerID).First(device).Error; err != nil {
++		t.Fatal(err)
++	}
++	if device.ProtocolVersion != 1 || device.PendingOperation != state.Operation.OperationID || device.PendingVersion != 6 || device.PendingEnc != legacyEnc {
++		t.Fatalf("migration discarded or changed legacy pending secret: %#v", device)
++	}
++	// A negotiated client that omits capability cannot downgrade to legacy rotation or receive a new operation.
++	downgrade, err := NextecAgentSyncStateWithCapabilities("migration-test", peerID, token, nil)
++	if err != nil || !downgrade.UpgradeRequired || downgrade.Rotate || downgrade.Operation != nil || !downgrade.TransactionV1 {
++		t.Fatalf("negotiated sync downgraded: %#v err=%v", downgrade, err)
++	}
++	// With policy disabled, a fresh negotiated device gets no password proposal.
++	otherDB, otherPeerID, otherToken := transactionTestDB(t, 0, 0, false)
++	_ = otherDB
++	noOp, err := NextecAgentSyncStateWithCapabilities("policy-off-test", otherPeerID, otherToken, []string{"transaction_v1"})
++	if err != nil || noOp.Managed || noOp.Rotate || noOp.Operation != nil {
++		t.Fatalf("policy-off sync created rotation: %#v err=%v", noOp, err)
++	}
++}
++
++func TestAgentTransactionRequiresValidToken(t *testing.T) {
++	db, peerID, token := transactionTestDB(t, 0, 1, true)
++	if _, err := NextecAgentSyncStateWithCapabilities("no-token-test", peerID, "", []string{"transaction_v1"}); !errors.Is(err, ErrNextecBadAgentAuth) {
++		t.Fatalf("sync without token error = %v", err)
++	}
++	if err := NextecAgentConfirmTransaction("no-token-test", peerID, "", "forged-operation", 2); !errors.Is(err, ErrNextecBadAgentAuth) {
++		t.Fatalf("confirm without token error = %v", err)
++	}
++	device := &model.NextecDeviceSecret{}
++	if err := db.Where("peer_id = ?", peerID).First(device).Error; err != nil {
++		t.Fatal(err)
++	}
++	if device.Version != 1 || device.PendingOperation != "" || device.ActiveEnc == "" || token == "" {
++		t.Fatalf("unauthenticated request changed secret state: %#v", device)
++	}
++}
++
++func TestAgentTransactionRechecksRevokedTokenBeforeReturningRecovery(t *testing.T) {
++	db, peerID, token := transactionTestDB(t, 1, 1, true)
++	pendingPassword := "PendingPassword987654321"
++	pendingEnc, err := vaultEncrypt(pendingPassword)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := db.Model(&model.NextecDeviceSecret{}).Where("peer_id = ?", peerID).Updates(map[string]interface{}{
++		"pending_enc": pendingEnc, "pending_operation": "existing-operation", "pending_version": 2,
++	}).Error; err != nil {
++		t.Fatal(err)
++	}
++	device := &model.NextecDeviceSecret{}
++	if err := db.Where("peer_id = ?", peerID).First(device).Error; err != nil {
++		t.Fatal(err)
++	}
++	var revoked bool
++	callbackName := "test:revoke-agent-token-after-auth"
++	if err := db.Callback().Query().After("gorm:query").Register(callbackName, func(tx *gorm.DB) {
++		if revoked || tx.Statement.Table != "peers" {
++			return
++		}
++		result := db.Exec("UPDATE nextec_device_secrets SET token_hash = ? WHERE id = ?", sha256Hex("revoked-between-auth-and-sync"), device.Id)
++		if result.Error != nil {
++			t.Errorf("revoke token in callback: %v", result.Error)
++			return
++		}
++		revoked = true
++	}); err != nil {
++		t.Fatal(err)
++	}
++	defer func() { _ = db.Callback().Query().Remove(callbackName) }()
++
++	state, err := NextecAgentSyncStateWithCapabilities("revocation-race-test", peerID, token, []string{"transaction_v1"})
++	if !revoked {
++		t.Fatal("revocation callback did not run between agent authentication and transaction lookup")
++	}
++	if !errors.Is(err, ErrNextecBadAgentAuth) || state != nil {
++		t.Fatalf("revoked-token sync returned state=%#v err=%v", state, err)
++	}
++	device = &model.NextecDeviceSecret{}
++	if err := db.Where("peer_id = ?", peerID).First(device).Error; err != nil {
++		t.Fatal(err)
++	}
++	actualPending, decryptErr := vaultDecrypt(device.PendingEnc)
++	if device.TokenHash != sha256Hex("revoked-between-auth-and-sync") || device.PendingOperation != "existing-operation" ||
++		device.PendingVersion != 2 || decryptErr != nil || actualPending != pendingPassword {
++		t.Fatalf("revocation race changed credentials or pending secret: device=%#v pending=%q err=%v", device, actualPending, decryptErr)
++	}
++}
++
++func TestAgentProposalCASRechecksRevokedToken(t *testing.T) {
++	db, peerID, token := transactionTestDB(t, 1, 1, true)
++	if err := db.Model(&model.NextecDeviceSecret{}).Where("peer_id = ?", peerID).Updates(map[string]interface{}{
++		"pending_operation": "proposal-operation", "pending_version": 2,
++	}).Error; err != nil {
++		t.Fatal(err)
++	}
++	device := &model.NextecDeviceSecret{}
++	if err := db.Where("peer_id = ?", peerID).First(device).Error; err != nil {
++		t.Fatal(err)
++	}
++	var revoked bool
++	callbackName := "test:revoke-agent-token-before-proposal-cas"
++	if err := db.Callback().Update().Before("gorm:update").Register(callbackName, func(tx *gorm.DB) {
++		if revoked || tx.Statement.Table != "nextec_device_secrets" {
++			return
++		}
++		result := tx.Session(&gorm.Session{NewDB: true}).Exec("UPDATE nextec_device_secrets SET token_hash = ? WHERE id = ?", sha256Hex("revoked-before-proposal-cas"), device.Id)
++		if result.Error != nil {
++			t.Errorf("revoke token in callback: %v", result.Error)
++			return
++		}
++		revoked = true
++	}); err != nil {
++		t.Fatal(err)
++	}
++	defer func() { _ = db.Callback().Update().Remove(callbackName) }()
++
++	err := NextecAgentProposeTransaction("proposal-revocation-race-test", peerID, token, "proposal-operation", 2, "CandidatePassword123456")
++	if !revoked {
++		t.Fatalf("revocation callback did not run between authentication and proposal CAS: %v", err)
++	}
++	if !errors.Is(err, ErrNextecBadAgentAuth) {
++		t.Fatalf("proposal with revoked token error = %v", err)
++	}
++	device = &model.NextecDeviceSecret{}
++	if err := db.Where("peer_id = ?", peerID).First(device).Error; err != nil {
++		t.Fatal(err)
++	}
++	if device.TokenHash != sha256Hex("revoked-before-proposal-cas") || device.PendingEnc != "" ||
++		device.PendingOperation != "proposal-operation" || device.PendingVersion != 2 {
++		t.Fatalf("revocation race changed pending credentials: %#v", device)
++	}
++}
++
++func TestAgentConfirmationCASRechecksRevokedToken(t *testing.T) {
++	db, peerID, token := transactionTestDB(t, 1, 1, true)
++	pendingPassword := "PendingConfirmPassword123"
++	pendingEnc, err := vaultEncrypt(pendingPassword)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := db.Model(&model.NextecDeviceSecret{}).Where("peer_id = ?", peerID).Updates(map[string]interface{}{
++		"pending_enc": pendingEnc, "pending_operation": "confirm-operation", "pending_version": 2,
++	}).Error; err != nil {
++		t.Fatal(err)
++	}
++	device := &model.NextecDeviceSecret{}
++	if err := db.Where("peer_id = ?", peerID).First(device).Error; err != nil {
++		t.Fatal(err)
++	}
++	var revoked bool
++	callbackName := "test:revoke-agent-token-before-confirm-cas"
++	if err := db.Callback().Update().Before("gorm:update").Register(callbackName, func(tx *gorm.DB) {
++		if revoked || tx.Statement.Table != "nextec_device_secrets" {
++			return
++		}
++		result := tx.Session(&gorm.Session{NewDB: true}).Exec("UPDATE nextec_device_secrets SET token_hash = ? WHERE id = ?", sha256Hex("revoked-before-confirm-cas"), device.Id)
++		if result.Error != nil {
++			t.Errorf("revoke token in callback: %v", result.Error)
++			return
++		}
++		revoked = true
++	}); err != nil {
++		t.Fatal(err)
++	}
++	defer func() { _ = db.Callback().Update().Remove(callbackName) }()
++
++	err = NextecAgentConfirmTransaction("confirm-revocation-race-test", peerID, token, "confirm-operation", 2)
++	if !revoked {
++		t.Fatalf("revocation callback did not run between authentication and confirmation CAS: %v", err)
++	}
++	if !errors.Is(err, ErrNextecBadAgentAuth) {
++		t.Fatalf("confirmation with revoked token error = %v", err)
++	}
++	device = &model.NextecDeviceSecret{}
++	if err := db.Where("peer_id = ?", peerID).First(device).Error; err != nil {
++		t.Fatal(err)
++	}
++	active, _ := vaultDecrypt(device.ActiveEnc)
++	pending, _ := vaultDecrypt(device.PendingEnc)
++	if device.TokenHash != sha256Hex("revoked-before-confirm-cas") || device.Version != 1 ||
++		device.PendingOperation != "confirm-operation" || device.PendingVersion != 2 ||
++		active != "CurrentPassword123456" || pending != pendingPassword {
++		t.Fatalf("revocation race promoted or changed credentials: %#v active=%q pending=%q", device, active, pending)
++	}
++}

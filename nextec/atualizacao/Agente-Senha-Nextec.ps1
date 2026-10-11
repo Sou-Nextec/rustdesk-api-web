@@ -280,6 +280,102 @@ function Opcao([string]$chave, [string]$valor) {
   }
 }
 
+function Save-NextecAgentState([psobject]$State) {
+  Assert-NextecNoReparsePoints -Path $Config
+  $temp = Join-Path $PastaDados ('agente-state-' + [Guid]::NewGuid().ToString('N') + '.tmp')
+  try {
+    [IO.File]::WriteAllText($temp, ($State | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($true))
+    if (Test-Path -LiteralPath $Config) { [IO.File]::Replace($temp, $Config, $null) }
+    else { [IO.File]::Move($temp, $Config) }
+  } finally {
+    if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force }
+  }
+}
+
+function Set-NextecStateValue([psobject]$State, [string]$Name, $Value) {
+  $State | Add-Member -MemberType NoteProperty -Name $Name -Value $Value -Force
+}
+
+function Confirm-NextecOperation([psobject]$Cfg, [psobject]$Operation, [string]$Token) {
+  $result = Chamar '/api/nextec/agent/confirm' @{
+    id = $Cfg.id; token = $Token; operation_id = $Operation.operation_id; pending_version = [int]$Operation.pending_version
+  }
+  if (-not $result.ok -or [int]$result.active_version -ne [int]$Operation.pending_version) {
+    throw 'confirmation_failed: o painel nao confirmou a versao esperada.'
+  }
+  foreach ($name in @('pending_operation_id','pending_version','pending_password','applied_operation_id','applied_pending_version')) {
+    Set-NextecStateValue $Cfg $name $null
+  }
+  Save-NextecAgentState $Cfg
+}
+
+function Invoke-NextecPasswordCycle([psobject]$Cfg) {
+  $token = Revelar $Cfg.token
+  $state = Chamar '/api/nextec/agent/sync' @{id=$Cfg.id;token=$token;capabilities=@('transaction_v1')}
+  if (-not $state.transaction_v1 -and $Cfg.protocol_version -eq 1) {
+    throw 'protocol_downgrade: o painel nao suporta o protocolo de senha ja negociado.'
+  }
+  if ($state.transaction_v1) {
+    Set-NextecStateValue $Cfg 'protocol_version' 1
+    Save-NextecAgentState $Cfg
+    $operation = $state.operation
+    if ($operation) {
+      if (-not $operation.operation_id -or [int]$operation.pending_version -lt 1) {
+        throw 'invalid_operation: operacao de senha incompleta.'
+      }
+    }
+    if (-not $state.managed) {
+      # Uma politica desligada nunca aplica outra senha. Reconciliar apenas o que o journal prova aplicado.
+      if ($operation -and $Cfg.applied_operation_id -eq $operation.operation_id -and
+          $Cfg.applied_pending_version -eq $operation.pending_version) {
+        Confirm-NextecOperation $Cfg $operation $token
+        Escrever 'Operacao previamente aplicada reconciliada com o painel.'
+      } else { Escrever 'Sem regra ativa; nenhuma senha foi aplicada.' }
+      return
+    }
+    Opcao 'approve-mode' $state.approve_mode
+    Opcao 'verification-method' $state.verification_method
+    if (-not $state.rotate) { Escrever 'Sincronizacao concluida; nenhuma troca necessaria.'; return }
+    if (-not $operation) { throw 'invalid_operation: rotacao sem identificador de operacao.' }
+
+    $password = [string]$operation.pending_password
+    if (-not $password) {
+      if ($Cfg.pending_operation_id -eq $operation.operation_id -and $Cfg.pending_version -eq $operation.pending_version -and $Cfg.pending_password) {
+        $password = Revelar $Cfg.pending_password
+      } else { $password = SenhaForte }
+    }
+    Set-NextecStateValue $Cfg 'pending_operation_id' $operation.operation_id
+    Set-NextecStateValue $Cfg 'pending_version' ([int]$operation.pending_version)
+    Set-NextecStateValue $Cfg 'pending_password' (Proteger $password)
+    Save-NextecAgentState $Cfg
+    if (-not $operation.pending_password) {
+      $proposed = Chamar '/api/nextec/agent/password' @{
+        id=$Cfg.id;token=$token;operation_id=$operation.operation_id;pending_version=[int]$operation.pending_version;password=$password
+      }
+      if (-not $proposed.ok -or $proposed.operation_id -ne $operation.operation_id -or [int]$proposed.pending_version -ne [int]$operation.pending_version) { throw 'proposal_failed: o painel nao confirmou a proposta.' }
+    }
+    if ($Simular -and -not $Exe) { Escrever '[simulacao] senha aplicada' }
+    else { Assert-NextecPasswordApplied -Result (InvocarRustDesk -Argumentos @('--password',$password)) }
+    Set-NextecStateValue $Cfg 'applied_operation_id' $operation.operation_id
+    Set-NextecStateValue $Cfg 'applied_pending_version' ([int]$operation.pending_version)
+    Save-NextecAgentState $Cfg
+    Confirm-NextecOperation $Cfg $operation $token
+    Escrever 'Senha aplicada e operacao confirmada.'
+    return
+  }
+  # API anterior: manter a compatibilidade somente enquanto este dispositivo nao negociou v1.
+  if (-not $state.managed) { Escrever 'Sem regra ativa; aguardando politica.'; return }
+  Opcao 'approve-mode' $state.approve_mode
+  Opcao 'verification-method' $state.verification_method
+  if (-not $state.rotate) { return }
+  $password = SenhaForte
+  Chamar '/api/nextec/agent/password' @{id=$Cfg.id;token=$token;password=$password} | Out-Null
+  if ($Simular -and -not $Exe) { Escrever '[simulacao] senha aplicada' }
+  else { Assert-NextecPasswordApplied -Result (InvocarRustDesk -Argumentos @('--password',$password)) }
+  Chamar '/api/nextec/agent/confirm' @{id=$Cfg.id;token=$token} | Out-Null
+  Escrever 'Senha aplicada e confirmada no protocolo anterior.'
+}
+
 if ($Instalar) {
   if (-not $Painel -or -not $ChaveAgente) { throw 'Informe -Painel e -ChaveAgente.' }
   if (-not $Simular) {
@@ -345,22 +441,7 @@ if ($Executar) {
     if ($idServico -ne $meuId) {
       throw "O agente está vinculado ao ID $meuId, mas o serviço RustDesk atende o ID $idServico. A execução foi interrompida para não trocar a senha da máquina errada. Remova o agente antigo no painel e cadastre novamente para vincular o ID do serviço."
     }
-    $estado = Chamar '/api/nextec/agent/sync' @{ id = $meuId; token = $token }
-    if (-not $estado.managed) { Escrever "Sem regra de senha ativa para o ID $meuId; aguardando política do painel."; return }
-    Opcao 'approve-mode' $estado.approve_mode
-    Opcao 'verification-method' $estado.verification_method
-    if (-not $estado.rotate) { Escrever 'Sincronização concluída; nenhuma troca de senha é necessária agora.'; return }
-
-    $nova = SenhaForte
-    Chamar '/api/nextec/agent/password' @{ id = $meuId; token = $token; password = $nova } | Out-Null
-    if ($Simular -and -not $Exe) {
-      Escrever '[simulação] --password aplicada'
-    } else {
-      $aplicacao = InvocarRustDesk -Argumentos @('--password', $nova)
-      Assert-NextecPasswordApplied -Result $aplicacao
-    }
-    Chamar '/api/nextec/agent/confirm' @{ id = $meuId; token = $token } | Out-Null
-    Escrever 'Senha trocada e confirmada.'
+    Invoke-NextecPasswordCycle $cfg
   } catch {
     Escrever "ERRO: $($_.Exception.Message)"
     exit 1
