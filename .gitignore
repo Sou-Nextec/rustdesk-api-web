@@ -23,3 +23,5 @@ src/nextec/fonts/*.woff2
 src/nextec/fonts/*.woff
 
 test-results/
+/.superpowers/
+**/__pycache__/

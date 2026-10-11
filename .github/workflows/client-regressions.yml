@@ -1,0 +1,46 @@
+name: Regressoes do cliente Nextec
+
+on:
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: client-regressions-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  connection:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Validar preparacao autorizada da conexao
+        run: node --test nextec/testes/connect.test.mjs
+      - run: npm ci --no-audit --no-fund
+      - run: npm run build
+
+  identity:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Validar identidade em Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File nextec/atualizacao/test_client_identity.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Identity regression failed' }
+      - name: Preservar registro seguro do atualizador
+        shell: powershell
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File nextec/atualizacao/test_registration.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Updater registration regression failed' }
