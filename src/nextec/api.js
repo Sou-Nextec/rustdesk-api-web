@@ -48,6 +48,7 @@ export const secretsAudit = () => request({ url: '/nextec/secrets/audit' })
 
 // patch 0009: atualização do app pelo painel (somente admin)
 export const updatesOverview = () => request({ url: '/nextec/updates' })
+export const updatesSignature = (data) => request({ url: '/nextec/updates/signature', method: 'post', data })
 export const updatesRollout = (data) => request({ url: '/nextec/updates/rollout', method: 'post', data })
 export const updatesDelete = (id) => request({ url: '/nextec/updates/delete', method: 'post', data: { id } })
 // o envio do instalador usa XMLHttpRequest direto (progresso), em src/nextec/views/Updates.vue

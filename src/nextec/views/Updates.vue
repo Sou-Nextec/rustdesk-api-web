@@ -20,7 +20,7 @@
     </div>
 
     <div class="nx-bar">
-      <p class="nx-bar-text">Envie o instalador, escolha quem recebe e as máquinas se atualizam sozinhas.</p>
+      <p class="nx-bar-text">Envie o MSI, autorize com o manifesto assinado e publique para as máquinas com o atualizador instalado.</p>
       <div class="nx-bar-right">
         <el-button :loading="loading" @click="load"><el-icon><el-icon-Refresh/></el-icon><span>Atualizar</span></el-button>
         <el-button @click="installVisible = true">Instalar em uma máquina</el-button>
@@ -41,7 +41,8 @@
           <div class="nx-small nx-muted">{{ fmt(row.created_at) }}{{ row.uploaded_by ? ' · ' + row.uploaded_by : '' }} · {{ size(row.size) }}</div>
           <div v-if="row.notes" class="nx-small">{{ row.notes }}</div>
           <div class="nx-mcard-actions">
-            <el-button size="small" type="primary" @click="openPublish(row)">{{ isPublished(row) ? 'Alterar' : 'Publicar' }}</el-button>
+            <el-button size="small" @click="openAuthorization(row)">{{ row.signed ? 'Renovar autorização' : 'Autorizar' }}</el-button>
+            <el-button size="small" type="primary" :disabled="!row.signed && !isPublished(row)" @click="openPublish(row)">{{ isPublished(row) ? 'Alterar' : 'Publicar' }}</el-button>
             <el-button size="small" :disabled="isPublished(row)" @click="del(row)"><span :class="{ 'nx-danger-text': !isPublished(row) }">Excluir</span></el-button>
           </div>
         </li>
@@ -71,10 +72,11 @@
         <el-table-column label="Notas" min-width="180" show-overflow-tooltip>
           <template #default="{ row }"><span :class="{ 'nx-muted': !row.notes }">{{ row.notes || '-' }}</span></template>
         </el-table-column>
-        <el-table-column label="Ações" width="200" fixed="right">
+        <el-table-column label="Ações" width="350" fixed="right">
           <template #default="{ row }">
             <div class="nx-row-actions">
-              <el-button size="small" type="primary" @click="openPublish(row)">{{ isPublished(row) ? 'Alterar' : 'Publicar' }}</el-button>
+              <el-button size="small" @click="openAuthorization(row)">{{ row.signed ? 'Renovar autorização' : 'Autorizar' }}</el-button>
+              <el-button size="small" type="primary" :disabled="!row.signed && !isPublished(row)" @click="openPublish(row)">{{ isPublished(row) ? 'Alterar' : 'Publicar' }}</el-button>
               <el-button size="small" :disabled="isPublished(row)" @click="del(row)"><span :class="{ 'nx-danger-text': !isPublished(row) }">Excluir</span></el-button>
             </div>
           </template>
@@ -164,6 +166,23 @@
       </template>
     </el-dialog>
 
+    <el-dialog v-model="authorization.visible" title="Autorizar atualização" width="min(520px, 92vw)" :close-on-click-modal="false">
+      <p>Selecione o manifesto e a assinatura criados no seu computador com a chave do monitoramento. A chave privada permanece no seu computador.</p>
+      <el-form label-position="top">
+        <el-form-item label="Manifesto Connect (.json)">
+          <input type="file" accept=".json" :disabled="authorization.busy" @change="authorization.manifest = $event.target.files[0]">
+        </el-form-item>
+        <el-form-item label="Assinatura (.sig)">
+          <input type="file" accept=".sig" :disabled="authorization.busy" @change="authorization.signature = $event.target.files[0]">
+        </el-form-item>
+      </el-form>
+      <p v-if="authorization.error" class="nx-error" role="alert">{{ authorization.error }}</p>
+      <template #footer>
+        <el-button :disabled="authorization.busy" @click="authorization.visible = false">Cancelar</el-button>
+        <el-button type="primary" :loading="authorization.busy" :disabled="!authorization.manifest || !authorization.signature" @click="saveAuthorization">Autorizar</el-button>
+      </template>
+    </el-dialog>
+
     <!-- publicar -->
     <el-dialog v-model="pub.visible" :title="'Publicar ' + (pub.release ? pub.release.version : '')" width="min(560px, 92vw)">
       <el-form label-position="top" class="nx-form" @submit.prevent>
@@ -216,7 +235,7 @@
   import { list as groupList } from '@/api/device_group'
   import { uploadFile } from '@/nextec/upload'
   import { timeAgo } from '@/utils/time'
-  import { updatesOverview, updatesRollout, updatesDelete } from '@/nextec/api'
+  import { updatesOverview, updatesRollout, updatesDelete, updatesSignature } from '@/nextec/api'
 
   const SCRIPT_URL = 'https://raw.githubusercontent.com/Sou-Nextec/rustdesk-api-web/master/nextec/atualizacao/Instalar-Nextec.ps1'
   const VERSION_RE = /^\d{1,4}\.\d{1,4}\.\d{1,4}(\.\d{1,4})?$/
@@ -321,7 +340,7 @@
     up.busy = false
     if (r.ok) {
       up.visible = false
-      ok(`Versão ${up.version.trim()} enviada. Publique para um grupo piloto quando quiser.`)
+      ok(`Versão ${up.version.trim()} enviada. Autorize com o manifesto assinado antes de publicar.`)
       load()
     } else {
       up.error = r.message
@@ -329,6 +348,22 @@
   }
 
   // ---------- publicar ----------
+  const authorization = reactive({ visible: false, busy: false, version: '', manifest: null, signature: null, error: '' })
+  const openAuthorization = (row) => Object.assign(authorization, { visible: true, busy: false, version: row.version, manifest: null, signature: null, error: '' })
+  const saveAuthorization = async () => {
+    authorization.error = ''
+    if (authorization.manifest.size > 65536 || authorization.signature.size > 4096) { authorization.error = 'Manifesto ou assinatura acima do limite.'; return }
+    authorization.busy = true
+    try {
+      const bytes = new Uint8Array(await authorization.manifest.arrayBuffer())
+      const binary = Array.from(bytes, b => String.fromCharCode(b)).join('')
+      await updatesSignature({ version: authorization.version, manifesto: btoa(binary), assinatura: (await authorization.signature.text()).trim() })
+      authorization.visible = false
+      ok('Autorização conferida. Você pode publicar para o grupo piloto.')
+      await load()
+    } catch (e) { authorization.error = e.message || 'Não foi possível autorizar esta atualização.' }
+    finally { authorization.busy = false }
+  }
   const pub = reactive({ visible: false, busy: false, release: null, mode: 'pilot', clients: [], peers: [] })
   const modeHelp = computed(() => ({
     pilot: 'Só as máquinas escolhidas recebem. Use para testar antes de liberar para todos.',
