@@ -336,16 +336,58 @@ index 0000000..6d2c93b
 +}
 diff --git a/service/nextec_generated_test.go b/service/nextec_generated_test.go
 new file mode 100644
-index 0000000..ecf1989
+index 0000000..cae2ea3
 --- /dev/null
 +++ b/service/nextec_generated_test.go
-@@ -0,0 +1,63 @@
+@@ -0,0 +1,105 @@
 +package service
 +
 +import (
++	"github.com/lejianwen/rustdesk-api/v2/model"
 +	"strings"
 +	"testing"
 +)
++
++func TestInternalDownloadPreservesClientIsolation(t *testing.T) {
++	db := securityDB(t)
++	if err := db.AutoMigrate(&model.NextecAppRelease{}); err != nil {
++		t.Fatal(err)
++	}
++	first := &model.NextecAppRelease{Version: "2.0.7", Profile: "default", Internal: true}
++	next := &model.NextecAppRelease{Version: "2.0.8", Profile: "analysts"}
++	client := &model.NextecAppRelease{Version: "2.0.9", Profile: "client", ClientName: "Carteira Bruno"}
++	for _, r := range []*model.NextecAppRelease{first, next, client} {
++		if err := db.Create(r).Error; err != nil {
++			t.Fatal(err)
++		}
++	}
++	if err := NextecReleaseInternal(next.Id, true); err != nil {
++		t.Fatal(err)
++	}
++	if r := NextecAvailableApp(); r == nil || r.Id != next.Id {
++		t.Fatal("new internal release unavailable")
++	}
++	var count int64
++	db.Model(&model.NextecAppRelease{}).Where("internal = ?", true).Count(&count)
++	if count != 1 {
++		t.Fatal("more than one current internal release")
++	}
++	if err := NextecReleaseInternal(client.Id, true); err == nil {
++		t.Fatal("client-specific package exposed to all analysts")
++	}
++	if err := NextecRolloutSet(client.Version, NextecRolloutAll, nil, nil); err == nil {
++		t.Fatal("client-specific package published globally")
++	}
++	if r := NextecAvailableApp(); r == nil || r.Id != next.Id {
++		t.Fatal("rejected change replaced current download")
++	}
++	if err := NextecReleaseInternal(next.Id, false); err != nil {
++		t.Fatal(err)
++	}
++	if NextecAvailableApp() != nil {
++		t.Fatal("suspended internal download remained available")
++	}
++}
 +
 +func TestGeneratedEndpoint(t *testing.T) {
 +	uuid := "aaaaaaaa-0000-0000-0000-000000000001"

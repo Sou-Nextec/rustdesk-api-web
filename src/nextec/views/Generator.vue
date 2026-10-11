@@ -68,10 +68,10 @@
         <h2 class="nx-h2">Depois de gerar</h2>
       </div>
       <ul class="nx-list">
-        <li>O build leva de 30 a 45 minutos. A página do gerador acompanha e mostra os links do <code>.exe</code> e do <code>.msi</code> no fim.</li>
+        <li>Acompanhe a geração em <strong>Itens gerados</strong>. O progresso é aproximado por etapas; os arquivos ficam disponíveis ali ao terminar.</li>
         <li>Instale numa máquina de teste e confira se o app mostra <strong>Pronto</strong>. Ela deve aparecer em Dispositivos em até 1 minuto.</li>
-        <li>Para atualizar as máquinas que já têm o app, envie o <code>.msi</code> em
-          <router-link to="/user/updates">Atualizações do app</router-link>.</li>
+        <li>Use <strong>Enviar para Atualizações</strong> no item gerado. Em
+          <router-link to="/user/updates">Atualizações do app</router-link>, autorize o manifesto assinado e publique para os destinos escolhidos.</li>
       </ul>
     </div>
     </el-collapse-item>

@@ -13,6 +13,7 @@ test('downloads remain inside the generator and use plain filenames', () => {
   assert.equal(generationDownload(`https://attacker.test/download?uuid=${uuid}&filename=evil.exe`), null)
   assert.equal(generationDownload(`download?uuid=${uuid}&filename=../evil.exe`), null)
   assert.equal(generationDownload(`download?uuid=invalid&filename=client.msi`), null)
+  assert.equal(generationDownload('https://[invalid'), null)
 })
 test('missing files and uncertain submission never appear ready', () => {
   assert.equal(generationState({ status: 'incomplete' }).tone, 'danger')
