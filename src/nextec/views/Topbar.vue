@@ -230,7 +230,7 @@
       box-shadow: 0 12px 32px rgba(13, 0, 53, .25); border-radius: 12px;
     }
   }
-  @media (max-width: 768px) {
+  @media (max-width: 1100px) {
     .nx-topbar { flex: 0 0 auto; margin-left: 4px; gap: 6px; }
     .nx-quick-btn .nx-quick-label { display: none; }
   }
