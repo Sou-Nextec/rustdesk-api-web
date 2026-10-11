@@ -20,7 +20,7 @@
     </div>
 
     <div class="nx-bar">
-      <p class="nx-bar-text">Envie o MSI, autorize com o manifesto assinado e publique para as máquinas com o atualizador instalado.</p>
+      <p class="nx-bar-text">Envie o MSI e os pacotes Linux .deb, autorize com o manifesto assinado e publique para as máquinas com o atualizador instalado.</p>
       <div class="nx-bar-right">
         <el-button :loading="loading" @click="load"><el-icon><el-icon-Refresh/></el-icon><span>Atualizar</span></el-button>
         <el-button @click="installVisible = true">Instalar em uma máquina</el-button>
@@ -150,9 +150,10 @@
           <el-input v-model="up.version" placeholder="Ex.: 2.0.1" :disabled="up.busy"/>
           <p class="nx-help">Use números separados por ponto. Cada versão é enviada uma vez.</p>
         </el-form-item>
-        <el-form-item label="Instalador (.msi)" required class="is-required">
-          <input ref="fileInput" type="file" accept=".msi,.exe" class="nx-file" :disabled="up.busy" @change="onFile">
-          <p v-if="up.file" class="nx-help">{{ up.file.name }} · {{ size(up.file.size) }}</p>
+        <el-form-item label="Instaladores Windows e Linux">
+          <input ref="fileInput" type="file" accept=".msi,.deb" multiple class="nx-file" :disabled="up.busy" @change="onFile">
+          <p v-for="f in up.files" :key="f.name" class="nx-help">{{ f.name }} · {{ size(f.size) }}</p>
+          <p class="nx-help">Envie primeiro o MSI. Para Linux, inclua os .deb amd64 e/ou arm64 com a mesma versão.</p>
         </el-form-item>
         <el-form-item label="Notas (opcional)">
           <el-input v-model="up.notes" type="textarea" :rows="3" maxlength="1000" show-word-limit placeholder="O que mudou nesta versão" :disabled="up.busy"/>
@@ -162,7 +163,7 @@
       </el-form>
       <template #footer>
         <el-button :disabled="up.busy" @click="up.visible = false">Cancelar</el-button>
-        <el-button type="primary" :loading="up.busy" :disabled="!up.version || !up.file" @click="sendUpload">Enviar</el-button>
+        <el-button type="primary" :loading="up.busy" :disabled="!up.version || !up.files.length" @click="sendUpload">Enviar</el-button>
       </template>
     </el-dialog>
 
@@ -322,28 +323,38 @@
 
   // ---------- enviar ----------
   const fileInput = ref(null)
-  const up = reactive({ visible: false, busy: false, progress: 0, version: '', notes: '', file: null, error: '' })
-  const openUpload = () => { Object.assign(up, { visible: true, busy: false, progress: 0, version: '', notes: '', file: null, error: '' }) }
+  const up = reactive({ visible: false, busy: false, progress: 0, version: '', notes: '', files: [], error: '' })
+  const openUpload = () => { Object.assign(up, { visible: true, busy: false, progress: 0, version: '', notes: '', files: [], error: '' }) }
   const onFile = (e) => {
-    const f = e.target.files && e.target.files[0]
+    const files = [...(e.target.files || [])]
     up.error = ''
-    if (!f) { up.file = null; return }
-    if (!/\.(msi|exe)$/i.test(f.name)) { up.file = null; up.error = 'Escolha o instalador .msi (ou .exe).'; return }
-    if (f.size > maxSize.value) { up.file = null; up.error = `O arquivo passa do limite de ${size(maxSize.value)}.`; return }
-    up.file = f
+    if (!files.length) { up.files = []; return }
+    if (files.some(f => !/\.(msi|deb)$/i.test(f.name))) { up.files = []; up.error = 'Escolha um MSI e/ou pacotes Linux .deb.'; return }
+    if (files.some(f => f.size > maxSize.value)) { up.files = []; up.error = `Um arquivo passa do limite de ${size(maxSize.value)}.`; return }
+    if (files.filter(f => /\.msi$/i.test(f.name)).length > 1) { up.files = []; up.error = 'Envie somente um MSI por versão.'; return }
+    const debs = files.filter(f => /\.deb$/i.test(f.name))
+    const arches = debs.map(f => /(?:amd64|x86_64)/i.test(f.name) ? 'amd64' : /(?:arm64|aarch64)/i.test(f.name) ? 'arm64' : '')
+    if (arches.some(a => !a) || new Set(arches).size !== arches.length) { up.files = []; up.error = 'O nome de cada .deb precisa indicar amd64/x86_64 ou arm64/aarch64, sem repetir arquitetura.'; return }
+    up.files = files.sort((a, b) => (/\.msi$/i.test(a.name) ? -1 : 0) - (/\.msi$/i.test(b.name) ? -1 : 0))
   }
   const beforeCloseUpload = (done) => { if (!up.busy) done() }
   const sendUpload = async () => {
     if (!VERSION_RE.test(up.version.trim())) { up.error = 'Versão inválida. Use números separados por ponto, como 2.0.1.'; return }
     up.busy = true; up.progress = 0; up.error = ''
-    const r = await uploadFile('/nextec/updates/upload', { version: up.version.trim(), notes: up.notes }, up.file, (p) => { up.progress = p })
+    const files = [...up.files]
+    let uploaded = 0
+    for (const [index, file] of files.entries()) {
+      const platform = /\.msi$/i.test(file.name) ? 'windows' : /(?:amd64|x86_64)/i.test(file.name) ? 'linux-amd64' : 'linux-arm64'
+      const r = await uploadFile('/nextec/updates/upload', { version: up.version.trim(), notes: up.notes, platform }, file,
+        (p) => { up.progress = Math.round(((index + p / 100) / files.length) * 100) })
+      if (!r.ok) { up.busy = false; up.files = files.slice(index); up.error = r.message; return }
+      uploaded++
+    }
     up.busy = false
-    if (r.ok) {
+    if (uploaded) {
       up.visible = false
-      ok(`Versão ${up.version.trim()} enviada. Autorize com o manifesto assinado antes de publicar.`)
+      ok(`Pacote(s) enviado(s) para a versão ${up.version.trim()}. Autorize com o manifesto assinado antes de publicar.`)
       load()
-    } else {
-      up.error = r.message
     }
   }
 
