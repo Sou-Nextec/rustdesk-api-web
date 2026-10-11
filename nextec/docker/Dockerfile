@@ -30,7 +30,8 @@ RUN apk add --no-cache git build-base
 WORKDIR /src
 RUN git clone --depth 1 --branch ${API_TAG} https://github.com/lejianwen/rustdesk-api.git .
 COPY nextec/backend/*.patch /patches/
-RUN git apply /patches/*.patch
+# Os arquivos são cumulativos: cada patch parte do estado produzido pelos anteriores.
+RUN for patch in /patches/*.patch; do git apply "$patch"; done
 # o repositório da API não versiona o go.sum; o workflow oficial também resolve as dependências no build
 RUN go mod tidy
 RUN CGO_ENABLED=1 go test ./service ./utils ./http/router ./http/controller/api ./http/controller/admin/my ./http/controller/web
