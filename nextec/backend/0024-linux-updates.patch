@@ -20,7 +20,7 @@ index 522495f..57d6adf 100644
  	if err != nil {
  		response.Fail(c, 101, nextecUpdateMsg(err))
  		return
-@@ -126,3 +126,5 @@ func (n *NextecUpdate) Delete(c *gin.Context) {
+@@ -126,3 +126,3 @@ func (n *NextecUpdate) Delete(c *gin.Context) {
  	service.NextecSecretAuditAdd(service.AllService.UserService.CurUser(c), "", "update_delete", nextecIP(c), "")
  	response.Success(c, nil)
  }
@@ -76,7 +76,7 @@ index ec9cbf4..cbe6548 100644
  	}
  	service.NextecUpdateSeen(id, installed, targetVersion, updateIP(c))
  	c.Header("Cache-Control", "no-store")
-@@ -50,5 +71,9 @@ func (u *NextecUpdate) File(c *gin.Context) {
+@@ -50,5 +71,7 @@ func (u *NextecUpdate) File(c *gin.Context) {
  		return
  	}
  	c.Header("Cache-Control", "no-store")
@@ -110,7 +110,7 @@ index 8541775..3d0b3b3 100644
  	Notes      string `json:"notes" gorm:"size:1000"`
  	UploadedBy string `json:"uploaded_by" gorm:"size:64"`
  	CreatedAt  int64  `json:"created_at"`
-@@ -21,3 +27,5 @@ type NextecAppInstall struct {
+@@ -21,3 +27,3 @@ type NextecAppInstall struct {
  	SeenAt  int64  `json:"seen_at"`
  	Ip      string `json:"ip" gorm:"size:64"`
  }
@@ -216,7 +216,7 @@ index 75d96c4..40230da 100644
  	return nil
  }
  
-@@ -294,3 +326,5 @@ func NextecUpdateInstalls() (res []*model.NextecAppInstall) {
+@@ -294,3 +326,3 @@ func NextecUpdateInstalls() (res []*model.NextecAppInstall) {
  	DB.Order("seen_at desc").Limit(5000).Find(&res)
  	return res
  }
@@ -281,7 +281,7 @@ index 6c28916..001bcbf 100644
  		return ErrNextecReleaseSignature
  	}
  	return nil
-@@ -97,3 +131,5 @@ func NextecReleaseSignature(r *model.NextecAppRelease) *NextecSignedRelease {
+@@ -97,3 +131,3 @@ func NextecReleaseSignature(r *model.NextecAppRelease) *NextecSignedRelease {
  	}
  	return &envelope
  }
