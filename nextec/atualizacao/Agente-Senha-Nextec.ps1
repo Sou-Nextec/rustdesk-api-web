@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Agente de senha automática do acesso remoto Nextec (RustDesk), para servidores e máquinas marcadas no painel.
 
@@ -163,8 +163,22 @@ if ($Instalar) {
     $conf = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Minutes 4) -MultipleInstances IgnoreNew
     Register-ScheduledTask -TaskName $Tarefa -Action $acao -Trigger $gatilho -Settings $conf -User 'SYSTEM' -RunLevel Highest -Force | Out-Null
     Escrever "Tarefa agendada criada: $Tarefa (a cada 5 minutos)"
+    $inicioExecucao = (Get-Date).AddSeconds(-2)
     Start-ScheduledTask -TaskName $Tarefa
-    Escrever 'Primeira sincronização iniciada imediatamente.'
+    $limiteExecucao = (Get-Date).AddSeconds(45)
+    do {
+      Start-Sleep -Seconds 1
+      $infoExecucao = Get-ScheduledTaskInfo -TaskName $Tarefa
+      $estadoExecucao = (Get-ScheduledTask -TaskName $Tarefa).State
+    } while (($infoExecucao.LastRunTime -lt $inicioExecucao -or $estadoExecucao -eq 'Running') -and (Get-Date) -lt $limiteExecucao)
+    if ($infoExecucao.LastRunTime -lt $inicioExecucao -or $estadoExecucao -eq 'Running') {
+      Escrever 'A primeira sincronização continua em andamento; a tarefa seguirá verificando a cada 5 minutos.'
+    } elseif ($infoExecucao.LastTaskResult -ne 0) {
+      $erroExecucao = Get-Content $Log -Tail 5 -ErrorAction SilentlyContinue | Where-Object { $_ -match 'ERRO:' } | Select-Object -Last 1
+      throw "A primeira sincronização falhou (código $($infoExecucao.LastTaskResult)). $erroExecucao Consulte '$Log'."
+    } else {
+      Escrever 'Primeira sincronização concluída.'
+    }
   }
   Escrever 'Cadastro concluído. Ligue a senha automática desta máquina (ou do grupo) no painel.'
   return
@@ -181,10 +195,10 @@ if ($Executar) {
       throw "O agente está vinculado ao ID $meuId, mas o serviço RustDesk atende o ID $idServico. A execução foi interrompida para não trocar a senha da máquina errada. Remova o agente antigo no painel e cadastre novamente para vincular o ID do serviço."
     }
     $estado = Chamar '/api/nextec/agent/sync' @{ id = $meuId; token = $token }
-    if (-not $estado.managed) { return }
+    if (-not $estado.managed) { Escrever "Sem regra de senha ativa para o ID $meuId; aguardando política do painel."; return }
     Opcao 'approve-mode' $estado.approve_mode
     Opcao 'verification-method' $estado.verification_method
-    if (-not $estado.rotate) { return }
+    if (-not $estado.rotate) { Escrever 'Sincronização concluída; nenhuma troca de senha é necessária agora.'; return }
 
     $nova = SenhaForte
     Chamar '/api/nextec/agent/password' @{ id = $meuId; token = $token; password = $nova } | Out-Null
@@ -207,4 +221,3 @@ if ($Executar) {
 }
 
 Write-Host 'Use -Instalar -Painel <url> -ChaveAgente <chave>  (como administrador)  ou -Executar.'
-
