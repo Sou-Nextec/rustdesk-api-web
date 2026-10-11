@@ -256,6 +256,10 @@ try {
   # Registration must work offline and never download or install another package.
   if ($Registrar) { RegistrarAtualizador; return }
 
+  # Registra antes de consultar o manifesto, inclusive quando ainda não há versão publicada.
+  # SoVerificar permanece sem efeitos na máquina.
+  if (-not $SoVerificar) { RegistrarAtualizador }
+
   # 1. versão instalada (marca gravada por este script) e ID do RustDesk (o painel usa para piloto e acompanhamento)
   $instalada = $null
   if (Test-Path $ChaveReg) { $instalada = (Get-ItemProperty $ChaveReg -ErrorAction SilentlyContinue).Versao }
@@ -321,8 +325,6 @@ try {
   Escrever "Instalado: $($alvo.versao)"
   Remove-Item $msi -Force -ErrorAction SilentlyContinue
 
-  # 5. tarefa diária de atualização (copia o script para um lugar fixo)
-  RegistrarAtualizador
 }
 catch {
   Escrever "ERRO: $($_.Exception.Message)"
