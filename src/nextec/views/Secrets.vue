@@ -57,7 +57,7 @@
             <span v-else class="nx-muted">{{ row.managed && !row.enrolled ? 'Aguardando instalação do agente' : row.enrolled && row.managed ? 'Aguardando a primeira troca' : 'Sem senha ainda' }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="Ações" width="200" fixed="right">
+        <el-table-column label="Ações" width="260" fixed="right">
           <template #default="{ row }">
             <div class="nx-row-actions">
               <el-tooltip :content="secretActionState(row).revealReason" :disabled="secretActionState(row).canReveal" placement="top">
