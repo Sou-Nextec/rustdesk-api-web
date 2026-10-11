@@ -4,7 +4,7 @@
 // O protocolo é o do app instalado (um app gerado como Nextec-Connect registra nextec-connect://); admin define em Gerar cliente.
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { getToken } from '@/utils/auth'
-import { connectSettings, connectNote } from './api'
+import { connectSettings, connectNote, availableApp } from './api'
 import { useQuickAccess } from './quick-access'
 
 function abrir (url) {
@@ -12,7 +12,7 @@ function abrir (url) {
   ElMessageBox.confirm(
     'Abra o aplicativo instalado para iniciar a conexão. Se o navegador pedir, autorize a abertura do Nextec-Connect.',
     'Conectar ao dispositivo', {
-      confirmButtonText: 'Abrir aplicativo', cancelButtonText: 'Cancelar',
+      confirmButtonText: 'Abrir aplicativo', cancelButtonText: 'Baixar aplicativo', distinguishCancelAndClose: true,
       beforeClose: (action, instance, done) => {
         if (action === 'confirm') {
           const a = document.createElement('a')
@@ -24,7 +24,21 @@ function abrir (url) {
         }
         done()
       },
-    }).catch(() => {})
+    }).catch(action => { if (action === 'cancel') downloadCurrentApp() })
+}
+
+export async function downloadCurrentApp () {
+  const info = await availableApp().catch(() => false)
+  if (!info?.data?.available) { ElMessage.info('Nenhuma versão foi disponibilizada para os analistas. Peça ao administrador para disponibilizar em Atualizações do app.'); return }
+  const waiting = ElMessage({ message: `Baixando Nextec Connect ${info.data.version}…`, duration: 0 })
+  try {
+    const response = await fetch(`${import.meta.env.VITE_SERVER_API}/my/app-download?version=${encodeURIComponent(info.data.version)}`, { headers: { 'api-token': getToken() || '' } })
+    if (!response.ok || response.headers.get('content-type')?.includes('application/json')) throw new Error('Download indisponível.')
+    const blob = await response.blob(), url = URL.createObjectURL(blob), link = document.createElement('a')
+    link.href = url; link.download = info.data.filename; link.click()
+    setTimeout(() => URL.revokeObjectURL(url), 60000)
+  } catch { ElMessage.error('Não foi possível baixar o aplicativo. Tente novamente.') }
+  finally { waiting.close() }
 }
 
 // Chamado na conexão (opcional, ligado pelo admin em Auditoria > Relatório mensal). O último número fica pré-preenchido na sessão.

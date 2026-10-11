@@ -34,7 +34,7 @@ COPY nextec/backend/*.patch /patches/
 RUN for patch in /patches/*.patch; do git apply "$patch"; done
 # o repositório da API não versiona o go.sum; o workflow oficial também resolve as dependências no build
 RUN go mod tidy
-RUN CGO_ENABLED=1 go test ./service ./utils ./http/router ./http/controller/api ./http/controller/admin/my ./http/controller/web
+RUN CGO_ENABLED=1 go test ./service ./utils ./http/router ./http/controller/api ./http/controller/admin ./http/controller/admin/my ./http/controller/web
 RUN CGO_ENABLED=1 go build -ldflags "-s -w -linkmode external -extldflags -static" -o /out/apimain ./cmd/apimain.go
 
 FROM lejianwen/rustdesk-server-s6:${BASE_TAG}

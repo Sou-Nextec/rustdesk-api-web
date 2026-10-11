@@ -60,8 +60,7 @@ function RegistrarAtualizador {
   ProtegerPastaAtualizador
   $arg = "-NoProfile -ExecutionPolicy Bypass -File `"$fixo`" -UrlBase `"$UrlBase`" -Silencioso"
   $acao = New-ScheduledTaskAction -Execute (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -Argument $arg
-  $gatilho = New-ScheduledTaskTrigger -Daily -At '12:30'
-  $gatilho.RandomDelay = [TimeSpan]::FromHours(2)
+  $gatilho = New-ScheduledTaskTrigger -Daily -At '12:30' -RandomDelay (New-TimeSpan -Hours 2)
   $conf = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 1) -MultipleInstances IgnoreNew
   Register-ScheduledTask -TaskName $Tarefa -Action $acao -Trigger $gatilho -Settings $conf -User 'SYSTEM' -RunLevel Highest -Force | Out-Null
   Escrever "Tarefa agendada: $Tarefa (todo dia, perto das 12:30)"

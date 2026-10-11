@@ -12,6 +12,9 @@
           </el-button>
         </div>
       </div>
+      <el-tabs v-model="tab" class="nx-generator-tabs"><el-tab-pane label="Novo instalador" name="new"/><el-tab-pane label="Itens gerados" name="generated"/></el-tabs>
+      <GeneratedClients v-if="tab === 'generated'" />
+      <div v-show="tab === 'new'">
       <div v-if="!frameReady" class="nx-frame-status" role="status" aria-live="polite">
         <template v-if="frameDelayed">
           <p>O gerador ainda não respondeu. Abra em outra aba para verificar o acesso ou tente novamente.</p>
@@ -21,6 +24,7 @@
       </div>
       <iframe ref="frame" :key="frameKey" src="/gerador/" title="Gerador de clientes Nextec"
         class="nx-generator-frame" :style="{ height: frameHeight + 'px' }" @load="syncTheme" />
+      </div>
     </div>
 
     <el-collapse class="nx-gen-options">
@@ -64,10 +68,10 @@
         <h2 class="nx-h2">Depois de gerar</h2>
       </div>
       <ul class="nx-list">
-        <li>O build leva de 30 a 45 minutos. A página do gerador acompanha e mostra os links do <code>.exe</code> e do <code>.msi</code> no fim.</li>
+        <li>Acompanhe a geração em <strong>Itens gerados</strong>. O progresso é aproximado por etapas; os arquivos ficam disponíveis ali ao terminar.</li>
         <li>Instale numa máquina de teste e confira se o app mostra <strong>Pronto</strong>. Ela deve aparecer em Dispositivos em até 1 minuto.</li>
-        <li>Para atualizar as máquinas que já têm o app, envie o <code>.msi</code> em
-          <router-link to="/user/updates">Atualizações do app</router-link>.</li>
+        <li>Use <strong>Enviar para Atualizações</strong> no item gerado. Em
+          <router-link to="/user/updates">Atualizações do app</router-link>, autorize o manifesto assinado e publique para os destinos escolhidos.</li>
       </ul>
     </div>
     </el-collapse-item>
@@ -80,6 +84,9 @@
   import { ElMessage } from 'element-plus'
   import { connectScheme, connectSchemeSave } from '@/nextec/api'
   import { generatorHeight } from '@/nextec/generator-frame.mjs'
+  import { generationEvent } from '@/nextec/generation-catalog.mjs'
+  import GeneratedClients from './GeneratedClients.vue'
+  const tab = ref('generated')
 
   const open = () => { window.open('/gerador/', '_blank', 'noopener') }
   const frame = ref(null)
@@ -93,6 +100,11 @@
     type: 'nextec-generator-theme', dark: document.documentElement.classList.contains('dark')
   }, window.location.origin)
   const receiveFrame = (event) => {
+    if (generationEvent(event, window.location.origin, frame.value?.contentWindow)) {
+      tab.value = 'generated'
+      reloadFrame()
+      return
+    }
     const height = generatorHeight(event, window.location.origin, frame.value?.contentWindow)
     if (height === null) return
     frameHeight.value = height
@@ -144,6 +156,7 @@
 
 <style scoped lang="scss">
   .nx-gen { width: 100%; }
+  .nx-generator-tabs { padding: 0 20px; }
   .nx-generator-frame { display: block; border: 0; width: 100%; background: var(--nx-bg); }
   .nx-frame-status { padding: 20px 22px; color: var(--nx-text-muted); }
   .nx-gen-options { margin-top: 16px; }

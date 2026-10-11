@@ -44,7 +44,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Regressão da incorporação do gerador
-        run: node --test nextec/testes/generator-frame.test.mjs
+        run: node --test nextec/testes/generator-frame.test.mjs nextec/testes/generation-catalog.test.mjs nextec/testes/update-status.test.mjs
 
       - name: Chaves pública e privada após duas inicializações
         run: python nextec/testes/test_key_permissions.py
