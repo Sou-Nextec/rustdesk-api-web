@@ -15,6 +15,7 @@ import { enterToSubmit } from './enter-submit'
 import { startMobileTables } from './mobile-tables'
 import { recoverFromStaleAssets } from './stale-assets.mjs'
 import { ElMessage } from 'element-plus'
+import { h } from 'vue'
 import { router, asyncRoutes } from '@/router'
 import { pinia } from '@/store'
 import { useAppStore } from '@/store/app'
@@ -156,6 +157,11 @@ function recoverStale (error) {
     storage,
     notify: m => ElMessage.warning({ message: m, duration: 0 }),
     reload: () => setTimeout(() => window.location.reload(), 1200),
+    notifyManual: m => ElMessage.warning({
+      duration: 0,
+      showClose: true,
+      message: h('span', null, [m + ' ', h('button', { type: 'button', style: 'cursor:pointer;font-weight:600', onClick: () => window.location.reload() }, 'Recarregar')]),
+    }),
   })
 }
 window.addEventListener('vite:preloadError', (event) => {

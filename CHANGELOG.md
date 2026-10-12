@@ -4,7 +4,7 @@ Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no p
 
 ## 2.10.3
 
-- Painel aberto durante uma atualização recarrega sozinho uma vez, com aviso, em vez de falhar ao abrir a tela.
+- Painel aberto durante uma atualização recarrega sozinho uma vez, com aviso, em vez de falhar ao abrir a tela. Se o navegador bloquear o armazenamento, não recarrega sozinho (evita loop) e mostra o aviso com botão Recarregar.
 
 ## 2.10.1
 

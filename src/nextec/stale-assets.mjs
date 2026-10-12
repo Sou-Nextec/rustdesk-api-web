@@ -3,6 +3,7 @@
 export const RELOAD_KEY = 'nextec-stale-reload'
 export const RELOAD_WINDOW_MS = 60000
 export const RELOAD_NOTICE = 'Nova versão do painel. Recarregando...'
+export const MANUAL_NOTICE = 'Nova versão do painel. Recarregue a página para continuar.'
 
 const PATTERNS = [
   /failed to fetch dynamically imported module/i,
@@ -25,11 +26,24 @@ export function shouldReload (error, lastReloadAt, now) {
 }
 
 // Efeitos: storage, aviso e recarga são injetados para facilitar o teste.
-export function recoverFromStaleAssets (error, { storage, now = Date.now(), notify, reload } = {}) {
+// Só recarrega sozinho se a flag anti-loop puder ser lida E gravada (e conferida);
+// caso contrário apenas avisa, com botão para recarregar manualmente.
+export function recoverFromStaleAssets (error, { storage, now = Date.now(), notify, notifyManual, reload } = {}) {
+  if (!isStaleAssetError(error)) return false
   let last = null
-  try { last = storage?.getItem(RELOAD_KEY) } catch (e) { /* storage indisponível */ }
+  let seguro = !!storage
+  try { last = storage.getItem(RELOAD_KEY) } catch (e) { seguro = false }
   if (!shouldReload(error, last, now)) return false
-  try { storage?.setItem(RELOAD_KEY, String(now)) } catch (e) { /* sem storage: ainda recarrega uma vez por evento */ }
+  if (seguro) {
+    try {
+      storage.setItem(RELOAD_KEY, String(now))
+      seguro = storage.getItem(RELOAD_KEY) === String(now)
+    } catch (e) { seguro = false }
+  }
+  if (!seguro) {
+    try { notifyManual?.(MANUAL_NOTICE) } catch (e) { /* aviso é opcional */ }
+    return false
+  }
   try { notify?.(RELOAD_NOTICE) } catch (e) { /* aviso é opcional */ }
   reload?.()
   return true
