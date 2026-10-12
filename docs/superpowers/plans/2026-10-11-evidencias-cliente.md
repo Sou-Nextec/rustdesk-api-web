@@ -9,7 +9,7 @@ Plano: `2026-10-11-estabilizacao-cliente.md`. Estado atualizado durante execuç�
 - Implementação isolada: branch `codex/cliente-estabilizacao`, worktree `cliente-estabilizacao`.
 - Checkout original possui alterações preexistentes; nenhuma incorporada por arrasto.
 - Docker Desktop: daemon Linux indisponível nesta execução.
-- SSH APP03: login recusado (`Permission denied (publickey,password)`), sem acesso à stack/digest.
+- SSH APP03: acesso restabelecido em 2026-10-11 usando `ssh root@app03` aprovado pelo usuário.
 - Git/gh: credencial de escrita indisponível. GitHub conectado permite criar branch; usar connector para publicar commits revisáveis.
 - Código oficial RustDesk 1.5.0: terminal e CLI presentes; homologação real ainda não executada. Parser do heartbeat reconhece `sysinfo` e limpa cache de cadastro; API atual não devolve esse sinal para registro ausente.
 - Build local Vue bloqueado pelo Windows Defender ao carregar binário nativo Rollup; proteção não foi desativada. Validar build Linux em CI.
@@ -60,3 +60,24 @@ Estas correções não concluem a instalação automática de todos os component
 - [ ] Piloto e versão/digest implantados comprovados.
 
 Nenhum destes itens pode ser apresentado como produção pronta apenas pela conclusão de testes unitários.
+
+## Continuação: PR 61 e APP03
+
+- PR 61 mesclado com os três workflows verdes, master `0cc101bd2e7125a53ba8172097671d169ea8aa70`.
+- Workflow master `38182429648`: imagem publicada e webhook Portainer concluídos.
+- Container painel passou de `4e76332...` para `fd2717792358c378cb0eced094fcd7ae5687f891a38502dcb031a6a001b2cc63`, iniciou às 23:00:59 UTC e ficou healthy.
+- RDGen e servidor ID/relay também healthy; o painel executa apenas apimain, o container rustdesk-servidor executa hbbs/hbbr.
+- Chave pública host/container: modo 0644 root:root, legível pelo RDGen uid 1000 após redeploy. Não exibida chave privada.
+- Teste live com ID sintético confirmou `sysinfo:true`, nenhuma criação no inventário e nenhuma concessão de acesso.
+- Pelo Cloudflare: chamadas sem User-Agent (formato do cliente RustDesk), com RustDesk e PowerShell passaram. User-Agent padrão Python recebeu 403; não representa bloqueio geral do cliente. Não foram relaxadas regras do Cloudflare.
+- Backup consistente e privado: `/opt/rustdesk-nextec/backups/pre-cliente-transacao-20261011-200006`; arquivos 0600 e diretório 0700.
+- T3: journal protegido, negociação v1 e confirmação por operação em implementação; sete testes PowerShell novos passaram. Testes Go e integração isolada ainda obrigatórios.
+- T5 Windows: payload de agente no MSI/EXE em preparação, sem credencial global; bootstrap e ativação automática segura continuam gate aberto.
+
+## T3: validacao transacional
+
+- PowerShell 5.1: dez casos passaram, incluindo proposta divergente recusada antes de aplicar a senha.
+- Linux/CGO no APP03, container isolado CPU1/RAM1200m sem volumes de producao: service e http/controller/api passaram.
+- A primeira execucao encontrou fixture com GORM default:true que ignorava Enabled:false; fixture agora grava e verifica explicitamente o estado persistido. Reexecucao verde.
+- Testes de revogacao entre autenticacao e operacao verificam que token revogado nao recebe pendencia nem confirma senha.
+- Sessao real Windows Server 2022 e rotacao de 15 minutos continuam pendentes; testes nao equivalem a piloto.
