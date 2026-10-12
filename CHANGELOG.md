@@ -2,6 +2,10 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.10.3
+
+- Painel aberto durante uma atualização recarrega sozinho uma vez, com aviso, em vez de falhar ao abrir a tela.
+
 ## 2.10.1
 
 - Cabeçalho compacto em tablets: os botões não cobrem o título da página.

@@ -13,6 +13,8 @@ import { NEXTEC_VERSION_LABEL } from './version'
 import { guardRequiredFields } from './required-guard'
 import { enterToSubmit } from './enter-submit'
 import { startMobileTables } from './mobile-tables'
+import { recoverFromStaleAssets } from './stale-assets.mjs'
+import { ElMessage } from 'element-plus'
 import { router, asyncRoutes } from '@/router'
 import { pinia } from '@/store'
 import { useAppStore } from '@/store/app'
@@ -144,6 +146,22 @@ router.afterEach((to) => {
   const hint = T(key)
   document.documentElement.style.setProperty('--nx-page-hint', hint === key ? 'none' : JSON.stringify(hint))
 })
+
+// 6. Painel aberto durante uma atualização: os arquivos antigos somem e a tela não carrega.
+// Avisa e recarrega uma vez (a rota fica no hash da URL); sem repetir em menos de 60 s.
+function recoverStale (error) {
+  let storage = null
+  try { storage = window.sessionStorage } catch (e) { /* indisponível */ }
+  return recoverFromStaleAssets(error, {
+    storage,
+    notify: m => ElMessage.warning({ message: m, duration: 0 }),
+    reload: () => setTimeout(() => window.location.reload(), 1200),
+  })
+}
+window.addEventListener('vite:preloadError', (event) => {
+  if (recoverStale(event.payload)) event.preventDefault()
+})
+router.onError((error) => { recoverStale(error) })
 
 // Plugin registrado em src/main.js depois do Element Plus
 export default {
