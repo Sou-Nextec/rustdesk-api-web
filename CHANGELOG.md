@@ -8,6 +8,11 @@ Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no p
 - Guia curto em `nextec/atualizacao/ASSINATURA.md`, com o caminho da chave local e os testes que não usam a chave real.
 - Corrigido: caminhos com acentos (chave, pasta do assinador, saída e temp) não impedem mais o envio da assinatura; o assinador agora devolve o caminho em UTF-8. Há teste de regressão.
 
+## 2.10.2
+
+- **Senhas dos servidores:** aviso explica que o agente de senha só é cadastrado após autorização individual temporária; máquinas sem agente aparecem como "Agente não cadastrado", com orientação para cadastrar.
+- Documentação da atualização e dos testes passa a descrever a tarefa agendada do atualizador, já registrada pelo MSI 2.0.9.
+
 ## 2.10.1
 
 - Cabeçalho compacto em tablets: os botões não cobrem o título da página.
