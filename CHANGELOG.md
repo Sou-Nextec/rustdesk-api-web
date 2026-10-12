@@ -8,6 +8,10 @@ Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no p
 - Guia curto em `nextec/atualizacao/ASSINATURA.md`, com o caminho da chave local e os testes que não usam a chave real.
 - Corrigido: caminhos com acentos (chave, pasta do assinador, saída e temp) não impedem mais o envio da assinatura; o assinador agora devolve o caminho em UTF-8. Há teste de regressão.
 
+## 2.10.3
+
+- Painel aberto durante uma atualização recarrega sozinho uma vez, com aviso, em vez de falhar ao abrir a tela. Se o navegador bloquear o armazenamento, não recarrega sozinho (evita loop) e mostra o aviso com botão Recarregar.
+
 ## 2.10.2
 
 - **Senhas dos servidores:** aviso explica que o agente de senha só é cadastrado após autorização individual temporária; máquinas sem agente aparecem como "Agente não cadastrado", com orientação para cadastrar.
