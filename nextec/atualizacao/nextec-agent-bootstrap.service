@@ -13,7 +13,8 @@ ExecStart=/usr/bin/python3 /usr/lib/nextec-connect/coordenador-agente-nextec-lin
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only
-PrivateTmp=yes
+# O discovery via --get-id precisa compartilhar o IPC RustDesk em /tmp.
+PrivateTmp=no
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectControlGroups=yes

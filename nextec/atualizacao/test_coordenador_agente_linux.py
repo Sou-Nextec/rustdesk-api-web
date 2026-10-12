@@ -150,6 +150,8 @@ class CoordinatorTests(unittest.TestCase):
         self.assertIn("StateDirectory=nextec-connect", unit)
         self.assertIn("StateDirectoryMode=0755", unit)
         self.assertIn("ReadWritePaths=/var/lib/nextec-connect", unit)
+        self.assertIn("PrivateTmp=no", unit)
+        self.assertIn("compartilhar o IPC RustDesk em /tmp", unit)
 
     def test_bootstrap_persists_token_before_post_and_saves_acknowledged_config(self):
         self.put_authorization()
