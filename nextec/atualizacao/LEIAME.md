@@ -16,4 +16,6 @@ Saída: `manifesto-connect.json` e `manifesto-connect.json.sig`. No painel, envi
 
 O manifesto assinado autentica a release para o atualizador; não altera os avisos do Windows sobre executáveis sem Authenticode. A primeira instalação continua dependendo de um canal confiável.
 
+Para cada máquina, rode `Instalar-Nextec.ps1` uma vez como administrador (comando em **Dispositivos > Atualizações do app > Instalar em uma máquina**). Ele cria a tarefa diária "Nextec Acesso - Atualizacao", como SYSTEM, antes de consultar o painel; assim a máquina continua verificando mesmo sem versão publicada. O script e o log ficam em `%ProgramData%\Nextec\Acesso`. Instalar só o cliente gerado (.msi/.exe) ainda não registra essa tarefa.
+
 Estado desta alteração: verificadores e publicador testados com chaves descartáveis e compatibilidade com a assinatura real do monitoramento. Ainda pendem a distribuição desse atualizador dentro de EXE/MSI, o teste de atualização instalado em VM e a migração EXE→MSI preservando o ID. Os clientes já instalados não passam a executar esse atualizador só porque o painel foi alterado.

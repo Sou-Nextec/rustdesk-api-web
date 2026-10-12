@@ -13,6 +13,15 @@
       </div>
     </div>
 
+    <el-alert
+      type="info"
+      :closable="false"
+      show-icon
+      title="O cliente Nextec-Connect não instala o agente de senha."
+      description="Para o botão Conectar preencher a senha automaticamente, cadastre o agente no servidor e aguarde a primeira troca. A senha só é enviada a quem já tem permissão para acessar a máquina."
+      class="nx-agent-help"
+    />
+
     <div class="nx-card">
       <el-table :data="pageRows" v-loading="loading" row-key="peer_id" aria-label="Máquinas com senha automática" empty-text=" ">
         <el-table-column label="Máquina" min-width="190">
@@ -45,7 +54,9 @@
               <span>{{ seenRecently(row) ? 'Ativo' : 'Sem contato' }}</span>
               <div class="nx-muted nx-small">visto {{ ago(row.last_seen_at) }}</div>
             </template>
-            <span v-else class="nx-warn-text">Não instalado</span>
+            <el-tooltip v-else content="O cliente de acesso não instala este agente. Use Cadastrar máquina e execute o comando no servidor como administrador." placement="top">
+              <span class="nx-warn-text">Agente não cadastrado</span>
+            </el-tooltip>
           </template>
         </el-table-column>
         <el-table-column label="Senha" min-width="170">
@@ -341,6 +352,7 @@
   }
   .nx-search { flex: 1 1 260px; max-width: 360px; }
   .nx-bar-right { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; .el-button + .el-button { margin-left: 0; } }
+  .nx-agent-help { margin-bottom: 12px; }
   .nx-card { background: var(--nx-surface); border-radius: var(--nx-radius-card); box-shadow: var(--nx-shadow-card); overflow: hidden; }
   .nx-name { font-weight: 600; color: var(--nx-text); }
   .nx-small { font-size: 12px; }
