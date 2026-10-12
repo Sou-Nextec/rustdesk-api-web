@@ -126,8 +126,11 @@ class FakePanel:
 
 @unittest.skipUnless(os.name == "nt" and shutil.which("powershell.exe") and _openssl(), "requer Windows PowerShell e OpenSSL")
 class AssinarVersaoTest(unittest.TestCase):
+    PREFIX = "nextec-test-assinar-"
+    TEMP_NAME = None
+
     def setUp(self):
-        self.tmp = Path(tempfile.mkdtemp(prefix="nextec-test-assinar-"))
+        self.tmp = Path(tempfile.mkdtemp(prefix=self.PREFIX))
         self.addCleanup(shutil.rmtree, self.tmp, True)
         openssl = _openssl()
         self.key = self.tmp / "chave-teste.pem"
@@ -156,6 +159,10 @@ class AssinarVersaoTest(unittest.TestCase):
                f"-SaidaRoot '{self.saida}' -LeitorSenha {{ ConvertTo-SecureString '{senha}' -AsPlainText -Force }} {extra}; "
                f"{prep} Start-AssinarVersao | Out-Null")
         env = dict(os.environ, LOCALAPPDATA=str(self.local))
+        if self.TEMP_NAME:
+            temp = self.tmp / self.TEMP_NAME
+            temp.mkdir(exist_ok=True)
+            env["TEMP"] = env["TMP"] = str(temp)
         return subprocess.run(["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd],
                               capture_output=True, text=True, env=env, timeout=300)
 
@@ -209,6 +216,16 @@ class AssinarVersaoTest(unittest.TestCase):
         r = self._run(panel)
         self.assertNotEqual(r.returncode, 0)
         self.assertIsNone(panel.posted)
+
+
+class AssinarVersaoCaminhoAcentuadoTest(AssinarVersaoTest):
+    """Regressao: chave, pasta do assinador, saida e temp com acentos precisam assinar e enviar."""
+    PREFIX = "nextec-Área Assinatura çã-"
+    TEMP_NAME = "temp Área çã"
+
+    def test_caminhos_realmente_tem_acento(self):
+        for p in (self.key, self.helper, self.saida, self.tmp / self.TEMP_NAME):
+            self.assertFalse(str(p).isascii(), str(p))
 
 
 if __name__ == "__main__":

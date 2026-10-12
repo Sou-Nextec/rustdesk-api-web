@@ -210,6 +210,9 @@ function Invoke-Assinador($Ferr, [string]$Helper, [string]$PedidoPath, [string]$
     $si.RedirectStandardError = $true
     $si.StandardOutputEncoding = [Text.Encoding]::UTF8
     $si.StandardErrorEncoding = [Text.Encoding]::UTF8
+    # Sem isto o Python grava a saida na pagina de codigo do console e caminhos acentuados chegam corrompidos.
+    $si.EnvironmentVariables['PYTHONIOENCODING'] = 'utf-8'
+    $si.EnvironmentVariables['PYTHONUTF8'] = '1'
     $p = New-Object System.Diagnostics.Process
     $p.StartInfo = $si
     $old = [Console]::InputEncoding
