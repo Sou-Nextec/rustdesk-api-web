@@ -54,7 +54,7 @@ Estas correções não concluem a instalação automática de todos os component
 
 - [ ] Testes locais de identidade/conexão e build frontend.
 - [ ] CI com os testes novos no commit publicado.
-- [ ] API/Windows Server 2022 integrados e teste Linux.
+- [ ] API/runner Windows do CI integrados e teste Linux.
 - [ ] Rotação mantém sessão e nova conexão usa senha confirmada.
 - [ ] Pacote novo preserva identidade e instala todos os componentes.
 - [ ] Piloto e versão/digest implantados comprovados.
@@ -80,7 +80,7 @@ Nenhum destes itens pode ser apresentado como produção pronta apenas pela conc
 - Linux/CGO no APP03, container isolado CPU1/RAM1200m sem volumes de producao: service e http/controller/api passaram.
 - A primeira execucao encontrou fixture com GORM default:true que ignorava Enabled:false; fixture agora grava e verifica explicitamente o estado persistido. Reexecucao verde.
 - Testes de revogacao entre autenticacao e operacao verificam que token revogado nao recebe pendencia nem confirma senha.
-- Sessao real Windows Server 2022 e rotacao de 15 minutos continuam pendentes; testes nao equivalem a piloto.
+- Sessao real runner Windows do CI e rotacao de 15 minutos continuam pendentes; testes nao equivalem a piloto.
 
 ## Finalizacao: ativacao e assinatura local (2026-10-12)
 
@@ -92,4 +92,14 @@ Nenhum destes itens pode ser apresentado como produção pronta apenas pela conc
 - Revisao independente encontrou e corrigiu: chave plaintext aceita, lock permanente apos kill, timer Linux nao iniciado, journal Windows expirado impedindo nova autorizacao, redirecionamento HTTP no agente de senha.
 - Ruling: primeira ativacao exige autorizacao individual entregue em sessao confiavel — ID/UUID nao autenticam a maquina — custo: uma intervencao inicial por dispositivo; depois as verificacoes sao automaticas.
 - Ruling: descoberta compartilhada e copiada no atualizador standalone — distribuicao atual e arquivo unico — custo: testes precisam verificar paridade entre componentes.
-- CI/merge/rollout desta parcela e teste real no Windows Server 2022 ainda pendentes. Nao ampliar piloto nem publicar automaticamente para todos antes de provar nova conexao e sessao mantida durante a rotacao.
+- Estado registrado antes dos merges e da validacao runner Windows do CI; ver a atualizacao de 2026-10-12 abaixo. Naquele ponto, CI/merge/rollout e teste Windows ainda estavam pendentes.
+
+## Atualizacao: merges, pacote e limites de homologacao (2026-10-12)
+
+- PR #64 da API foi mesclado em `c014662`; PR #34 foi mesclado em `5040b71`. Os checks de ambos ficaram verdes, incluindo teste real de instalacao, reparo e desinstalacao no runner Windows do CI. Essa evidencia cobre o fluxo exercitado nesses jobs; nao substitui piloto com servidor cliente nem prova toda a frota.
+- APP03 foi verificado em 2026-10-12: API healthy, SHA-256 `5f88655db42bad362eabb3012f6679dbffa0366855c3a2579736847273d81067`; RDGen healthy, SHA-256 `490d5fadf0c4165c07e7930c393f4092db37e11cf8f38d8eba83e61eaf4cfed6`. A chave publica do servidor RustDesk estava legivel pelo processo RDGen; isso nao confirma uso de chave privada protegida nem assinatura real de release.
+- Um cliente Nextec Connect 2.0.9, base RustDesk 1.5, tema dark, teve a geracao iniciada pelo workflow 38274420691, criado em 2026-10-12 as 16:01 UTC. O build ainda estava em andamento nesta verificacao; sua conclusao nao equivale a artefato assinado nem instalado em piloto.
+- PR #64 e PR #34, seus checks e a validacao runner Windows do CI comprovam merge/CI e o cenario de instalacao exercitado. Permanecem sem comprovacao a assinatura de release com a chave real protegida, a rotacao mantendo uma sessao ativa e atualizando novas conexoes, e o piloto de um servidor cliente com versao/digest registrados. Nao declarar producao plena.
+- Fonte oficial RustDesk 1.5.0 consultada na tag `1.5.0`, commit `fada664df7a294d1d1a9ca3e7cd3637069122f17`. O deep link nativo de terminal tem formato `{scheme}://terminal/{ID}?password={senha-RustDesk-codificada}`; o parser em `flutter/lib/common.dart` converte para `--terminal <ID> --password <senha>` e despacha `newTerminal` com a senha peer. O link atual `{scheme}://{ID}?password=...` continua sendo desktop por padrao; isso prova o contrato upstream, nao a homologacao do pacote Nextec.
+- No mesmo source, Linux usa `TerminalUserToken::SelfUser` e ignora usuario/senha OS fornecidos ao fluxo; o PTY inicia shell sob a conta efetiva do processo RustDesk. Portanto terminal RustDesk Linux nao comprova autenticacao PAM nem satisfaz login Linux individual. Nao habilitar/rotular o terminal como login PAM; manter esse requisito pendente para avaliacao futura do PAM ou de outro mecanismo apropriado.
+- Classificacao P0: merges, checks e teste runner Windows do CI acima estao concluidos para os cenarios cobertos. Assinatura com chave real, piloto/rollout de servidor cliente e autenticacao Linux/PAM continuam pendentes. O plano P0 nao esta integralmente concluido.
