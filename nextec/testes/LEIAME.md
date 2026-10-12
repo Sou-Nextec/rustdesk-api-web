@@ -33,6 +33,7 @@ Nunca aponte para o painel de produção.
 | --- | --- | --- |
 | `cofre.ps1` | 21114 | Cofre de senhas: chave de cadastro, máquina gerenciada, regras de senha, link com senha automática, permissões por papel |
 | `agente.ps1` | 21114 | Agente de senha do Windows (`Agente-Senha-Nextec.ps1`): instala, cadastra, guarda o token protegido e troca a senha |
+| `atualizador-agendamento.ps1` | local | Regressão do atualizador: tarefa criada antes da consulta ao manifesto e documentação da tela coerente |
 | `controle.ps1` | 21114 | Instalação por cliente (chave e atribuição), políticas por cliente e máquina, sessões e desconexão remota, chamados e relatório |
 | `fila.ps1` | 21114 | Fila "Aguardando atendimento" e visibilidade |
 | `updates.ps1` | 21114 | Atualização do app: lançamentos, piloto, instalações |
