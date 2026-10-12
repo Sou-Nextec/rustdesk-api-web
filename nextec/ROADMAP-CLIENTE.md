@@ -1,19 +1,19 @@
 # Roadmap do cliente e acesso Nextec
 
-Data: 2026-10-11. Estado: planejamento documentado localmente; não implementado, publicado ou implantado nesta etapa.
+Data: 2026-10-12. Estado: execução parcial; ver evidências em [plano de estabilização](../docs/superpowers/plans/2026-10-11-evidencias-cliente.md). Merges e CI passaram para cenários descritos ali; produção plena e piloto ainda não comprovados.
 
 ## P0 — Estabilizar e qualificar para produção
 
 Executar [plano de estabilização](../docs/superpowers/plans/2026-10-11-estabilizacao-cliente.md) seguindo [escopo aprovado](../docs/superpowers/specs/2026-10-11-cliente-confiavel.md).
 
-- [ ] Identidade única do cliente/serviço, preservada entre EXE/MSI/reparo/upgrade.
-- [ ] Cadastro automático recuperável, sem duplicatas ou reativação indevida de máquinas revogadas.
-- [ ] Agentes e atualizador incorporados e reparáveis; sem script manual após instalação normal.
-- [ ] Senha rotacionada confirmada no serviço correto; analista autorizado conecta sem copiar/colar.
-- [ ] Rotação mantém sessão; novas conexões usam senha vigente; revogação e encerramento são ações distintas.
-- [ ] Linux: terminal real compatível, com usuário e senha do servidor inseridos pelo analista.
-- [ ] Saúde operacional visível, testes integrados em CI e piloto real antes de expansão.
-- [ ] Assinatura automatizada com chave protegida; rollout confirmado por versão/digest e funcionamento.
+- [x] Código/CI e teste de instalação MSI no runner Windows cobrem instalação, reparo e desinstalação; identidade única preservada entre esses cenários conforme PR #34. Upgrade e outras variantes ainda dependem da cobertura registrada no plano.
+- [x] Código/CI do bootstrap recuperável, token proposto protegido e revogação sem reativação automática conforme PR #64; piloto de frota continua pendente.
+- [x] Agentes/coordenadores e atualizador incorporados e reparáveis nos cenários de instalação/reparo testados no runner Windows. Verificar separadamente cobertura de upgrade e demais plataformas.
+- [x] API de bootstrap e ativação passaram os checks dos PRs; a rotação no serviço correto está implementada nos cenários automatizados. A confirmação de senha em instalação cliente ainda aguarda piloto e evidência de sessão real.
+- [ ] Confirmar em piloto que a rotação mantém sessão ativa e que nova conexão usa senha vigente; revogação e encerramento permanecem ações distintas.
+- [ ] Linux: validar deep link nativo `{scheme}://terminal/{ID}?password=...` no pacote Nextec. RustDesk 1.5.0 abre modo terminal com senha da conexão RustDesk, mas no Linux o shell usa a conta do processo RustDesk; não valida credenciais PAM do analista. Login individual Linux fica para avaliação do PAM ou mecanismo futuro apropriado.
+- [ ] Saúde operacional e piloto de servidor cliente com versão/digest registrados antes de expansão. Checks verdes e APP03 healthy são evidências de CI/ambiente, não do piloto cliente.
+- [ ] Assinatura de release usando a chave real protegida e rollout confirmado por versão/digest e funcionamento. Disponibilidade da chave pública no RDGen não comprova assinatura real.
 
 ## P1 — Operação simples e prevenção
 
