@@ -24,7 +24,7 @@ jobs:
           node-version: '22'
           cache: npm
       - name: Validar preparacao autorizada da conexao
-        run: node --test nextec/testes/connect.test.mjs
+        run: node --test nextec/testes/*.test.mjs
       - run: npm ci --no-audit --no-fund
       - run: npm run build
 
@@ -49,3 +49,10 @@ jobs:
         run: |
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File nextec/atualizacao/test_password_transaction.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Password transaction regression failed' }
+      - name: Validar coordenador e tarefas de gerenciamento
+        shell: powershell
+        run: |
+          foreach ($test in @('test_coordinator.ps1', 'test_agent_task_registration.ps1', 'test_updater_identity.ps1', 'test_agent_http.ps1', 'test_remove_tasks.ps1')) {
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File "nextec/atualizacao/$test"
+            if ($LASTEXITCODE -ne 0) { throw "Management regression failed: $test" }
+          }

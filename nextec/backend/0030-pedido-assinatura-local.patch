@@ -1,0 +1,430 @@
+diff --git a/cmd/apimain.go b/cmd/apimain.go
+index d2d9aab..1e322d9 100644
+--- a/cmd/apimain.go
++++ b/cmd/apimain.go
+@@ -220,7 +220,7 @@ func InitGlobal() {
+ 	if err := global.DB.AutoMigrate(&model.NextecSecretPolicy{}, &model.NextecDeviceSecret{}, &model.NextecSecretAudit{}, &model.NextecAgentBootstrap{}); err != nil {
+ 		global.Logger.Error("migrate nextec secrets: ", err)
+ 	}
+-	if err := global.DB.AutoMigrate(&model.NextecAppRelease{}, &model.NextecAppInstall{}, &model.NextecPendingAssign{}, &model.NextecAppPolicy{}, &model.NextecConnectNote{}); err != nil {
++	if err := global.DB.AutoMigrate(&model.NextecAppRelease{}, &model.NextecAppInstall{}, &model.NextecPendingAssign{}, &model.NextecAppPolicy{}, &model.NextecConnectNote{}, &model.NextecAppSignatureSequence{}); err != nil {
+ 		global.Logger.Error("migrate nextec updates: ", err)
+ 	}
+ 	// Nextec: IDs gravados com espaço passam a ser salvos sem espaço
+diff --git a/http/controller/admin/nextec_sign_request.go b/http/controller/admin/nextec_sign_request.go
+new file mode 100644
+index 0000000..3b09918
+--- /dev/null
++++ b/http/controller/admin/nextec_sign_request.go
+@@ -0,0 +1,29 @@
++package admin
++
++import (
++	"fmt"
++
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/http/response"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++)
++
++type nextecSignRequestForm struct {
++	Version string `json:"version" binding:"required"`
++}
++
++// SignRequest builds the manifest payload from the release already stored on the server.
++func (n *NextecUpdate) SignRequest(c *gin.Context) {
++	var form nextecSignRequestForm
++	if err := c.ShouldBindJSON(&form); err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError"))
++		return
++	}
++	request, err := service.NextecReleaseSignRequest(form.Version)
++	if err != nil {
++		response.Fail(c, 101, nextecUpdateMsg(err))
++		return
++	}
++	service.NextecSecretAuditAdd(service.AllService.UserService.CurUser(c), "", "update_sign_request", nextecIP(c), fmt.Sprintf("%s %d", request.Version, request.Sequence))
++	response.Success(c, request)
++}
+diff --git a/http/router/admin.go b/http/router/admin.go
+index 4bb2d57..3404e66 100644
+--- a/http/router/admin.go
++++ b/http/router/admin.go
+@@ -87,6 +87,7 @@ func NextecBind(adg *gin.RouterGroup) {
+ 	rg.POST("/updates/import", upd.ImportGenerated)
+ 	rg.POST("/updates/internal", upd.Internal)
+ 	rg.POST("/updates/signature", upd.Signature)
++	rg.POST("/updates/sign-request", upd.SignRequest)
+ 	rg.POST("/updates/rollout", upd.Rollout)
+ 	rg.POST("/updates/delete", upd.Delete)
+ 
+diff --git a/model/nextec_signature_sequence.go b/model/nextec_signature_sequence.go
+new file mode 100644
+index 0000000..81a00a8
+--- /dev/null
++++ b/model/nextec_signature_sequence.go
+@@ -0,0 +1,7 @@
++package model
++
++// NextecAppSignatureSequence is a database-backed, monotonic signing counter.
++type NextecAppSignatureSequence struct {
++	Product string `json:"product" gorm:"primaryKey;size:64"`
++	Value   int64  `json:"value" gorm:"not null"`
++}
+diff --git a/service/nextec_sign_request.go b/service/nextec_sign_request.go
+new file mode 100644
+index 0000000..8a23078
+--- /dev/null
++++ b/service/nextec_sign_request.go
+@@ -0,0 +1,192 @@
++package service
++
++import (
++	"crypto/rsa"
++	"encoding/base64"
++	"encoding/hex"
++	"encoding/json"
++	"errors"
++	"fmt"
++	"strings"
++	"time"
++
++	"github.com/lejianwen/rustdesk-api/v2/global"
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"gorm.io/gorm"
++	"gorm.io/gorm/clause"
++)
++
++const nextecSignatureSequenceMax int64 = 9007199254740991
++
++var ErrNextecSignRequest = errors.New("release metadata is invalid for signing")
++
++type NextecSignAsset struct {
++	File string `json:"arquivo"`
++	Hash string `json:"sha256"`
++	Size int64  `json:"tamanho"`
++}
++
++// NextecSignRequest contains only release metadata already stored by the server.
++type NextecSignRequest struct {
++	Product  string                     `json:"produto"`
++	Format   int                        `json:"formato"`
++	Version  string                     `json:"versao"`
++	Sequence int64                      `json:"sequencia"`
++	Windows  *NextecSignAsset           `json:"windows,omitempty"`
++	Linux    map[string]NextecSignAsset `json:"linux,omitempty"`
++}
++
++func nextecBuildSignRequest(r *model.NextecAppRelease, sequence int64) (*NextecSignRequest, error) {
++	if r == nil || !nextecVersionPattern.MatchString(r.Version) || sequence < 1 || sequence > nextecSignatureSequenceMax {
++		return nil, ErrNextecSignRequest
++	}
++	request := &NextecSignRequest{Product: "nextec-connect", Format: 1, Version: r.Version, Sequence: sequence}
++	assets := 0
++	if r.FileName == "" {
++		if r.Sha256 != "" || r.Size != 0 {
++			return nil, ErrNextecSignRequest
++		}
++	} else {
++		if r.FileName != "nextec-acesso-"+r.Version+".msi" || !validNextecSignAsset(r.Sha256, r.Size) {
++			return nil, ErrNextecSignRequest
++		}
++		request.Windows = &NextecSignAsset{File: "files/" + r.FileName, Hash: r.Sha256, Size: r.Size}
++		assets++
++	}
++	request.Linux = map[string]NextecSignAsset{}
++	for _, item := range []struct {
++		arch, name, hash string
++		size             int64
++	}{
++		{"amd64", r.LinuxAMD64FileName, r.LinuxAMD64Sha256, r.LinuxAMD64Size},
++		{"arm64", r.LinuxARM64FileName, r.LinuxARM64Sha256, r.LinuxARM64Size},
++	} {
++		if item.name == "" {
++			if item.hash != "" || item.size != 0 {
++				return nil, ErrNextecSignRequest
++			}
++			continue
++		}
++		if item.name != "nextec-acesso-"+r.Version+"-"+item.arch+".deb" || !validNextecSignAsset(item.hash, item.size) {
++			return nil, ErrNextecSignRequest
++		}
++		request.Linux[item.arch] = NextecSignAsset{File: "files/" + item.name, Hash: item.hash, Size: item.size}
++		assets++
++	}
++	if assets == 0 {
++		return nil, ErrNextecSignRequest
++	}
++	if len(request.Linux) == 0 {
++		request.Linux = nil
++	}
++	return request, nil
++}
++
++func validNextecSignAsset(hash string, size int64) bool {
++	if size < 8 || size > NextecUpdateMaxSize || len(hash) != 64 || strings.ToLower(hash) != hash {
++		return false
++	}
++	decoded, err := hex.DecodeString(hash)
++	return err == nil && len(decoded) == 32
++}
++
++func nextecLegacySignedSequence(r *model.NextecAppRelease, envelope NextecSignedRelease, key *rsa.PublicKey) int64 {
++	if len(envelope.Manifest) > 88000 || len(envelope.Signature) > 4096 {
++		return 0
++	}
++	raw, err := base64.StdEncoding.DecodeString(envelope.Manifest)
++	if err != nil || len(raw) == 0 || len(raw) > 65536 {
++		return 0
++	}
++	var manifest nextecSignedManifest
++	if json.Unmarshal(raw, &manifest) != nil || manifest.Sequence < 1 || manifest.Sequence > nextecSignatureSequenceMax {
++		return 0
++	}
++	// Verify the RSA signature and release binding while ignoring only expiry.
++	if nextecVerifySignedRelease(r, envelope, key, manifest.Issued.Add(time.Second)) != nil {
++		return 0
++	}
++	return manifest.Sequence
++}
++
++func nextecLegacySequenceFloor(releases []*model.NextecAppRelease, envelopeForVersion func(string) NextecSignedRelease, key *rsa.PublicKey) int64 {
++	var floor int64
++	for _, release := range releases {
++		if release == nil {
++			continue
++		}
++		if sequence := nextecLegacySignedSequence(release, envelopeForVersion(release.Version), key); sequence > floor {
++			floor = sequence
++		}
++	}
++	return floor
++}
++
++func NextecReleaseSignRequest(version string) (*NextecSignRequest, error) {
++	if !nextecVersionPattern.MatchString(version) {
++		return nil, ErrNextecBadVersion
++	}
++	release := NextecReleaseByVersion(version)
++	if release == nil {
++		return nil, ErrNextecNoRelease
++	}
++	// Validate immutable DB-backed metadata before reserving a sequence.
++	if _, err := nextecBuildSignRequest(release, 1); err != nil {
++		return nil, err
++	}
++	var releases []*model.NextecAppRelease
++	if err := DB.Find(&releases).Error; err != nil {
++		return nil, err
++	}
++	floor := nextecLegacySequenceFloor(releases, func(releaseVersion string) NextecSignedRelease {
++		var envelope NextecSignedRelease
++		rawEnvelope := global.NextecSettingGet("app_signature_" + releaseVersion)
++		if len(rawEnvelope) <= 100000 {
++			_ = json.Unmarshal([]byte(rawEnvelope), &envelope)
++		}
++		return envelope
++	}, nextecReleaseTrustKey())
++	sequence, err := nextecReserveSignatureSequence(DB, "nextec-connect", floor)
++	if err != nil {
++		return nil, err
++	}
++	return nextecBuildSignRequest(release, sequence)
++}
++
++func nextecReserveSignatureSequence(db *gorm.DB, product string, legacyFloor int64) (int64, error) {
++	if db == nil || product != "nextec-connect" || legacyFloor < 0 || legacyFloor > nextecSignatureSequenceMax {
++		return 0, ErrNextecSignRequest
++	}
++	var reserved int64
++	err := db.Transaction(func(tx *gorm.DB) error {
++		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&model.NextecAppSignatureSequence{Product: product, Value: 0}).Error; err != nil {
++			return err
++		}
++		for attempts := 0; attempts < 16; attempts++ {
++			var row model.NextecAppSignatureSequence
++			if err := tx.Where("product = ?", product).First(&row).Error; err != nil {
++				return err
++			}
++			base := row.Value
++			if legacyFloor > base {
++				base = legacyFloor
++			}
++			if base >= nextecSignatureSequenceMax {
++				return fmt.Errorf("%w: signing sequence exhausted", ErrNextecSignRequest)
++			}
++			next := base + 1
++			result := tx.Model(&model.NextecAppSignatureSequence{}).
++				Where("product = ? AND value = ?", product, row.Value).
++				Update("value", next)
++			if result.Error != nil {
++				return result.Error
++			}
++			if result.RowsAffected == 1 {
++				reserved = next
++				return nil
++			}
++		}
++		return fmt.Errorf("%w: unable to reserve sequence", ErrNextecSignRequest)
++	})
++	return reserved, err
++}
+diff --git a/service/nextec_sign_request_test.go b/service/nextec_sign_request_test.go
+new file mode 100644
+index 0000000..ca74525
+--- /dev/null
++++ b/service/nextec_sign_request_test.go
+@@ -0,0 +1,153 @@
++package service
++
++import (
++	"crypto"
++	"crypto/rand"
++	"crypto/rsa"
++	"crypto/sha256"
++	"encoding/base64"
++	"encoding/json"
++	"math"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"gorm.io/driver/sqlite"
++	"gorm.io/gorm"
++)
++
++func signRequestDB(t *testing.T) *gorm.DB {
++	t.Helper()
++	db, err := gorm.Open(sqlite.Open("file:nextec-sign-request-"+strings.ReplaceAll(t.Name(), "/", "-")+"?mode=memory&cache=shared"), &gorm.Config{})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := db.AutoMigrate(&model.NextecAppRelease{}, &model.NextecAppSignatureSequence{}); err != nil {
++		t.Fatal(err)
++	}
++	return db
++}
++
++func validSignRequestRelease() *model.NextecAppRelease {
++	return &model.NextecAppRelease{
++		Version: "2.6.29", FileName: "nextec-acesso-2.6.29.msi", Sha256: strings.Repeat("a", 64), Size: 1024,
++		LinuxAMD64FileName: "nextec-acesso-2.6.29-amd64.deb", LinuxAMD64Sha256: strings.Repeat("b", 64), LinuxAMD64Size: 2048,
++	}
++}
++
++func TestNextecSignRequestDerivesOnlyCanonicalReleaseAssets(t *testing.T) {
++	r := validSignRequestRelease()
++	request, err := nextecBuildSignRequest(r, 12)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if request.Product != "nextec-connect" || request.Format != 1 || request.Version != r.Version || request.Sequence != 12 {
++		t.Fatalf("unexpected request metadata: %+v", request)
++	}
++	if request.Windows == nil || request.Windows.File != "files/"+r.FileName || request.Windows.Hash != r.Sha256 || request.Windows.Size != r.Size {
++		t.Fatalf("windows metadata not derived from release: %+v", request.Windows)
++	}
++	if request.Linux["amd64"].File != "files/"+r.LinuxAMD64FileName || len(request.Linux) != 1 {
++		t.Fatalf("linux metadata not derived from release: %+v", request.Linux)
++	}
++	windowsOnly := *r
++	windowsOnly.LinuxAMD64FileName, windowsOnly.LinuxAMD64Sha256, windowsOnly.LinuxAMD64Size = "", "", 0
++	request, err = nextecBuildSignRequest(&windowsOnly, 13)
++	if err != nil || len(request.Linux) != 0 {
++		t.Fatalf("windows-only release rejected: %+v, %v", request, err)
++	}
++	linuxOnly := *r
++	linuxOnly.FileName, linuxOnly.Sha256, linuxOnly.Size = "", "", 0
++	request, err = nextecBuildSignRequest(&linuxOnly, 14)
++	if err != nil || request.Windows != nil || len(request.Linux) != 1 {
++		t.Fatalf("linux-only release rejected: %+v, %v", request, err)
++	}
++	for _, mutate := range []func(*model.NextecAppRelease){
++		func(r *model.NextecAppRelease) { r.FileName = "../outside.msi" },
++		func(r *model.NextecAppRelease) { r.Size = 0 },
++		func(r *model.NextecAppRelease) { r.Sha256 = "bad" },
++		func(r *model.NextecAppRelease) { r.LinuxAMD64FileName = "files/forged.deb" },
++		func(r *model.NextecAppRelease) { r.LinuxARM64Size = 1 },
++	} {
++		bad := *r
++		mutate(&bad)
++		if _, err := nextecBuildSignRequest(&bad, 15); err == nil {
++			t.Fatalf("invalid release metadata accepted: %+v", bad)
++		}
++	}
++}
++
++func TestNextecSignatureSequencePersistsAcrossCallers(t *testing.T) {
++	db := signRequestDB(t)
++	first, err := nextecReserveSignatureSequence(db, "nextec-connect", 6)
++	if err != nil || first != 7 {
++		t.Fatalf("first sequence = %d, %v; want 7", first, err)
++	}
++	// A second service call has no shared in-memory counter to rely on.
++	second, err := nextecReserveSignatureSequence(db, "nextec-connect", 2)
++	if err != nil || second != 8 {
++		t.Fatalf("second sequence = %d, %v; want 8", second, err)
++	}
++	var row model.NextecAppSignatureSequence
++	if err := db.First(&row, "product = ?", "nextec-connect").Error; err != nil || row.Value != 8 {
++		t.Fatalf("persisted counter = %+v, %v; want 8", row, err)
++	}
++}
++
++func TestNextecSignatureSequenceRejectsUnsafeInputsAndOverflow(t *testing.T) {
++	db := signRequestDB(t)
++	if _, err := nextecReserveSignatureSequence(db, "other-product", 0); err == nil {
++		t.Fatal("arbitrary product accepted")
++	}
++	if _, err := nextecReserveSignatureSequence(db, "nextec-connect", math.MaxInt64); err == nil {
++		t.Fatal("sequence overflow accepted")
++	}
++	if err := db.Create(&model.NextecAppSignatureSequence{Product: "nextec-connect", Value: 9007199254740991}).Error; err != nil {
++		t.Fatal(err)
++	}
++	if _, err := nextecReserveSignatureSequence(db, "nextec-connect", 0); err == nil {
++		t.Fatal("JSON-safe integer overflow accepted")
++	}
++}
++
++func TestNextecLegacyExpiredSignatureProvidesSequenceFloor(t *testing.T) {
++	key, err := rsa.GenerateKey(rand.Reader, 3072)
++	if err != nil {
++		t.Fatal(err)
++	}
++	oldRelease := validSignRequestRelease()
++	issued := time.Now().UTC().Add(-90 * 24 * time.Hour).Truncate(time.Second)
++	currentRelease := *oldRelease
++	currentRelease.Version = "2.6.30"
++	currentRelease.FileName = "nextec-acesso-2.6.30.msi"
++	currentRelease.LinuxAMD64FileName = "nextec-acesso-2.6.30-amd64.deb"
++	makeEnvelope := func(release *model.NextecAppRelease, sequence int64, expiry time.Time) NextecSignedRelease {
++		t.Helper()
++		m := nextecSignedManifest{Product: "nextec-connect", Format: 1, Sequence: sequence, Version: release.Version, Issued: issued, Expires: expiry, Windows: &nextecSignedAsset{File: "files/" + release.FileName, Hash: release.Sha256, Size: release.Size}, Linux: map[string]nextecSignedAsset{"amd64": {File: "files/" + release.LinuxAMD64FileName, Hash: release.LinuxAMD64Sha256, Size: release.LinuxAMD64Size}}}
++		raw, err := json.Marshal(m)
++		if err != nil {
++			t.Fatal(err)
++		}
++		digest := sha256.Sum256(raw)
++		sig, err := rsa.SignPKCS1v15(rand.Reader, key, crypto.SHA256, digest[:])
++		if err != nil {
++			t.Fatal(err)
++		}
++		return NextecSignedRelease{Manifest: base64.StdEncoding.EncodeToString(raw), Signature: base64.StdEncoding.EncodeToString(sig)}
++	}
++	oldEnvelope := makeEnvelope(oldRelease, 41, issued.Add(24*time.Hour))
++	currentUnsigned := makeEnvelope(&currentRelease, 90, issued.Add(24*time.Hour))
++	currentUnsigned.Signature = base64.StdEncoding.EncodeToString(make([]byte, 384))
++	envelopes := map[string]NextecSignedRelease{oldRelease.Version: oldEnvelope, currentRelease.Version: currentUnsigned}
++	floor := nextecLegacySequenceFloor([]*model.NextecAppRelease{oldRelease, &currentRelease}, func(version string) NextecSignedRelease {
++		return envelopes[version]
++	}, &key.PublicKey)
++	if floor != 41 {
++		t.Fatalf("floor across expired old and unsigned current releases = %d, want 41", floor)
++	}
++	request, err := nextecBuildSignRequest(&currentRelease, floor+1)
++	if err != nil || request.Sequence != 42 {
++		t.Fatalf("new release signing sequence = %+v, %v; want 42", request, err)
++	}
++}

@@ -155,16 +155,15 @@
     </el-dialog>
 
     <!-- cadastrar máquina (agente) -->
-    <el-dialog v-model="agent.visible" class="nx-dlg" title="Cadastrar máquina" width="720px">
-      <p class="nx-help nx-help-top">Em cada servidor, rode o comando abaixo no PowerShell como administrador. Ele instala o agente, que troca a senha sozinho. A chave vale para qualquer máquina nova; gere outra quando terminar para invalidar a anterior.</p>
-      <el-button type="primary" :loading="agent.loading" @click="newKey">{{ agent.key ? 'Gerar outra chave' : 'Gerar chave de cadastro' }}</el-button>
-      <template v-if="agent.key">
-        <div class="nx-cmd">
-          <code>{{ agentCommand }}</code>
-          <el-button size="small" @click="copy(agentCommand)">Copiar comando</el-button>
-        </div>
-        <p class="nx-help">Esta chave aparece só agora. Pré-requisito: o RustDesk precisa estar instalado como serviço (instalação completa).</p>
-      </template>
+    <el-dialog v-model="agent.visible" class="nx-dlg" title="Ativar gerenciamento" width="min(620px, 92vw)">
+      <p class="nx-help nx-help-top">Autorize uma máquina já vinculada ao cliente. A autorização vale por 15 minutos e somente para o ID escolhido.</p>
+      <el-select v-model="agent.peer" filterable placeholder="Selecione a máquina" style="width:100%" :disabled="agent.loading">
+        <el-option v-for="d in devices.filter(d => d.group_id && !d.enrolled)" :key="d.peer_id" :value="d.peer_id" :label="`${d.alias || d.hostname || 'Máquina'} · ${fmtId(d.peer_id)}`" />
+      </el-select>
+      <p class="nx-help">Se a máquina não aparece, vincule-a a um cliente em Dispositivos. O app precisa estar instalado como serviço.</p>
+      <el-button type="primary" :loading="agent.loading" :disabled="!agent.peer" @click="downloadActivation">Baixar autorização da máquina</el-button>
+      <p class="nx-help">Na sessão confiável do AnyDesk ou RustDesk, abra o assistente local de ativação como administrador e entregue esta autorização. Depois, cadastro, senha e verificações são automáticos. Não envie o arquivo por um link público.</p>
+      <p v-if="agent.error" class="nx-error" role="alert">{{ agent.error }}</p>
       <template #footer><el-button type="primary" @click="agent.visible = false">Fechar</el-button></template>
     </el-dialog>
 
@@ -190,7 +189,8 @@
   import { list as groupList } from '@/api/device_group'
   import { list as peerList } from '@/api/peer'
   import { timeAgo } from '@/utils/time'
-  import { secretsOverview, secretsPolicy, secretsRotate, secretsReveal, secretsUnenroll, secretsAgentKey, secretsAudit } from '@/nextec/api'
+  import { secretsOverview, secretsPolicy, secretsRotate, secretsReveal, secretsUnenroll, secretsBootstrap, secretsAudit } from '@/nextec/api'
+  import { activationBundle, downloadLocalJson } from '@/nextec/local-requests.mjs'
   import '../list-page.scss'
 
   const loading = ref(false)
@@ -301,17 +301,19 @@
   }
 
   // ---------- agente ----------
-  const agent = reactive({ visible: false, loading: false, key: '' })
-  const openAgent = () => { agent.visible = true }
-  const newKey = async () => {
+  const agent = reactive({ visible: false, loading: false, peer: '', error: '' })
+  const openAgent = () => { Object.assign(agent, { visible: true, peer: '', error: '' }) }
+  const downloadActivation = async () => {
     agent.loading = true
-    const r = await secretsAgentKey().catch(() => false)
-    agent.loading = false
-    if (r) agent.key = r.data.key
+    agent.error = ''
+    try {
+      const id = String(agent.peer)
+      const r = await secretsBootstrap(id)
+      downloadLocalJson('bootstrap.json', activationBundle(r.data, id))
+      ElMessage.success('Autorização baixada. Use em até 15 minutos na máquina escolhida.')
+    } catch (e) { agent.error = e.message || 'Não foi possível autorizar esta máquina.' }
+    finally { agent.loading = false }
   }
-  const SCRIPT_URL = 'https://raw.githubusercontent.com/Sou-Nextec/rustdesk-api-web/master/nextec/atualizacao/Agente-Senha-Nextec.ps1'
-  const agentCommand = computed(() =>
-    `$a="$env:TEMP\\agente-senha.ps1"; Invoke-WebRequest -UseBasicParsing "${SCRIPT_URL}" -OutFile $a; powershell -NoProfile -ExecutionPolicy Bypass -File $a -Instalar -Painel "${window.location.origin}" -ChaveAgente "${agent.key}"`)
 
   // ---------- auditoria ----------
   const actionText = {

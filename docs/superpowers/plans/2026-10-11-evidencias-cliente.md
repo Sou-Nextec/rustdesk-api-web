@@ -81,3 +81,15 @@ Nenhum destes itens pode ser apresentado como produção pronta apenas pela conc
 - A primeira execucao encontrou fixture com GORM default:true que ignorava Enabled:false; fixture agora grava e verifica explicitamente o estado persistido. Reexecucao verde.
 - Testes de revogacao entre autenticacao e operacao verificam que token revogado nao recebe pendencia nem confirma senha.
 - Sessao real Windows Server 2022 e rotacao de 15 minutos continuam pendentes; testes nao equivalem a piloto.
+
+## Finalizacao: ativacao e assinatura local (2026-10-12)
+
+- Branches isoladas `codex/cliente-finalizacao` nos dois repositorios, base API b2f3c2b e RDGen 8f23797.
+- Painel: 23 testes Node e build Vite passaram. Build local exigiu executar fora do sandbox devido a EPERM; nenhuma alteracao no lockfile para contornar o ambiente.
+- API: cadeia 0001-0030 aplicada sobre v2.6.29 em container isolado no APP03; service, utils, router e controladores passaram com CGO. Contador persistente considera assinaturas legadas validas de todas as releases, mesmo expiradas.
+- Windows: atualizador usa descoberta do mesmo servico do agente; AnyDesk nao vira outra instalacao RustDesk. Bootstrap usa autorizacao por maquina de 15 minutos e token proposto protegido antes de enviar; replay exige mesmo token e respeita revogacao.
+- Assinador: senha apenas em memoria por 15 minutos, UTF-8 no stdin, PEM cifrado obrigatorio. Lock do sistema operacional recupera encerramento abrupto. Chave privada nunca e enviada ao painel.
+- Revisao independente encontrou e corrigiu: chave plaintext aceita, lock permanente apos kill, timer Linux nao iniciado, journal Windows expirado impedindo nova autorizacao, redirecionamento HTTP no agente de senha.
+- Ruling: primeira ativacao exige autorizacao individual entregue em sessao confiavel — ID/UUID nao autenticam a maquina — custo: uma intervencao inicial por dispositivo; depois as verificacoes sao automaticas.
+- Ruling: descoberta compartilhada e copiada no atualizador standalone — distribuicao atual e arquivo unico — custo: testes precisam verificar paridade entre componentes.
+- CI/merge/rollout desta parcela e teste real no Windows Server 2022 ainda pendentes. Nao ampliar piloto nem publicar automaticamente para todos antes de provar nova conexao e sessao mantida durante a rotacao.

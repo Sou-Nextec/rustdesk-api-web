@@ -44,11 +44,13 @@ export const secretsRotate = (id) => request({ url: '/nextec/secrets/rotate', me
 export const secretsReveal = (id) => request({ url: '/nextec/secrets/reveal', method: 'post', data: { id } })
 export const secretsUnenroll = (id) => request({ url: '/nextec/secrets/unenroll', method: 'post', data: { id } })
 export const secretsAgentKey = () => request({ url: '/nextec/secrets/agent-key', method: 'post', data: {} })
+export const secretsBootstrap = (id) => request({ url: '/nextec/secrets/bootstrap', method: 'post', data: { id } })
 export const secretsAudit = () => request({ url: '/nextec/secrets/audit' })
 
 // patch 0009: atualização do app pelo painel (somente admin)
 export const updatesOverview = () => request({ url: '/nextec/updates' })
 export const updatesSignature = (data) => request({ url: '/nextec/updates/signature', method: 'post', data })
+export const updatesSignRequest = (version) => request({ url: '/nextec/updates/sign-request', method: 'post', data: { version } })
 export const updatesRollout = (data) => request({ url: '/nextec/updates/rollout', method: 'post', data })
 export const updatesDelete = (id) => request({ url: '/nextec/updates/delete', method: 'post', data: { id } })
 export const importGeneratedRelease = (uuid) => request({ url: '/nextec/updates/import', method: 'post', data: { uuid }, timeout: 300000 })
