@@ -4,8 +4,8 @@ Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no p
 
 ## 2.10.2
 
-- **Senhas dos servidores:** aviso explica que o cliente Nextec-Connect não instala o agente de senha; máquinas sem agente aparecem como "Agente não cadastrado", com orientação para cadastrar.
-- Documentação da atualização e dos testes passa a descrever a tarefa agendada do atualizador.
+- **Senhas dos servidores:** aviso explica que o agente de senha só é cadastrado após autorização individual temporária; máquinas sem agente aparecem como "Agente não cadastrado", com orientação para cadastrar.
+- Documentação da atualização e dos testes passa a descrever a tarefa agendada do atualizador, já registrada pelo MSI 2.0.9.
 
 ## 2.10.1
 

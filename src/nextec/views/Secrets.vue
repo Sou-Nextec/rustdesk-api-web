@@ -17,8 +17,8 @@
       type="info"
       :closable="false"
       show-icon
-      title="O cliente Nextec-Connect não instala o agente de senha."
-      description="Para o botão Conectar preencher a senha automaticamente, cadastre o agente no servidor e aguarde a primeira troca. A senha só é enviada a quem já tem permissão para acessar a máquina."
+      title="O agente de senha só é cadastrado após autorização individual."
+      description="O pacote do Nextec-Connect inclui o agente, mas o primeiro cadastro exige uma autorização individual temporária de 15 minutos. Depois do cadastro e da primeira troca, o botão Conectar preenche a senha automaticamente, só para quem já tem permissão para acessar a máquina."
       class="nx-agent-help"
     />
 
@@ -54,7 +54,7 @@
               <span>{{ seenRecently(row) ? 'Ativo' : 'Sem contato' }}</span>
               <div class="nx-muted nx-small">visto {{ ago(row.last_seen_at) }}</div>
             </template>
-            <el-tooltip v-else content="O cliente de acesso não instala este agente. Use Cadastrar máquina e execute o comando no servidor como administrador." placement="top">
+            <el-tooltip v-else content="O agente ainda não foi cadastrado nesta máquina. Use Cadastrar máquina e execute o comando no servidor como administrador." placement="top">
               <span class="nx-warn-text">Agente não cadastrado</span>
             </el-tooltip>
           </template>
