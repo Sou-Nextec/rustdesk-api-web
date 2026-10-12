@@ -2,6 +2,11 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.10.4
+
+- **Assinar versão em um comando:** `nextec/atualizacao/assinador/Assinar-Versao.ps1` obtém o pedido da versão pendente no painel, confere hash, produto e versão, pede a senha da chave só na janela local, assina e envia manifesto e assinatura. Sem baixar nem subir arquivos à mão.
+- Guia curto em `nextec/atualizacao/ASSINATURA.md`, com o caminho da chave local e os testes que não usam a chave real.
+
 ## 2.10.1
 
 - Cabeçalho compacto em tablets: os botões não cobrem o título da página.
