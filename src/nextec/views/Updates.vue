@@ -174,10 +174,17 @@
         <template #default><span>O navegador recebe apenas o manifesto e a assinatura. Não envie a chave privada nem a senha dela ao painel.</span></template>
       </el-alert>
       <ol class="nx-sign-steps">
-        <li>Na máquina segura que guarda a chave do monitoramento, gere o manifesto para a versão <strong>{{ authorization.version }}</strong>. O OpenSSL pede a senha no terminal.</li>
+        <li>Baixe o pedido e o pacote da versão <strong>{{ authorization.version }}</strong>. Abra o assinador no seu computador: a senha desbloqueia uma sessão de 15 minutos.</li>
         <li>Selecione abaixo <code>manifesto-connect.json</code> e <code>manifesto-connect.json.sig</code>.</li>
         <li>Depois de autorizar, publique primeiro para um grupo piloto e confira o resultado.</li>
       </ol>
+      <el-button :loading="authorization.preparing" :disabled="authorization.busy || !!authorization.request" @click="prepareSigning">Baixar pedido de assinatura</el-button>
+      <a href="/gerador/nextec/atualizacao/assinador.zip" download style="display:inline-block;margin:12px">Baixar assinador local</a>
+      <div v-if="authorization.request" class="nx-sign-steps">
+        <p>Baixe os pacotes abaixo para o assinador conferir o conteúdo antes de assinar.</p>
+        <a v-if="authorization.request.windows" :href="signAssetUrl(authorization.request.windows)" download>Baixar MSI</a>
+        <a v-for="(asset, arch) in authorization.request.linux || {}" :key="arch" :href="signAssetUrl(asset)" download style="margin-left:12px">Baixar Linux {{ arch }}</a>
+      </div>
       <el-form label-position="top">
         <el-form-item label="Manifesto Connect (.json)">
           <input type="file" accept=".json" :disabled="authorization.busy" @change="authorization.manifest = $event.target.files[0]">
@@ -246,7 +253,8 @@
   import { list as groupList } from '@/api/device_group'
   import { uploadFile } from '@/nextec/upload'
   import { timeAgo } from '@/utils/time'
-  import { updatesOverview, updatesRollout, updatesDelete, updatesSignature, updatesInternal } from '@/nextec/api'
+  import { updatesOverview, updatesRollout, updatesDelete, updatesSignature, updatesInternal, updatesSignRequest } from '@/nextec/api'
+  import { signingRequest, downloadLocalJson } from '@/nextec/local-requests.mjs'
   import { updateState } from '@/nextec/update-status.mjs'
 
   const SCRIPT_URL = 'https://raw.githubusercontent.com/Sou-Nextec/rustdesk-api-web/master/nextec/atualizacao/Instalar-Nextec.ps1'
@@ -367,8 +375,23 @@
   }
 
   // ---------- publicar ----------
-  const authorization = reactive({ visible: false, busy: false, version: '', manifest: null, signature: null, error: '' })
-  const openAuthorization = (row) => Object.assign(authorization, { visible: true, busy: false, version: row.version, manifest: null, signature: null, error: '' })
+  const authorization = reactive({ visible: false, busy: false, preparing: false, request: null, version: '', manifest: null, signature: null, error: '' })
+  const openAuthorization = (row) => Object.assign(authorization, { visible: true, busy: false, preparing: false, request: null, version: row.version, manifest: null, signature: null, error: '' })
+  const signAssetUrl = asset => `/api/nextec/update/${asset.arquivo}`
+  const prepareSigning = async () => {
+    authorization.preparing = true
+    authorization.error = ''
+    const version = authorization.version
+    try {
+      const response = await updatesSignRequest(version)
+      const request = signingRequest(response.data)
+      if (request.versao !== version) throw new Error('O pedido pertence a outra versão.')
+      if (authorization.version !== version || !authorization.visible) return
+      authorization.request = request
+      downloadLocalJson(`pedido-connect-${version}.json`, request)
+    } catch (e) { authorization.error = e.message || 'Não foi possível preparar a assinatura.' }
+    finally { authorization.preparing = false }
+  }
   const saveAuthorization = async () => {
     authorization.error = ''
     if (authorization.manifest.size > 65536 || authorization.signature.size > 4096) { authorization.error = 'Manifesto ou assinatura acima do limite.'; return }

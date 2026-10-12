@@ -1,0 +1,255 @@
+diff --git a/http/controller/admin/nextec_bootstrap.go b/http/controller/admin/nextec_bootstrap.go
+index 7077897..22d2c83 100644
+--- a/http/controller/admin/nextec_bootstrap.go
++++ b/http/controller/admin/nextec_bootstrap.go
+@@ -47,5 +47,12 @@ func (n *NextecBootstrap) Issue(c *gin.Context) {
+ 		c.JSON(http.StatusConflict, gin.H{"error": "bootstrap denied"})
+ 		return
+ 	}
+-	c.JSON(http.StatusOK, gin.H{"bootstrap": token, "expires_in": 900})
++	id, uuid, err := service.NextecAgentBootstrapIdentity(token)
++	if err != nil {
++		c.JSON(http.StatusConflict, gin.H{"error": "bootstrap denied"})
++		return
++	}
++	payload := gin.H{"bootstrap": token, "expires_in": 900, "painel": "https://painel-remoto.nex.tec.br", "id": id, "uuid": uuid}
++	// Keep the original fields for existing bootstrap operators and the panel envelope.
++	c.JSON(http.StatusOK, gin.H{"code": 0, "data": payload, "bootstrap": token, "expires_in": 900, "painel": "https://painel-remoto.nex.tec.br", "id": id, "uuid": uuid})
+ }
+diff --git a/http/controller/api/nextec_bootstrap.go b/http/controller/api/nextec_bootstrap.go
+index a343b0e..08ae52f 100644
+--- a/http/controller/api/nextec_bootstrap.go
++++ b/http/controller/api/nextec_bootstrap.go
+@@ -9,9 +9,10 @@ import (
+ )
+ 
+ type bootstrapConsumeForm struct {
+-	Bootstrap string `json:"bootstrap"`
+-	ID        string `json:"id"`
+-	UUID      string `json:"uuid"`
++	Bootstrap     string `json:"bootstrap"`
++	ID            string `json:"id"`
++	UUID          string `json:"uuid"`
++	ProposedToken string `json:"proposed_token"`
+ }
+ 
+ func (a *NextecAgent) Bootstrap(c *gin.Context) {
+@@ -20,7 +21,7 @@ func (a *NextecAgent) Bootstrap(c *gin.Context) {
+ 		c.JSON(http.StatusBadRequest, gin.H{"error": "bad request"})
+ 		return
+ 	}
+-	token, err := service.NextecAgentBootstrapConsume(agentIP(c), form.ID, form.UUID, form.Bootstrap)
++	token, err := service.NextecAgentBootstrapDeliver(agentIP(c), form.ID, form.UUID, form.Bootstrap, form.ProposedToken)
+ 	if err != nil {
+ 		if err == service.ErrNextecAlreadyEnroll {
+ 			c.JSON(http.StatusConflict, gin.H{"error": "already enrolled"})
+diff --git a/model/nextec_bootstrap.go b/model/nextec_bootstrap.go
+index 0513f93..1a8bbea 100644
+--- a/model/nextec_bootstrap.go
++++ b/model/nextec_bootstrap.go
+@@ -2,13 +2,14 @@ package model
+ 
+ // NextecAgentBootstrap armazena somente o hash de um código de uso único.
+ type NextecAgentBootstrap struct {
+-	Id         uint   `gorm:"primaryKey" json:"id"`
+-	TokenHash  string `gorm:"not null;uniqueIndex;size:64" json:"-"`
+-	PeerId     string `gorm:"not null;index;size:64" json:"peer_id"`
+-	Uuid       string `gorm:"not null;size:128" json:"uuid"`
+-	GroupId    uint   `gorm:"not null" json:"group_id"`
+-	ExpiresAt  int64  `gorm:"not null;index" json:"expires_at"`
+-	UsedAt     int64  `gorm:"not null;default:0;index" json:"used_at"`
+-	IssuedBy   uint   `gorm:"not null;default:0" json:"issued_by"`
+-	CreatedAt  int64  `gorm:"not null" json:"created_at"`
++	Id           uint   `gorm:"primaryKey" json:"id"`
++	TokenHash    string `gorm:"not null;uniqueIndex;size:64" json:"-"`
++	DeliveryHash string `gorm:"not null;default:'';size:64" json:"-"`
++	PeerId       string `gorm:"not null;index;size:64" json:"peer_id"`
++	Uuid         string `gorm:"not null;size:128" json:"uuid"`
++	GroupId      uint   `gorm:"not null" json:"group_id"`
++	ExpiresAt    int64  `gorm:"not null;index" json:"expires_at"`
++	UsedAt       int64  `gorm:"not null;default:0;index" json:"used_at"`
++	IssuedBy     uint   `gorm:"not null;default:0" json:"issued_by"`
++	CreatedAt    int64  `gorm:"not null" json:"created_at"`
+ }
+diff --git a/service/nextec_bootstrap.go b/service/nextec_bootstrap.go
+index 2b5de31..21de576 100644
+--- a/service/nextec_bootstrap.go
++++ b/service/nextec_bootstrap.go
+@@ -2,6 +2,7 @@ package service
+ 
+ import (
+ 	"crypto/rand"
++	"crypto/subtle"
+ 	"encoding/base64"
+ 	"errors"
+ 	"net"
+@@ -16,6 +17,14 @@ const nextecBootstrapTTL = 15 * time.Minute
+ 
+ var ErrNextecBootstrapDenied = errors.New("bootstrap denied")
+ 
++func NextecAgentBootstrapIdentity(token string) (string, string, error) {
++	var row model.NextecAgentBootstrap
++	if err := DB.Where("token_hash = ? AND used_at = 0 AND expires_at > ?", sha256Hex(token), time.Now().Unix()).First(&row).Error; err != nil {
++		return "", "", ErrNextecBootstrapDenied
++	}
++	return row.PeerId, row.Uuid, nil
++}
++
+ func nextecBootstrapAuditIP(ip string) string {
+ 	parsed := net.ParseIP(ip)
+ 	if parsed == nil {
+@@ -76,6 +85,12 @@ func NextecAgentBootstrapIssue(peerID, clientID, ip string, issuedBy uint) (stri
+ 
+ // NextecAgentBootstrapConsume valida o código uma vez e cadastra um novo token do dispositivo atomicamente.
+ func NextecAgentBootstrapConsume(ip, peerID, uuid, bootstrapToken string) (string, error) {
++	return NextecAgentBootstrapDeliver(ip, peerID, uuid, bootstrapToken, "")
++}
++
++// Deliver recovers only the original client-proposed token after an ambiguous response.
++// It does not mint another token or reactivate a revoked enrollment.
++func NextecAgentBootstrapDeliver(ip, peerID, uuid, bootstrapToken, proposedToken string) (string, error) {
+ 	ip = nextecBootstrapAuditIP(ip)
+ 	if !nextecFailCheck(ip) {
+ 		return "", ErrNextecTooManyFails
+@@ -84,18 +99,26 @@ func NextecAgentBootstrapConsume(ip, peerID, uuid, bootstrapToken string) (strin
+ 		nextecFailAdd(ip)
+ 		return "", ErrNextecBootstrapDenied
+ 	}
+-	deviceBytes := make([]byte, 32)
+-	if _, err := rand.Read(deviceBytes); err != nil {
+-		return "", err
++	deviceToken := proposedToken
++	if proposedToken != "" {
++		raw, err := base64.RawURLEncoding.DecodeString(proposedToken)
++		if err != nil || len(raw) != 32 || base64.RawURLEncoding.EncodeToString(raw) != proposedToken {
++			return "", ErrNextecBootstrapDenied
++		}
++	} else {
++		deviceBytes := make([]byte, 32)
++		if _, err := rand.Read(deviceBytes); err != nil {
++			return "", err
++		}
++		deviceToken = base64.RawURLEncoding.EncodeToString(deviceBytes)
+ 	}
+-	deviceToken := base64.RawURLEncoding.EncodeToString(deviceBytes)
+ 	now := time.Now().Unix()
+ 	err := DB.Transaction(func(tx *gorm.DB) error {
+ 		var boot model.NextecAgentBootstrap
+ 		if err := tx.Where("token_hash = ?", sha256Hex(bootstrapToken)).First(&boot).Error; err != nil {
+ 			return ErrNextecBootstrapDenied
+ 		}
+-		if boot.UsedAt != 0 || boot.ExpiresAt <= now || boot.PeerId != peerID || boot.Uuid != uuid {
++		if boot.ExpiresAt <= now || boot.PeerId != peerID || boot.Uuid != uuid {
+ 			return ErrNextecBootstrapDenied
+ 		}
+ 		var peers []model.Peer
+@@ -112,16 +135,28 @@ func NextecAgentBootstrapConsume(ip, peerID, uuid, bootstrapToken string) (strin
+ 		}
+ 		var existing model.NextecDeviceSecret
+ 		err := tx.Where("peer_id = ?", peerID).First(&existing).Error
++		if boot.UsedAt != 0 {
++			if err != nil || proposedToken == "" || boot.DeliveryHash == "" ||
++				subtle.ConstantTimeCompare([]byte(boot.DeliveryHash), []byte(sha256Hex(proposedToken))) != 1 ||
++				subtle.ConstantTimeCompare([]byte(existing.TokenHash), []byte(boot.DeliveryHash)) != 1 {
++				return ErrNextecBootstrapDenied
++			}
++			return nil
++		}
+ 		if err == nil && existing.TokenHash != "" {
+ 			return ErrNextecAlreadyEnroll
+ 		}
+ 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+ 			return err
+ 		}
++		deliveryHash := ""
++		if proposedToken != "" {
++			deliveryHash = sha256Hex(proposedToken)
++		}
+ 		used := tx.Model(&model.NextecAgentBootstrap{}).
+ 			Where("id = ? AND token_hash = ? AND peer_id = ? AND uuid = ? AND group_id = ? AND used_at = 0 AND expires_at > ?",
+ 				boot.Id, boot.TokenHash, peerID, uuid, boot.GroupId, now).
+-			Update("used_at", now)
++			Updates(map[string]interface{}{"used_at": now, "delivery_hash": deliveryHash})
+ 		if used.Error != nil {
+ 			return used.Error
+ 		}
+diff --git a/service/nextec_bootstrap_delivery_test.go b/service/nextec_bootstrap_delivery_test.go
+new file mode 100644
+index 0000000..a1b103b
+--- /dev/null
++++ b/service/nextec_bootstrap_delivery_test.go
+@@ -0,0 +1,74 @@
++package service
++
++import (
++	"bytes"
++	"encoding/base64"
++	"errors"
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"testing"
++	"time"
++)
++
++func TestBootstrapDeliveryRetryKeepsDeviceTokenAndRejectsAnotherToken(t *testing.T) {
++	db, peerID := bootstrapTestSetup(t)
++	code := issueBootstrap(t, peerID)
++	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32))
++	other := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{8}, 32))
++	first, err := NextecAgentBootstrapDeliver("127.0.0.1", peerID, "uuid-original", code, token)
++	if err != nil || first != token {
++		t.Fatalf("first delivery failed: %v", err)
++	}
++	retry, err := NextecAgentBootstrapDeliver("127.0.0.1", peerID, "uuid-original", code, token)
++	if err != nil || retry != token {
++		t.Fatalf("lost-response recovery failed: %v", err)
++	}
++	if _, err := NextecAgentBootstrapDeliver("127.0.0.1", peerID, "uuid-original", code, other); !errors.Is(err, ErrNextecBootstrapDenied) {
++		t.Fatalf("replay changed token: %v", err)
++	}
++	if _, err := NextecAgentBootstrapConsume("127.0.0.1", peerID, "uuid-original", code); !errors.Is(err, ErrNextecBootstrapDenied) {
++		t.Fatalf("legacy replay accepted: %v", err)
++	}
++	var audits int64
++	db.Model(&model.NextecSecretAudit{}).Where("action = ?", "agent_bootstrap_enroll").Count(&audits)
++	if audits != 1 {
++		t.Fatal("retry duplicated enrollment")
++	}
++}
++
++func TestBootstrapDeliveryCannotRecoverAfterRevokeExpiryOrIdentityChange(t *testing.T) {
++	for _, change := range []string{"revoke", "expire", "group", "uuid"} {
++		t.Run(change, func(t *testing.T) {
++			db, peerID := bootstrapTestSetup(t)
++			code := issueBootstrap(t, peerID)
++			token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
++			if _, err := NextecAgentBootstrapDeliver("127.0.0.1", peerID, "uuid-original", code, token); err != nil {
++				t.Fatal(err)
++			}
++			switch change {
++			case "revoke":
++				if err := NextecSecretUnenroll(peerID); err != nil {
++					t.Fatal(err)
++				}
++			case "expire":
++				db.Model(&model.NextecAgentBootstrap{}).Where("peer_id = ?", peerID).Update("expires_at", time.Now().Add(-time.Second).Unix())
++			case "group":
++				db.Model(&model.Peer{}).Where("id = ?", peerID).Update("group_id", 8)
++			case "uuid":
++				db.Model(&model.Peer{}).Where("id = ?", peerID).Update("uuid", "replaced")
++			}
++			if _, err := NextecAgentBootstrapDeliver("127.0.0.1", peerID, "uuid-original", code, token); !errors.Is(err, ErrNextecBootstrapDenied) {
++				t.Fatalf("stale delivery accepted: %v", err)
++			}
++		})
++	}
++}
++
++func TestBootstrapDeliveryRejectsMalformedClientToken(t *testing.T) {
++	_, peerID := bootstrapTestSetup(t)
++	code := issueBootstrap(t, peerID)
++	for _, token := range []string{"short", string(bytes.Repeat([]byte{'x'}, 100))} {
++		if _, err := NextecAgentBootstrapDeliver("127.0.0.1", peerID, "uuid-original", code, token); !errors.Is(err, ErrNextecBootstrapDenied) {
++			t.Fatalf("invalid token accepted: %v", err)
++		}
++	}
++}

@@ -1,4 +1,4 @@
-#requires -version 5.1
+﻿#requires -version 5.1
 $ErrorActionPreference = 'Stop'
 
 $agentScript = Join-Path $PSScriptRoot 'Agente-Senha-Nextec.ps1'
@@ -76,14 +76,14 @@ try {
 
   Invoke-Test 'Identity_MultipleInstalls' {
     $base = Join-Path $temp 'multiple'
-    $a = New-TestClient -Root (Join-Path $base 'one') -AppName 'Nextec-Connect'
-    $b = New-TestClient -Root (Join-Path $base 'two') -AppName 'RustDesk'
-    $failed = $false
+    $a = New-TestClient -Root $base -AppName 'Nextec-Connect'
+    $b = New-TestClient -Root $base -AppName 'RustDesk'
+    $failure = ''
     try {
       Get-NextecInstalledClient -Services @($a.Service, $b.Service) -ProfileRootBase $base `
         -PeerIdReader { param($service, $exe) '812345678' } | Out-Null
-    } catch { $failed = $_.Exception.Message -match 'identity_conflict' }
-    Assert-True $failed 'instalações concorrentes devem parar com identity_conflict'
+    } catch { $failure = $_.Exception.Message }
+    Assert-True ($failure -match 'múltiplos serviços/instalações encontrados' -and $failure -match 'Nextec-Connect' -and $failure -match 'RustDesk') 'o teste precisa encontrar duas instalações reais no mesmo perfil e rejeitá-las como múltiplas'
   }
 
   Invoke-Test 'Identity_CustomAppName' {
@@ -91,6 +91,16 @@ try {
     $client = Get-NextecInstalledClient -Services @($fixture.Service) -ProfileRootBase (Join-Path $temp 'custom') `
       -PeerIdReader { param($service, $exe) $fixture.PeerId }
     Assert-True ($client.ConfigRoot -match 'Suporte-Nextec\\config$') 'nome personalizado do executável não determinou o perfil'
+  }
+
+  Invoke-Test 'Identity_AnyDeskServiceIsNotAnotherRustDeskInstall' {
+    $base = Join-Path $temp 'with-anydesk'
+    $fixture = New-TestClient -Root $base -AppName 'Nextec-Connect'
+    $otherExe = Join-Path $base 'AnyDesk.exe'
+    New-Item -ItemType File -Path $otherExe -Force | Out-Null
+    $other = New-TestService -Name 'AnyDesk' -ExePath $otherExe
+    $client = Get-NextecInstalledClient -Services @($other,$fixture.Service) -ProfileRootBase $base -PeerIdReader { '812345678' }
+    Assert-True ($client.ServiceName -eq 'Nextec-Connect') 'AnyDesk deve ser ignorado pela descoberta RustDesk'
   }
 
   Invoke-Test 'Identity_PeerIdCliOutput' {
