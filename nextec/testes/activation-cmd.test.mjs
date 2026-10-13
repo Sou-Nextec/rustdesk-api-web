@@ -60,3 +60,60 @@ test('os caminhos de saída têm códigos distintos: ativada (0), prazo (3) e re
   assert.match(MESSAGES.notInstalled, /não está instalado/)
   assert.match(MESSAGES.otherMachine, /ID/)
 })
+
+// --- localizador do agente: independente do nome do app (regressão do servidor com "Client-Nextec-Connect") ---
+import { FIND_AGENT_PS } from '../../src/nextec/activation-cmd.mjs'
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+const PS51 = process.platform === 'win32' ? 'powershell.exe' : null
+const runFind = (body) => {
+  const script = `${FIND_AGENT_PS}\n$ErrorActionPreference='Stop'\n${body}\n`
+  const r = spawnSync(PS51, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], { encoding: 'utf8' })
+  assert.equal(r.status, 0, r.stderr)
+  return r.stdout.trim()
+}
+
+test('o .cmd embute o localizador e as três mensagens novas, sem acento cru', () => {
+  const t = buildActivationCmd(bundle, NOW)
+  assert.match(t, /function Find-NextecAgent/)
+  assert.match(t, /Find-NextecAgent -DataRoot \$root/)
+  assert.match(t, /-Registrar/)
+  assert.match(MESSAGES.appWithoutAgent, /MESMO nome do app/)
+  assert.match(MESSAGES.appUnknown, /MESMO nome/)
+  assert.match(t, /\[char\]0xE3/)
+  assert.match(t, /^[\x00-\x7F]*$/)
+})
+
+test('PS 5.1: app Client-Nextec-Connect sem agente é achado pelo registro e diz o que falta', { skip: !PS51 }, () => {
+  const d = mkdtempSync(join(realpathSync.native(tmpdir()), 'nxfind-'))
+  try {
+    const pf = join(d, 'PF'); mkdirSync(join(pf, 'Client-Nextec-Connect'), { recursive: true })
+    const out = runFind(`$r = Find-NextecAgent -DataRoot '${join(d, 'PD', 'Nextec', 'Acesso')}' -ProgramRoots @('${pf}') -Entries @([pscustomobject]@{DisplayName='Client-Nextec-Connect';InstallLocation='${join(pf, 'Client-Nextec-Connect')}'}) -TaskArgs @()
+      'script=[' + $r.Script + '] app=[' + $r.App + '] n=' + $r.Searched.Count`)
+    assert.match(out, /script=\[\] app=\[Client-Nextec-Connect\] n=3/)
+  } finally { rmSync(d, { recursive: true, force: true }) }
+})
+
+test('PS 5.1: acha o coordenador na pasta fixa, na instalação do app e por varredura de Program Files', { skip: !PS51 }, () => {
+  const d = mkdtempSync(join(realpathSync.native(tmpdir()), 'nxfind-'))
+  try {
+    const data = join(d, 'PD', 'Nextec', 'Acesso'); mkdirSync(data, { recursive: true })
+    writeFileSync(join(data, 'Coordenar-Agente-Nextec.ps1'), '#')
+    let out = runFind(`(Find-NextecAgent -DataRoot '${data}' -ProgramRoots @() -Entries @() -TaskArgs @()).Script`)
+    assert.equal(out, join(data, 'Coordenar-Agente-Nextec.ps1'))
+
+    const app = join(d, 'PF', 'Client-Nextec-Connect'); mkdirSync(app, { recursive: true })
+    writeFileSync(join(app, 'Coordenar-Agente-Nextec.ps1'), '#')
+    out = runFind(`(Find-NextecAgent -DataRoot '${join(d, 'vazio')}' -ProgramRoots @() -Entries @([pscustomobject]@{DisplayName='Client-Nextec-Connect';InstallLocation='${app}'}) -TaskArgs @()).Script`)
+    assert.equal(out, join(app, 'Coordenar-Agente-Nextec.ps1'))
+
+    out = runFind(`(Find-NextecAgent -DataRoot '${join(d, 'vazio')}' -ProgramRoots @('${join(d, 'PF')}') -Entries @() -TaskArgs @()).Script`)
+    assert.equal(out, join(app, 'Coordenar-Agente-Nextec.ps1'))
+
+    out = runFind(`(Find-NextecAgent -DataRoot '${join(d, 'vazio')}' -ProgramRoots @() -Entries @() -TaskArgs @('-NoProfile -File "${join(app, 'Outro.ps1')}" -Executar')).Script`)
+    assert.equal(out, join(app, 'Coordenar-Agente-Nextec.ps1'))
+  } finally { rmSync(d, { recursive: true, force: true }) }
+})
