@@ -38,9 +38,69 @@ function toBase64(text) {
   return btoa(unescape(encodeURIComponent(text)))
 }
 
+// Localiza o agente sem depender do nome do app (Nextec-Connect, Client-Nextec-Connect, ...). Ordem: pasta de dados
+// fixa, entrada de desinstalação com "Nextec-Connect" no nome, tarefa agendada Nextec, varredura de %ProgramFiles%\*Nextec*.
+// $Entries/$TaskArgs podem ser injetados (testes); sem eles lê o registro e as tarefas reais.
+export const FIND_AGENT_PS = String.raw`function Find-NextecAgent {
+  param([string]$DataRoot, [string[]]$ProgramRoots, $Entries, $TaskArgs)
+  $name = 'Coordenar-Agente-Nextec.ps1'
+  $searched = New-Object System.Collections.ArrayList
+  $r = [pscustomobject]@{ Script = ''; App = ''; AppPath = ''; Searched = $searched }
+  $c = Join-Path $DataRoot $name
+  [void]$searched.Add($c)
+  if (Test-Path -LiteralPath $c -PathType Leaf) { $r.Script = $c; return $r }
+  if ($null -eq $Entries) {
+    $Entries = New-Object System.Collections.ArrayList
+    foreach ($k in @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall')) {
+      foreach ($i in @(Get-ItemProperty -Path ($k + '\*') -ErrorAction SilentlyContinue)) { [void]$Entries.Add($i) }
+    }
+  }
+  foreach ($e in @($Entries)) {
+    if ($e.DisplayName -and ($e.DisplayName -like '*Nextec-Connect*')) {
+      if (-not $r.App) { $r.App = [string]$e.DisplayName }
+      $loc = [string]$e.InstallLocation
+      if ($loc) {
+        if (-not $r.AppPath) { $r.AppPath = $loc }
+        $p = Join-Path $loc $name
+        [void]$searched.Add($p)
+        if (Test-Path -LiteralPath $p -PathType Leaf) { $r.Script = $p; return $r }
+      }
+    }
+  }
+  if ($null -eq $TaskArgs) {
+    $TaskArgs = @()
+    try { $TaskArgs = @(Get-ScheduledTask -TaskName 'Nextec*' -ErrorAction SilentlyContinue | ForEach-Object { $_.Actions } | ForEach-Object { [string]$_.Arguments }) } catch { $TaskArgs = @() }
+  }
+  foreach ($a in @($TaskArgs)) {
+    $m = [regex]::Match($a, '-File\s+"?([^"]+\.ps1)"?')
+    if ($m.Success) {
+      $p = Join-Path (Split-Path -Parent $m.Groups[1].Value) $name
+      [void]$searched.Add($p)
+      if (Test-Path -LiteralPath $p -PathType Leaf) { $r.Script = $p; return $r }
+    }
+  }
+  foreach ($root in @($ProgramRoots)) {
+    if (-not $root -or -not (Test-Path -LiteralPath $root -PathType Container)) { continue }
+    foreach ($d in @(Get-ChildItem -LiteralPath $root -Directory -Filter '*Nextec*' -ErrorAction SilentlyContinue)) {
+      if (-not $r.App) { $r.App = $d.Name }
+      if (-not $r.AppPath) { $r.AppPath = $d.FullName }
+      $cands = @((Join-Path $d.FullName $name))
+      foreach ($sub in @(Get-ChildItem -LiteralPath $d.FullName -Directory -ErrorAction SilentlyContinue)) { $cands += (Join-Path $sub.FullName $name) }
+      foreach ($p in $cands) {
+        [void]$searched.Add($p)
+        if (Test-Path -LiteralPath $p -PathType Leaf) { $r.Script = $p; return $r }
+      }
+    }
+  }
+  return $r
+}`
+
 export const MESSAGES = {
   expired: 'O prazo de 15 minutos venceu. Gere uma nova autorização no painel.',
-  notInstalled: 'O agente Nextec não está instalado nesta máquina. Instale o Nextec-Connect e tente de novo.',
+  notInstalled: 'O agente Nextec não está instalado nesta máquina e nenhum app Nextec foi encontrado. Instale o Nextec-Connect gerado pelo painel e tente de novo.',
+  appWithoutAgent: 'O app instalado ({0}) não contém o agente Nextec. Gere o instalador no gerador com o MESMO nome do app ({0}) e instale por cima: o ID e o cliente são mantidos. Depois execute este arquivo de novo.',
+  appUnknown: 'O app instalado não contém o agente Nextec. Gere o instalador no gerador com o MESMO nome do app instalado e instale por cima: o ID e o cliente são mantidos. Depois execute este arquivo de novo.',
+  searched: ' Procurei em: ',
   otherMachine: 'Este arquivo é de outra máquina (o ID não confere). Gere a autorização para esta máquina.',
   pending: 'Já existe uma ativação em andamento nesta máquina. Aguarde até 5 minutos.',
   invalid: 'A autorização é inválida. Gere outra no painel.',
@@ -78,7 +138,18 @@ export function buildActivationCmd(bundle, now = Date.now()) {
     '}',
     "$root = Join-Path $env:ProgramData 'Nextec\\Acesso'",
     "$coord = Join-Path $root 'Coordenar-Agente-Nextec.ps1'",
-    'if (-not (Test-Path -LiteralPath $coord -PathType Leaf)) { Say (' + m.notInstalled + '); exit 1 }',
+    ...FIND_AGENT_PS.split('\n'),
+    '$pf = @($env:ProgramFiles, ${env:ProgramFiles(x86)})',
+    '$found = Find-NextecAgent -DataRoot $root -ProgramRoots $pf',
+    'if ($found.Script -and ($found.Script -ine $coord)) {',
+    "  try { & (Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe') -NoProfile -ExecutionPolicy Bypass -File $found.Script -Registrar | Out-Null } catch { }",
+    '}',
+    'if (-not (Test-Path -LiteralPath $coord -PathType Leaf)) {',
+    '  $where = (' + m.searched + " + ($found.Searched -join '; '))",
+    "  if ($found.App) { Say ((" + m.appWithoutAgent + ").Replace('{0}', $found.App) + $where) }",
+    '  else { Say (' + m.notInstalled + ' + $where) }',
+    '  exit 1',
+    '}',
     "$dir = Join-Path $root ('ativar-' + [guid]::NewGuid().ToString('N'))",
     '$code = 1',
     'try {',
@@ -93,7 +164,7 @@ export function buildActivationCmd(bundle, now = Date.now()) {
     '  if ($LASTEXITCODE -eq 0) { Say (' + m.ok + '); $code = 0 }',
     '  else {',
     "    if ($out -match 'identity_conflict') { Say (" + m.otherMachine + ') }',
-    "    elseif ($out -match 'component_missing') { Say (" + m.notInstalled + ') }',
+    "    elseif ($out -match 'component_missing') { Say (" + m.appUnknown + ') }',
     "    elseif ($out -match 'pending_authorization') { Say (" + m.pending + ') }',
     "    elseif ($out -match 'administrator_required') { Say (" + m.notAdmin + ') }',
     "    elseif ($out -match 'unsafe_path') { Say (" + m.unsafe + ') }',
