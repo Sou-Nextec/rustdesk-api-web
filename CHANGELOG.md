@@ -2,6 +2,12 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.9
+
+- **Itens gerados, excluir o que não serve:** cada item pronto ou com erro tem o botão **Excluir** (confirmação curta). Há seleção múltipla com **Excluir selecionados** e o botão **Limpar falhas**, que remove de uma vez tudo o que falhou, ficou incompleto ou parou sem terminar.
+- **Segurança da exclusão:** itens em andamento não podem ser excluídos; itens que já foram enviados para Atualizações pedem uma confirmação extra (só os arquivos de download saem; a versão preparada no painel não é afetada). O servidor valida o identificador, apaga somente a pasta do próprio item e registra quem excluiu.
+- **Formulário do gerador mais simples:** o essencial (plataforma, nome do instalador e do app, cliente, versão do pacote, ícone) fica à frente, com os valores Nextec já aplicados e explicados em uma linha. Servidor, segurança, aparência, permissões e modelos ficam em **Avançado**, recolhido. Erros aparecem no próprio campo. **O rdgen precisa ser atualizado** (`feat/gerador-simplificado`) para a exclusão e o novo formulário.
+
 ## 2.11.5
 
 - **Corrigido, "O agente Nextec não está instalado" em app com outro nome:** o `Ativar-Nextec-<ID>.cmd` agora localiza o agente sem depender do nome do app (pasta `%ProgramData%\Nextec\Acesso`, entrada de desinstalação com "Nextec-Connect", tarefa agendada Nextec e varredura de `%ProgramFiles%\*Nextec*`). Se achar os scripts na pasta do app, registra o coordenador sozinho.
