@@ -44,7 +44,7 @@
 
 <style lang="scss" scoped>
   .menus {
-    min-height: 100vh;
+    min-height: 100%;
     border-right: none;
     &:not(.el-menu--collapse) {
       width: var(--sideBarWidth);

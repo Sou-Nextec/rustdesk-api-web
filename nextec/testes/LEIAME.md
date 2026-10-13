@@ -48,3 +48,19 @@ contêiner em outra. Alguns scripts esperam um banco recém-criado; se um teste 
 
 Salve em UTF-8 com BOM e valide no PowerShell 5.1 (`[System.Management.Automation.Language.Parser]::ParseFile`), senão
 acentos quebram a leitura. Em `Generic.List`, use `.ToArray()` em vez de `@($lista)`.
+
+## Testes do painel (front-end, sem contêiner)
+
+Rodam no CI (workflow "Regressoes do cliente Nextec", antes do `npm run build`) e localmente depois de `npm ci`:
+
+| Comando | Arquivo | O que garante |
+| --- | --- | --- |
+| `npm test` (`node --test nextec/testes/*.test.mjs`) | `templates-declarados.test.mjs` | Verificação estática: nenhum `.vue` com `<script setup>` de `src/nextec` e `src/layout` usa no template um nome que o script não declara (era a tela em branco de Senhas dos servidores) |
+| `npm test` | `rodape-versao.test.mjs` | Rodapé com a versão é elemento próprio, fora da área rolável do menu, e mostra `master-<sha>` quando o build informa |
+| `npm run test:nav` (`vitest`, jsdom) | `navegacao.spec.mjs` | Monta o App com o router real, o layout e as telas Nextec e percorre as rotas em sequência A, B, A, C (inclui ida e volta de Senhas dos servidores). Falha com erro no console, `app.config.errorHandler`, `unhandledrejection`, aviso do Vue sobre raiz sem elemento em `<transition>`, tela vazia ou `RenderGuard` preso |
+
+A API é simulada em `navegacao.spec.mjs` (`vi.mock('@/utils/request')`); nenhum servidor é necessário.
+
+Regras que esses testes protegem: toda tela de rota tem **um único elemento na raiz** (o `<transition mode="out-in">` do
+layout não conclui a saída de raiz sem elemento e a tela seguinte nunca entra) e todo nome usado no template existe no script.
+Dependências de teste ficam só em `devDependencies` (`vitest`, `jsdom`).
