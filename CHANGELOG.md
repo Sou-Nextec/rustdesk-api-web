@@ -2,6 +2,13 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.10
+
+- **Painel configurável, nada fixo:** os scripts do agente (Windows `.ps1` e Linux `.py` do coordenador) leem o endereço do painel do `inscricao.json` instalado (ou do `nextec-marker.json`), nunca da rede. Trocar de domínio não quebra a frota: o valor do arquivo vence o cadastro antigo e o `-UrlBase` do atualizador.
+- **Validação do host:** só `https://dominio`, sem credencial, IP literal, porta, caminho ou consulta; sem redirecionamento. Sem arquivo (instalação antiga), cai no painel padrão e grava aviso no log.
+- **Tela de ativação:** o painel esperado passa a ser a origem da própria página, em vez de um valor fixo.
+- Novos testes (PowerShell 5.1, Python e node). Pendente: `atualizador-linux.py` e `agente-senha-linux.py` não estão nesta base e precisam do mesmo tratamento; o rdgen deve ressincronizar os scripts e gravar `inscricao.json` com `painel` válido.
+
 ## 2.11.6
 
 - **Nome do app livre:** o painel não depende mais de nome fixo (Nextec-Connect, XPTO ou qualquer outro). O `Ativar-Nextec-<ID>.cmd` localiza o agente pelo marcador de instalação (`HKLM\SOFTWARE\Nextec\Agente` {InstallDir, AppName} ou `%ProgramData%\Nextec\Acesso\nextec-marker.json`), depois por entrada de desinstalação, serviço RustDesk e varredura limitada, e lista tudo o que procurou.
