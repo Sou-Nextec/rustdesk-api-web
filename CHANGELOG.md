@@ -12,6 +12,10 @@ Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no p
 - Script do painel `Coordenar-Agente-Nextec.ps1`: novo parâmetro `-ArquivoAutorizacao` (usado com `-Receber`, sem diálogo; o arquivo é apagado ao final). **O rdgen precisa ressincronizar os scripts vendored.**
 - Novos testes: `secrets-flow`, `activation-cmd`, montagem da tela nos quatro estados e o teste do coordenador.
 
+## 2.11.3
+
+- **Corrigido, instalador gerado sem a chave de inscrição:** a stack do Portainer não repassava `NX_ENROLL_KEY` ao serviço do gerador. Agora a variável `GERADOR_ENROLL_KEY` (credencial do card "Credencial de inscrição") é repassada. Defina-a no Portainer, faça Pull and redeploy e gere um instalador novo; os antigos não têm a chave. Passo a passo em `nextec/deploy/GERADOR.md`.
+
 ## 2.11.2
 
 - **Corrigido, tela quebrava ao voltar de "Senhas dos servidores" para outra:** o guarda de erro dessa tela tinha como raiz um slot, e o efeito de transição do conteúdo (entrada só depois da saída) não concluía a saída de uma raiz sem elemento. A tela seguinte nunca entrava e só o F5 resolvia. O guarda agora tem um elemento único na raiz e zera o estado de erro ao trocar de tela.

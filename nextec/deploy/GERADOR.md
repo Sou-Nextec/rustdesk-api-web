@@ -16,6 +16,7 @@ A imagem é `ghcr.io/sou-nextec/rdgen-nextec`, publicada pelo repositório `Sou-
 | `GERADOR_SECRET_KEY` | opcional: deixe vazia e o gerador cria uma chave aleatória e guarda no volume |
 | `GERADOR_EMAILS_AUTORIZADOS` | e-mails que podem gerar clientes, separados por vírgula (ex.: `admin@nex.tec.br,tecnico@nex.tec.br`). Vazio = qualquer pessoa que passe pelo Access. **Recomendado preencher** |
 | `GERADOR_SH_SECRET` | o mesmo `SH_SECRET` do compose antigo, ou qualquer texto longo |
+| `GERADOR_ENROLL_KEY` | credencial de inscrição do painel (veja a seção abaixo). Vazia = o instalador sai sem a chave e o build avisa |
 
 Os nomes originais do rdgen (`GHBEARER`, `GHUSER`, `ZIP_PASSWORD`, `SECRET_KEY`, `SH_SECRET`, `GENURL`) também funcionam no
 Portainer; se os dois existirem, vale o `GERADOR_*`.
@@ -27,6 +28,18 @@ cd /caminho/do/rdgen && grep -E 'GHUSER|GHBEARER|ZIP_PASSWORD|SECRET_KEY|SH_SECR
 ```
 
 Se alguma obrigatória faltar, a página `/gerador/` mostra exatamente o que falta (em vez de erro genérico).
+
+### Credencial de inscrição (GERADOR_ENROLL_KEY)
+
+Sem ela o instalador gerado não leva a chave e a máquina não consegue se inscrever sozinha como pendente.
+
+1. No painel, abra **Segurança > Senhas dos servidores** e copie a credencial do card **Credencial de inscrição**.
+2. No Portainer, abra a stack > **Environment variables** e crie `GERADOR_ENROLL_KEY` com esse valor.
+3. Clique em **Update the stack** (marque **Pull and redeploy**).
+4. Gere um instalador **novo** no gerador. Instaladores antigos não têm a chave.
+
+Se a credencial for girada no painel, repita os passos 2 a 4 e gere os instaladores de novo. O servidor de API do instalador
+(`NX_API_SERVER`) já usa `URL_PAINEL` (HTTPS do painel, padrão `https://painel-remoto.nex.tec.br`); confira que `URL_PAINEL` está correta.
 
 ## 2. Túnel da Cloudflare (Zero Trust > Networks > Tunnels > o túnel do painel > Public hostnames)
 
