@@ -297,6 +297,24 @@ try {
   try { Select-NextecBootstrapFilePath -PickFile { $wrongName } | Out-Null } catch { $rejected = ($_.Exception.Message -eq 'invalid_authorization_file') }
   Assert $rejected 'Bootstrap picker accepted a file with a different name'
   Write-Host 'PASS Receive_SelectsBootstrapFileWithoutEchoingContents'
+
+  New-CaseRoot
+  $given = Join-Path $script:root 'bootstrap.json'
+  Set-Content -LiteralPath $given -Value '{"bootstrap":"not-logged"}' -Encoding UTF8
+  function Show-NextecBootstrapFileDialog { throw 'dialog must not open when a file is given' }
+  $viaParam = Get-NextecBootstrapSelection -Path $given
+  Assert ($viaParam -eq [IO.Path]::GetFullPath($given)) 'Given authorization file was not used directly'
+  $badName = Join-Path $script:root 'qualquer.json'
+  Set-Content -LiteralPath $badName -Value '{}'
+  $rejected = $false
+  try { Get-NextecBootstrapSelection -Path $badName | Out-Null } catch { $rejected = ($_.Exception.Message -eq 'invalid_authorization_file') }
+  Assert $rejected 'Given authorization file with another name was accepted'
+  $rejected = $false
+  try { Get-NextecBootstrapSelection | Out-Null } catch { $rejected = ($_.Exception.Message -eq 'dialog must not open when a file is given') }
+  Assert $rejected 'Without a file the picker dialog is not used'
+  $coordinatorText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Coordenar-Agente-Nextec.ps1') -Raw -Encoding UTF8
+  Assert ($coordinatorText -match '\[string\]\$ArquivoAutorizacao' -and $coordinatorText -match 'Remove-Item -LiteralPath \$selectedPath') 'Coordinator lacks -ArquivoAutorizacao or temp file cleanup'
+  Write-Host 'PASS Receive_UsesGivenFileWithoutDialogAndRemovesIt'
 } finally {
   if (Test-Path -LiteralPath $script:root) { Remove-Item -LiteralPath $script:root -Recurse -Force }
 }

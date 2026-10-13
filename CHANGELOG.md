@@ -2,6 +2,16 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.4
+
+- **Fluxo guiado em "Senhas dos servidores":** cada máquina mostra em que etapa está (1 Cliente, 2 Agente, 3 Senha automática) e tem um único botão de próximo passo: Escolher cliente, Instalar agente, Ligar senha automática ou Conectar.
+- **Escolher cliente na própria tela:** diálogo curto com busca e "Criar cliente" no lugar, que já segue para a próxima etapa. Pendentes usam a atribuição do cofre (aprovação, identidade e regra continuam conferidas no servidor); máquinas já aprovadas sem cliente usam a mesma rota de "Mover para um cliente" de Dispositivos.
+- **Topo mais simples:** um aviso com o estado geral e um único botão contextual ("Você tem 2 máquinas sem cliente. Escolher cliente"), mais um bloco recolhível "Como funciona" em 3 passos. Regras, Auditoria, Credencial de inscrição e Autorização individual ficaram no menu "Mais".
+- **Instalar agente com um arquivo só:** o painel baixa `Ativar-Nextec-<ID>.cmd`. Basta copiar para o servidor e dar duplo clique como administrador: ele confere o prazo de 15 minutos e o ID da máquina, entrega a autorização ao agente já instalado, apaga o temporário e mostra "Pronto: máquina ativada. Pode fechar." ou o erro em português. Sem diálogo de arquivo e sem "assistente local".
+- A lista da Autorização individual mostra todas as máquinas; as sem cliente aparecem com selo e levam a "Escolher cliente agora". O estado vazio explica o que fazer.
+- Script do painel `Coordenar-Agente-Nextec.ps1`: novo parâmetro `-ArquivoAutorizacao` (usado com `-Receber`, sem diálogo; o arquivo é apagado ao final). **O rdgen precisa ressincronizar os scripts vendored.**
+- Novos testes: `secrets-flow`, `activation-cmd`, montagem da tela nos quatro estados e o teste do coordenador.
+
 ## 2.11.3
 
 - **Corrigido, instalador gerado sem a chave de inscrição:** a stack do Portainer não repassava `NX_ENROLL_KEY` ao serviço do gerador. Agora a variável `GERADOR_ENROLL_KEY` (credencial do card "Credencial de inscrição") é repassada. Defina-a no Portainer, faça Pull and redeploy e gere um instalador novo; os antigos não têm a chave. Passo a passo em `nextec/deploy/GERADOR.md`.

@@ -1,27 +1,51 @@
 <template>
   <section class="nx-sec" aria-label="Senhas dos servidores">
+    <div v-if="loaded && !loadError" class="nx-hero" role="status">
+      <div class="nx-hero-text">
+        <h2 class="nx-hero-title">{{ summary.text }}</h2>
+        <ul v-if="summary.total" class="nx-chips" aria-label="Resumo das máquinas">
+          <li v-if="summary.counts.client" class="nx-chip is-warn">{{ summary.counts.client }} sem cliente</li>
+          <li v-if="summary.counts.agent" class="nx-chip is-warn">{{ summary.counts.agent }} sem agente</li>
+          <li v-if="summary.counts.rule" class="nx-chip is-warn">{{ summary.counts.rule }} sem senha automática</li>
+          <li v-if="summary.counts.ready" class="nx-chip is-ok">{{ summary.counts.ready }} {{ summary.counts.ready === 1 ? 'pronta' : 'prontas' }}</li>
+        </ul>
+      </div>
+      <el-button v-if="summary.cta" type="primary" size="large" class="nx-hero-cta" @click="onCta">{{ summary.cta.label }}</el-button>
+    </div>
+
+    <section class="nx-how" aria-label="Como funciona">
+      <button type="button" class="nx-how-toggle" :aria-expanded="howOpen ? 'true' : 'false'" aria-controls="nx-how-body" @click="toggleHow">
+        <el-icon><el-icon-ArrowDown v-if="howOpen"/><el-icon-ArrowRight v-else/></el-icon>
+        <span>Como funciona</span>
+      </button>
+      <ol v-show="howOpen" id="nx-how-body" class="nx-how-list">
+        <li><strong>Escolha o cliente.</strong> Diga de qual cliente é a máquina.</li>
+        <li><strong>Instale o agente.</strong> Baixe o arquivo, copie para o servidor e dê duplo clique como administrador.</li>
+        <li><strong>Ligue a senha automática.</strong> A senha troca sozinha e o botão Conectar já entra sem digitar.</li>
+      </ol>
+    </section>
+
     <div class="nx-bar">
       <el-input v-model="q" class="nx-search" clearable placeholder="Buscar máquina, ID ou cliente" aria-label="Buscar máquina">
         <template #prefix><el-icon><el-icon-Search/></el-icon></template>
       </el-input>
       <div class="nx-bar-right">
         <el-button :loading="loading" @click="load"><el-icon><el-icon-Refresh/></el-icon><span>Atualizar</span></el-button>
-        <el-button @click="rules.visible = true">Regras</el-button>
-        <el-button @click="openAudit">Auditoria</el-button>
-        <el-button @click="openKey">Credencial de inscrição</el-button>
-        <el-button @click="openAgent">Autorização individual</el-button>
-        <el-button type="primary" @click="openAdd"><el-icon><el-icon-Plus/></el-icon><span>Ligar em uma máquina</span></el-button>
+        <el-dropdown trigger="click" @command="onMore">
+          <el-button aria-label="Mais opções"><span>Mais</span><el-icon class="el-icon--right"><el-icon-ArrowDown/></el-icon></el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="rules">Regras</el-dropdown-item>
+              <el-dropdown-item command="audit">Auditoria</el-dropdown-item>
+              <el-dropdown-item command="key">Credencial de inscrição</el-dropdown-item>
+              <el-dropdown-item command="agent">Autorização individual</el-dropdown-item>
+              <el-dropdown-item command="add" divided>Ligar em uma máquina pelo ID</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
     </div>
 
-    <el-alert
-      type="info"
-      :closable="false"
-      show-icon
-      title="Instalou, a máquina aparece em Pendentes, você atribui a um cliente."
-      description="O instalador é o mesmo para todos os clientes. A máquina se inscreve sozinha como pendente, sem senha e sem acesso. Só depois que você a atribui a um cliente (aba Pendentes) o cofre passa a gerar a senha e o botão Conectar a preenche, para quem tem acesso ao cliente. A autorização individual de 15 minutos continua disponível para casos especiais."
-      class="nx-agent-help"
-    />
     <el-alert
       v-if="loadError"
       type="error"
@@ -72,10 +96,15 @@
             <div class="nx-muted nx-small">{{ viaText[row.enrolled_via] || 'Inscrição global' }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="Ações" width="270" fixed="right">
+        <el-table-column label="Próximo passo" min-width="250">
+          <template #default="{ row }">
+            <machine-steps :device="row"/>
+            <el-button size="small" type="primary" class="nx-next" @click="onNext(row)">{{ nextStep(row).label }}</el-button>
+          </template>
+        </el-table-column>
+        <el-table-column label="Ações" width="200" fixed="right">
           <template #default="{ row }">
             <div class="nx-row-actions">
-              <el-button size="small" type="primary" @click="openAssign(row)">Atribuir</el-button>
               <el-button size="small" @click="rejectRow(row, false)">Rejeitar</el-button>
               <el-button size="small" @click="rejectRow(row, true)"><span class="nx-danger-text">Bloquear</span></el-button>
             </div>
@@ -104,43 +133,33 @@
             <div class="nx-muted nx-small nx-mono">{{ fmtId(row.peer_id) }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="Cliente" min-width="150">
+        <el-table-column label="Cliente" min-width="140">
           <template #default="{ row }">
             <el-tag v-if="groupName(row.group_id)" disable-transitions>{{ groupName(row.group_id) }}</el-tag>
-            <span v-else class="nx-muted">-</span>
+            <el-tag v-else type="warning" disable-transitions>Sem cliente</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="Senha automática" min-width="150">
+        <el-table-column label="Próximo passo" min-width="250">
           <template #default="{ row }">
-            <template v-if="row.managed && row.enrolled">
-              <span><span class="nx-dot is-on" aria-hidden="true"></span>Ligada, troca a cada {{ every(row.interval_minutes) }}</span>
-            </template>
-            <el-tooltip v-else-if="row.managed" content="A regra está configurada, mas só começa a trocar a senha depois que o agente Nextec for instalado nesta máquina." placement="top">
-              <span class="nx-warn-text"><span class="nx-dot is-warn" aria-hidden="true"></span>Regra pronta · agente pendente</span>
-            </el-tooltip>
-            <span v-else class="nx-muted"><span class="nx-dot is-off" aria-hidden="true"></span>Desligada</span>
+            <machine-steps :device="row"/>
+            <el-button size="small" type="primary" class="nx-next" @click="onNext(row)">{{ nextStep(row).label }}</el-button>
           </template>
         </el-table-column>
-        <el-table-column label="Agente" min-width="150">
+        <el-table-column label="Situação" min-width="230">
           <template #default="{ row }">
-            <template v-if="row.enrolled">
-              <span class="nx-dot" :class="seenRecently(row) ? 'is-on' : 'is-warn'" aria-hidden="true"></span>
-              <span>{{ seenRecently(row) ? 'Ativo' : 'Sem contato' }}</span>
-              <div class="nx-muted nx-small">visto {{ ago(row.last_seen_at) }}</div>
-              <div v-if="row.enrolled_via" class="nx-muted nx-small">{{ viaText[row.enrolled_via] }}</div>
-            </template>
-            <el-tooltip v-else content="O agente ainda não foi cadastrado nesta máquina. Use Cadastrar máquina e execute o comando no servidor como administrador." placement="top">
-              <span class="nx-warn-text">Agente não cadastrado</span>
-            </el-tooltip>
-          </template>
-        </el-table-column>
-        <el-table-column label="Senha" min-width="170">
-          <template #default="{ row }">
-            <template v-if="row.has_password">
-              <div>Versão {{ row.version }}, trocada {{ ago(row.active_at) }}</div>
-              <div class="nx-muted nx-small">{{ row.managed ? 'próxima ' + until(row.next_rotation_at) : 'regra desligada' }}</div>
-            </template>
-            <span v-else class="nx-muted">{{ row.managed && !row.enrolled ? 'Aguardando instalação do agente' : row.enrolled && row.managed ? 'Aguardando a primeira troca' : 'Sem senha ainda' }}</span>
+            <div>
+              <template v-if="row.enrolled">
+                <span class="nx-dot" :class="seenRecently(row) ? 'is-on' : 'is-warn'" aria-hidden="true"></span>
+                <span>Agente {{ seenRecently(row) ? 'ativo' : 'sem contato' }}</span>
+                <span class="nx-muted nx-small"> · visto {{ ago(row.last_seen_at).toLowerCase() }}</span>
+              </template>
+              <span v-else class="nx-muted"><span class="nx-dot is-off" aria-hidden="true"></span>Agente não cadastrado</span>
+            </div>
+            <div v-if="row.managed && row.enrolled" class="nx-small"><span class="nx-dot is-on" aria-hidden="true"></span>Senha troca a cada {{ every(row.interval_minutes) }}</div>
+            <div v-else-if="row.managed" class="nx-small nx-warn-text"><span class="nx-dot is-warn" aria-hidden="true"></span>Regra pronta, falta o agente</div>
+            <div v-else class="nx-small nx-muted"><span class="nx-dot is-off" aria-hidden="true"></span>Senha automática desligada</div>
+            <div v-if="row.has_password" class="nx-small nx-muted">Senha versão {{ row.version }}, trocada {{ ago(row.active_at).toLowerCase() }}<template v-if="row.managed">, próxima {{ until(row.next_rotation_at) }}</template></div>
+            <div v-else-if="row.managed && row.enrolled" class="nx-small nx-muted">Aguardando a primeira troca</div>
           </template>
         </el-table-column>
         <el-table-column label="Ações" width="260" fixed="right">
@@ -156,7 +175,7 @@
                 <el-button size="small" aria-label="Mais ações"><el-icon><el-icon-MoreFilled/></el-icon></el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
-                    <el-dropdown-item v-if="!row.managed" command="on">Ligar nesta máquina</el-dropdown-item>
+                    <el-dropdown-item v-if="!row.managed" command="on">Ligar senha automática</el-dropdown-item>
                     <el-dropdown-item v-else command="off">Desligar nesta máquina</el-dropdown-item>
                     <el-dropdown-item v-if="row.enrolled" command="unenroll" divided><span class="nx-danger-text">Remover agente</span></el-dropdown-item>
                   </el-dropdown-menu>
@@ -167,51 +186,60 @@
         </el-table-column>
       </el-table>
       <el-empty v-if="!loading && !filtered.length" :image-size="72"
-                :description="devices.length ? 'Nenhuma máquina encontrada.' : 'Nenhuma máquina com senha automática ainda.'">
-        <p v-if="!devices.length">Ligue a regra em um grupo (por exemplo, Servidores de cada cliente) ou em uma máquina e instale o agente nela.</p>
-        <el-button v-if="!devices.length" type="primary" @click="rules.visible = true">Abrir regras</el-button>
+                :description="devices.length ? 'Nenhuma máquina encontrada.' : 'Nenhuma máquina por aqui ainda.'">
+        <p v-if="!devices.length">Instale o Nextec-Connect na máquina e aguarde 1 minuto. Ela aparece em Pendentes para você escolher o cliente.</p>
+        <el-button v-if="!devices.length" type="primary" @click="openKey">Ver credencial de inscrição</el-button>
       </el-empty>
       <div v-if="filtered.length > pageSize" class="nx-pager">
         <el-pagination v-model:current-page="page" v-model:page-size="pageSize" layout="total, prev, pager, next" :total="filtered.length" background/>
       </div>
     </div>
 
-    <!-- atribuir a um cliente -->
-    <el-dialog v-model="assign.visible" class="nx-dlg" title="Atribuir a um cliente" width="min(560px, 92vw)">
-      <p class="nx-help nx-help-top">
-        {{ assign.name }} ({{ fmtId(assign.peer) }}). Só depois de atribuir, o cofre passa a gerar e liberar a senha desta máquina.
-      </p>
+    <!-- escolher cliente -->
+    <el-dialog v-model="pick.visible" class="nx-dlg" title="Escolher cliente" width="min(520px, 92vw)">
+      <p class="nx-help nx-help-top">{{ pick.name }} ({{ fmtId(pick.peer) }}). Só depois do cliente o cofre gera e libera a senha desta máquina.</p>
       <el-form label-position="top" class="nx-form" @submit.prevent>
         <el-form-item label="Cliente" required class="is-required">
-          <el-select v-model="assign.client" filterable placeholder="Escolha o cliente">
-            <el-option v-for="g in groups" :key="g.id" :label="g.name" :value="g.id"/>
+          <el-select v-model="pick.client" filterable :filter-method="onClientFilter" placeholder="Busque o cliente" no-data-text="Nenhum cliente com esse nome." @visible-change="onClientOpen">
+            <el-option v-for="g in clientOptions" :key="g.id" :label="g.name" :value="g.id"/>
           </el-select>
         </el-form-item>
-        <el-form-item label="Senha automática">
-          <el-radio-group v-model="assign.rule" class="nx-radios">
-            <el-radio value="group">Usar a regra do cliente</el-radio>
-            <el-radio value="peer">Regra só desta máquina</el-radio>
-            <el-radio value="none">Não ligar agora</el-radio>
-          </el-radio-group>
-          <p v-if="assign.rule === 'group' && assign.client && !groupRuleOn" class="nx-help nx-warn-text" role="alert">
-            Este cliente não tem regra de senha ligada. Escolha a regra da máquina ou ligue a regra do cliente em Regras.
-          </p>
-        </el-form-item>
-        <el-form-item v-if="assign.rule === 'peer'" label="Trocar a cada">
-          <el-select v-model="assign.interval"><el-option v-for="o in intervals" :key="o.value" :label="o.label" :value="o.value"/></el-select>
-        </el-form-item>
-        <el-form-item v-if="assignOtherClient">
-          <el-checkbox v-model="assign.move">Esta máquina já está em "{{ groupName(assign.currentGroup) }}". Mover para o cliente escolhido.</el-checkbox>
-        </el-form-item>
+        <div class="nx-create">
+          <el-button v-if="!pick.creating" text type="primary" @click="startCreate">Criar cliente</el-button>
+          <div v-else class="nx-create-row">
+            <el-input v-model="pick.newName" placeholder="Nome do novo cliente" maxlength="60" aria-label="Nome do novo cliente" @keyup.enter="createClient"/>
+            <el-button type="primary" :loading="pick.createBusy" @click="createClient">Criar e usar</el-button>
+            <el-button @click="pick.creating = false">Cancelar</el-button>
+          </div>
+          <p v-if="pick.createError" class="nx-error" role="alert">{{ pick.createError }}</p>
+        </div>
+        <template v-if="pick.pending">
+          <el-form-item label="Senha automática">
+            <el-radio-group v-model="pick.rule" class="nx-radios">
+              <el-radio value="group">Usar a regra do cliente</el-radio>
+              <el-radio value="peer">Regra só desta máquina</el-radio>
+              <el-radio value="none">Não ligar agora</el-radio>
+            </el-radio-group>
+            <p v-if="pick.rule === 'group' && pick.client && !groupRuleOn" class="nx-help nx-warn-text" role="alert">
+              Este cliente não tem regra ligada. Escolha a regra da máquina ou ligue a regra do cliente em Mais, Regras.
+            </p>
+          </el-form-item>
+          <el-form-item v-if="pick.rule === 'peer'" label="Trocar a cada">
+            <el-select v-model="pick.interval"><el-option v-for="o in intervals" :key="o.value" :label="o.label" :value="o.value"/></el-select>
+          </el-form-item>
+          <el-form-item v-if="pickOtherClient">
+            <el-checkbox v-model="pick.move">Esta máquina já está em "{{ groupName(pick.currentGroup) }}". Mover para o cliente escolhido.</el-checkbox>
+          </el-form-item>
+        </template>
       </el-form>
       <p class="nx-help">
         O técnico acessa pela lista "Cliente: nome do cliente", em
-        <router-link to="/user/clientAccess" @click="assign.visible = false">Acesso por cliente</router-link>.
+        <router-link to="/user/clientAccess" @click="pick.visible = false">Acesso por cliente</router-link>.
       </p>
-      <p v-if="assign.error" class="nx-error" role="alert">{{ assign.error }}</p>
+      <p v-if="pick.error" class="nx-error" role="alert">{{ pick.error }}</p>
       <template #footer>
-        <el-button @click="assign.visible = false">Cancelar</el-button>
-        <el-button type="primary" :loading="assign.loading" :disabled="!canAssign" @click="doAssign">Atribuir</el-button>
+        <el-button @click="pick.visible = false">Cancelar</el-button>
+        <el-button type="primary" :loading="pick.loading" :disabled="!canPick" @click="doPick">Confirmar e seguir</el-button>
       </template>
     </el-dialog>
 
@@ -310,15 +338,30 @@
       </template>
     </el-dialog>
 
-    <!-- cadastrar máquina (agente) -->
-    <el-dialog v-model="agent.visible" class="nx-dlg" title="Ativar gerenciamento" width="min(620px, 92vw)">
-      <p class="nx-help nx-help-top">Autorize uma máquina já vinculada ao cliente. A autorização vale por 15 minutos e somente para o ID escolhido.</p>
-      <el-select v-model="agent.peer" filterable placeholder="Selecione a máquina" style="width:100%" :disabled="agent.loading">
-        <el-option v-for="d in devices.filter(d => d.group_id && !d.enrolled)" :key="d.peer_id" :value="d.peer_id" :label="`${d.alias || d.hostname || 'Máquina'} · ${fmtId(d.peer_id)}`" />
+    <!-- instalar agente (autorização individual) -->
+    <el-dialog v-model="agent.visible" class="nx-dlg" title="Instalar agente" width="min(620px, 92vw)">
+      <ol class="nx-agent-steps">
+        <li>Escolha a máquina e baixe o arquivo.</li>
+        <li>Copie o arquivo para o servidor.</li>
+        <li>Dê duplo clique como administrador. Leva alguns segundos.</li>
+      </ol>
+      <el-select v-model="agent.peer" filterable placeholder="Selecione a máquina" style="width:100%" :disabled="agent.loading" no-data-text="Nenhuma máquina encontrada.">
+        <el-option v-for="o in agentChoices" :key="o.peer_id" :value="o.peer_id" :label="`${o.name} · ${fmtId(o.peer_id)}${o.badge ? ' · ' + o.badge : ''}`">
+          <span>{{ o.name }} · {{ fmtId(o.peer_id) }}</span>
+          <el-tag v-if="o.badge" size="small" :type="o.needsClient ? 'warning' : 'info'" disable-transitions class="nx-opt-tag">{{ o.badge }}</el-tag>
+        </el-option>
       </el-select>
-      <p class="nx-help">Se a máquina não aparece, vincule-a a um cliente em Dispositivos. O app precisa estar instalado como serviço.</p>
-      <el-button type="primary" :loading="agent.loading" :disabled="!agent.peer" @click="downloadActivation">Baixar autorização da máquina</el-button>
-      <p class="nx-help">Na sessão confiável do AnyDesk ou RustDesk, abra o assistente local de ativação como administrador e entregue esta autorização. Depois, cadastro, senha e verificações são automáticos. Não envie o arquivo por um link público.</p>
+      <div v-if="!agentChoices.length" class="nx-empty-inline" role="status">
+        <p class="nx-help">{{ AGENT_EMPTY_NOTICE }}</p>
+        <el-button size="small" :loading="loading" @click="load">Atualizar</el-button>
+      </div>
+      <el-alert v-if="agentNeedsClient" type="warning" :closable="false" show-icon :title="NEEDS_CLIENT_NOTICE" class="nx-agent-warn">
+        <el-button size="small" type="primary" @click="chooseFromAgent">Escolher cliente agora</el-button>
+      </el-alert>
+      <div class="nx-agent-go">
+        <el-button type="primary" :loading="agent.loading" :disabled="!agent.peer || agentNeedsClient" @click="downloadActivation">Baixar arquivo de ativação</el-button>
+      </div>
+      <p class="nx-help">A autorização vale por 15 minutos e só para a máquina escolhida. O app Nextec-Connect precisa estar instalado no servidor. Não envie o arquivo por link público.</p>
       <p v-if="agent.error" class="nx-error" role="alert">{{ agent.error }}</p>
       <template #footer><el-button type="primary" @click="agent.visible = false">Fechar</el-button></template>
     </el-dialog>
@@ -338,19 +381,26 @@
 </template>
 
 <script setup>
-  import { computed, onMounted, reactive, ref } from 'vue'
+  import { computed, onMounted, reactive, ref, watch } from 'vue'
   import { fmtId } from '@/nextec/id'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { secretActionState, assignPayload } from '@/nextec/secret-actions.mjs'
   import { normalizeOverview, normalizeGroups } from '@/nextec/secrets-data.mjs'
-  import { list as groupList } from '@/api/device_group'
-  import { list as peerList } from '@/api/peer'
+  import {
+    machineStage, nextStep, overallSummary, firstNeeding, agentOptions, filterClients, newClientName, findClientByName,
+    movePayload, defaultAssignRule, afterClientStep, friendlyError, NEEDS_CLIENT_NOTICE, AGENT_EMPTY_NOTICE,
+  } from '@/nextec/secrets-flow.mjs'
+  import { buildActivationCmd, activationFileName, downloadActivationCmd } from '@/nextec/activation-cmd.mjs'
+  import { connectDevice } from '@/nextec/connect'
+  import { list as groupList, create as groupCreate } from '@/api/device_group'
+  import { list as peerList, update as peerUpdate } from '@/api/peer'
+  import MachineSteps from './MachineSteps.vue'
   import { timeAgo } from '@/utils/time'
   import {
     secretsOverview, secretsPolicy, secretsRotate, secretsReveal, secretsUnenroll, secretsBootstrap, secretsAudit,
     secretsAssign, secretsReject, secretsUnblock, enrollKeyGet, enrollKeyRotate,
   } from '@/nextec/api'
-  import { activationBundle, downloadLocalJson } from '@/nextec/local-requests.mjs'
+  import { activationBundle } from '@/nextec/local-requests.mjs'
   import '../list-page.scss'
 
   const loading = ref(false)
@@ -363,6 +413,7 @@
   const pendingCount = ref(0)
   const staleCount = ref(0)
   const loadError = ref(false)
+  const loaded = ref(false)
   const blockedDlg = reactive({ visible: false })
   const tab = ref('machines')
   const viaText = { self: 'Inscrição global', bootstrap: 'Autorização individual', legacy: 'Chave do agente' }
@@ -378,6 +429,7 @@
     const [ov, g] = await Promise.all([secretsOverview().catch(() => false), groupList({ page: 1, page_size: 9999 }).catch(() => false)])
     loading.value = false
     loadError.value = !ov
+    if (ov) loaded.value = true
     if (ov) {
       const n = normalizeOverview(ov)
       devices.value = n.devices
@@ -390,6 +442,46 @@
     if (g) groups.value = normalizeGroups(g)
   }
   onMounted(load)
+  const reloadGroups = async () => {
+    const g = await groupList({ page: 1, page_size: 9999 }).catch(() => false)
+    if (g) groups.value = normalizeGroups(g)
+  }
+
+  // ---------- resumo e como funciona ----------
+  const summary = computed(() => overallSummary(devices.value))
+  const HOW_KEY = 'nx-secrets-how-open'
+  const readHow = () => { try { return localStorage.getItem(HOW_KEY) !== '0' } catch (e) { return true } }
+  const howOpen = ref(readHow())
+  const toggleHow = () => {
+    howOpen.value = !howOpen.value
+    try { localStorage.setItem(HOW_KEY, howOpen.value ? '1' : '0') } catch (e) { /* opcional */ }
+  }
+  const onCta = () => {
+    const a = summary.value.cta && summary.value.cta.action
+    if (a === 'show-key') return openKey()
+    const stage = { 'choose-client': 'client', 'install-agent': 'agent', 'enable-rule': 'rule' }[a]
+    const row = firstNeeding(devices.value, stage)
+    if (row) { if (stage === 'client' && row.state === 'pending') tab.value = 'pending'; onNext(row) }
+  }
+  const onMore = (cmd) => {
+    if (cmd === 'rules') rules.visible = true
+    else if (cmd === 'audit') openAudit()
+    else if (cmd === 'key') openKey()
+    else if (cmd === 'agent') openAgent()
+    else if (cmd === 'add') openAdd()
+  }
+  // Um botão por máquina: o que ele faz depende só da etapa em que a máquina está.
+  const onNext = async (row) => {
+    const a = nextStep(row).action
+    if (a === 'choose-client') openChoose(row)
+    else if (a === 'install-agent') openAgent(row.peer_id)
+    else if (a === 'enable-rule') await enableRule(row)
+    else if (a === 'connect') await connectDevice(row.peer_id)
+  }
+  const enableRule = async (row) => {
+    const r = await secretsPolicy({ kind: 'peer', ref: row.peer_id, enabled: true, interval_minutes: row.interval_minutes || 180 }).catch(() => false)
+    if (r) { ElMessage.success('Senha automática ligada. A primeira troca acontece na próxima verificação do agente (até 5 minutos).'); load() }
+  }
 
   const groupName = id => (id && groups.value.find(g => g.id === id)?.name) || ''
   const groupPolicies = computed(() => policies.value.filter(p => p.kind === 'group'))
@@ -464,29 +556,74 @@
     }
   }
 
-  // ---------- pendentes: atribuir, rejeitar, bloquear ----------
-  const assign = reactive({ visible: false, loading: false, error: '', peer: '', name: '', client: null, rule: 'group', interval: 180, move: false, currentGroup: 0, uuid: '' })
-  const openAssign = (row) => {
-    Object.assign(assign, {
+  // ---------- escolher cliente (pendentes e máquinas sem cliente) ----------
+  const pick = reactive({
+    visible: false, loading: false, error: '', peer: '', name: '', pending: false, uuid: '', client: null, term: '',
+    rule: 'none', interval: 180, move: false, currentGroup: 0, creating: false, newName: '', createError: '', createBusy: false,
+  })
+  const openChoose = (row) => {
+    Object.assign(pick, {
       visible: true, loading: false, error: '', peer: row.peer_id, name: row.alias || row.hostname || 'Máquina',
-      client: row.group_id || null, rule: 'group', interval: 180, move: false, currentGroup: row.group_id || 0, uuid: row.uuid || '',
+      pending: row.state === 'pending', uuid: row.uuid || '', client: row.group_id || null, term: '', rule: 'none', interval: 180,
+      move: false, currentGroup: row.group_id || 0, creating: false, newName: '', createError: '', createBusy: false,
     })
   }
-  const groupRuleOn = computed(() => policies.value.some(p => p.kind === 'group' && Number(p.ref) === assign.client && p.enabled))
-  const assignOtherClient = computed(() => !!assign.currentGroup && !!assign.client && assign.client !== assign.currentGroup)
-  const canAssign = computed(() => !!assign.client && !(assign.rule === 'group' && !groupRuleOn.value) && (!assignOtherClient.value || assign.move))
-  const doAssign = async () => {
-    assign.loading = true
-    assign.error = ''
+  const clientOptions = computed(() => filterClients(groups.value, pick.term))
+  const onClientFilter = (t) => { pick.term = t || '' }
+  const onClientOpen = (open) => { if (open) pick.term = '' }
+  const groupRuleOn = computed(() => policies.value.some(p => p.kind === 'group' && Number(p.ref) === pick.client && p.enabled))
+  watch(() => pick.client, () => { if (pick.pending) pick.rule = defaultAssignRule(groupRuleOn.value) })
+  const pickOtherClient = computed(() => !!pick.currentGroup && !!pick.client && pick.client !== pick.currentGroup)
+  const canPick = computed(() => !!pick.client && !pick.loading &&
+    (!pick.pending || (!(pick.rule === 'group' && !groupRuleOn.value) && (!pickOtherClient.value || pick.move))))
+  const startCreate = () => { pick.creating = true; pick.createError = ''; pick.newName = pick.term || '' }
+  const createClient = async () => {
+    const v = newClientName(pick.newName, groups.value)
+    if (!v.ok) {
+      pick.createError = v.error
+      if (v.existing) { pick.client = v.existing.id; pick.creating = false }
+      return
+    }
+    pick.createBusy = true
+    pick.createError = ''
     try {
-      const r = await secretsAssign(assignPayload(assign))
-      assign.visible = false
-      ElMessage.success(`${assign.name} foi atribuída a ${groupName(assign.client)}. A senha é gerada na próxima verificação do agente (até 5 minutos).`)
-      if (r && r.data && r.data.already) ElMessage.info('Esta máquina já estava atribuída a este cliente.')
-      load()
+      await groupCreate({ name: v.name, type: 1 })
+      await reloadGroups()
+      const g = findClientByName(groups.value, v.name)
+      if (g) { pick.client = g.id; pick.creating = false; pick.newName = ''; ElMessage.success(`Cliente ${v.name} criado.`) }
+      else pick.createError = 'O cliente foi criado, mas não apareceu na lista. Atualize a tela e escolha-o.'
     } catch (e) {
-      assign.error = (e && e.message) || 'Não foi possível atribuir. Atualize a lista e tente de novo.'
-    } finally { assign.loading = false }
+      pick.createError = friendlyError(e, 'Não foi possível criar o cliente. Tente de novo.')
+    } finally { pick.createBusy = false }
+  }
+  // Pendente: rota de atribuição do cofre (aprovação, identidade e regra conferidas no servidor).
+  // Máquina já aprovada sem cliente: mesma rota de "Mover para um cliente" em Dispositivos (POST /peer/update).
+  const savePick = async () => {
+    if (pick.pending) {
+      return secretsAssign(assignPayload({ peer: pick.peer, client: pick.client, rule: pick.rule, interval: pick.interval, move: pick.move, uuid: pick.uuid }))
+    }
+    const r = await peerList({ page: 1, page_size: 20, id: pick.peer })
+    const rows = r && r.data && Array.isArray(r.data.list) ? r.data.list : []
+    const body = movePayload(rows.find(p => String(p.id) === String(pick.peer)), pick.client)
+    if (!body) throw new Error('Não encontramos o cadastro desta máquina em Dispositivos. Atualize a lista e tente de novo.')
+    return peerUpdate(body)
+  }
+  const doPick = async () => {
+    pick.loading = true
+    pick.error = ''
+    try {
+      const r = await savePick()
+      pick.visible = false
+      ElMessage.success(`${pick.name} agora é do cliente ${groupName(pick.client)}.`)
+      if (r && r.data && r.data.already) ElMessage.info('Esta máquina já estava neste cliente.')
+      await load()
+      const fresh = devices.value.find(d => String(d.peer_id) === String(pick.peer))
+      const next = fresh ? afterClientStep(fresh) : { action: 'stay' }
+      if (next.action === 'install-agent') openAgent(pick.peer)
+      else if (next.action === 'enable-rule') ElMessage.info('Próximo passo: ligar a senha automática desta máquina.')
+    } catch (e) {
+      pick.error = friendlyError(e, 'Não foi possível salvar o cliente. Atualize a lista e tente de novo.')
+    } finally { pick.loading = false }
   }
   const rejectRow = async (row, block) => {
     const name = row.alias || row.hostname || fmtId(row.peer_id)
@@ -543,18 +680,30 @@
     if (r) { add.visible = false; ElMessage.success('Senha automática ligada. Instale o agente na máquina, se ainda não instalou.'); load() }
   }
 
-  // ---------- agente ----------
+  // ---------- agente (autorização individual) ----------
   const agent = reactive({ visible: false, loading: false, peer: '', error: '' })
-  const openAgent = () => { Object.assign(agent, { visible: true, peer: '', error: '' }) }
+  const openAgent = (peer) => {
+    Object.assign(agent, { visible: true, peer: typeof peer === 'string' ? peer : '', error: '' })
+  }
+  const agentChoices = computed(() => agentOptions(devices.value))
+  const agentNeedsClient = computed(() => {
+    const o = agentChoices.value.find(x => String(x.peer_id) === String(agent.peer))
+    return !!o && o.needsClient
+  })
+  const chooseFromAgent = () => {
+    const row = devices.value.find(d => String(d.peer_id) === String(agent.peer))
+    if (row) { agent.visible = false; openChoose(row) }
+  }
   const downloadActivation = async () => {
     agent.loading = true
     agent.error = ''
     try {
       const id = String(agent.peer)
       const r = await secretsBootstrap(id)
-      downloadLocalJson('bootstrap.json', activationBundle(r.data, id))
-      ElMessage.success('Autorização baixada. Use em até 15 minutos na máquina escolhida.')
-    } catch (e) { agent.error = e.message || 'Não foi possível autorizar esta máquina.' }
+      const bundle = activationBundle(r.data, id)
+      downloadActivationCmd(buildActivationCmd(bundle), activationFileName(id))
+      ElMessage.success('Arquivo baixado. Copie para o servidor e dê duplo clique como administrador, em até 15 minutos.')
+    } catch (e) { agent.error = friendlyError(e, 'Não foi possível autorizar esta máquina. Atualize a lista e tente de novo.') }
     finally { agent.loading = false }
   }
 
@@ -587,6 +736,29 @@
     background: var(--nx-surface); border-radius: var(--nx-radius-card); box-shadow: var(--nx-shadow-card);
   }
   .nx-search { flex: 1 1 260px; max-width: 360px; }
+  .nx-hero {
+    display: flex; flex-wrap: wrap; gap: 14px 20px; align-items: center; justify-content: space-between; padding: 18px 20px; margin-bottom: 12px;
+    background: var(--nx-surface); border-radius: var(--nx-radius-card); box-shadow: var(--nx-shadow-card); border-left: 5px solid #613CB3;
+  }
+  .nx-hero-title { margin: 0; font-family: var(--nx-font-title); font-size: 18px; font-weight: 700; color: var(--nx-text); }
+  .nx-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0; padding: 0; list-style: none; }
+  .nx-chip { font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; background: var(--nx-field); color: var(--nx-text-muted);
+    &.is-warn { background: #FEF3C7; color: #7A4500; }
+    &.is-ok { background: #D1FAE5; color: #065F46; } }
+  .nx-how { margin-bottom: 12px; padding: 4px 18px; background: var(--nx-surface); border-radius: var(--nx-radius-card); box-shadow: var(--nx-shadow-card); }
+  .nx-how-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 10px 0; border: 0; background: none; cursor: pointer;
+    font: inherit; font-weight: 700; color: var(--nx-text); }
+  .nx-how-toggle:focus-visible { outline: 2px solid var(--nx-focus); outline-offset: 2px; border-radius: 6px; }
+  .nx-how-list { margin: 0 0 12px; padding-left: 20px; display: grid; gap: 6px; font-size: 14px; color: var(--nx-text-muted); }
+  .nx-next { margin-top: 8px; }
+  .nx-create { margin: -6px 0 12px; }
+  .nx-create-row { display: flex; gap: 8px; flex-wrap: wrap; .el-input { flex: 1 1 200px; } .el-button { margin: 0; } }
+  .nx-agent-steps { margin: 0 0 14px; padding-left: 20px; font-size: 14px; display: grid; gap: 4px; color: var(--nx-text); }
+  .nx-agent-warn { margin-top: 12px; }
+  .nx-agent-go { margin-top: 14px; }
+  .nx-opt-tag { margin-left: 8px; }
+  .nx-empty-inline { margin-top: 8px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .nx-empty-inline .nx-help { margin: 0; }
   .nx-bar-right { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; .el-button + .el-button { margin-left: 0; } }
   .nx-agent-help { margin-bottom: 12px; }
   .nx-tabs { margin-bottom: 4px; }
@@ -626,5 +798,8 @@
     .nx-add-group { flex-direction: column; }
   }
   html.dark .nx-warn-text { color: #FCD38A; }
+  html.dark .nx-chip.is-warn { background: #3A2E10; color: #FCD38A; }
+  html.dark .nx-chip.is-ok { background: #0F3A2B; color: #6EE7B7; }
+  html.dark .nx-hero { border-left-color: #B79CFF; }
   html.dark .nx-error, html.dark .nx-danger-text { color: #FFB4AB; }
 </style>
