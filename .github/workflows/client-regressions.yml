@@ -23,9 +23,9 @@ jobs:
         with:
           node-version: '22'
           cache: npm
+      - run: npm ci --no-audit --no-fund
       - name: Validar preparacao autorizada da conexao
         run: node --test nextec/testes/*.test.mjs
-      - run: npm ci --no-audit --no-fund
       - run: npm run build
 
   identity:

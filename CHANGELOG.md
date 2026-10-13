@@ -2,6 +2,12 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.1
+
+- **Corrigido, tela "Senhas dos servidores" abria em branco:** a tela usava `blockedDlg` (diálogo "Bloqueadas") sem declará-lo, o que derrubava a renderização inteira. Agora o diálogo existe e abre normalmente.
+- A tela passou a ter proteção contra falha de renderização: se algo der errado ao montar, aparece o aviso "Não foi possível montar esta tela" com botão Recarregar, em vez de uma página vazia. Respostas da API com lista nula ou campos ausentes também são normalizadas.
+- Novo teste de regressão (compila o template e) que falha se o template usar um nome que o script não declara.
+
 ## 2.11.0
 
 - **Inscrição global de máquinas:** o instalador passa a ser o mesmo para todos os clientes. A máquina se inscreve sozinha como pendente, sem senha e sem acesso. Em **Senhas dos servidores > Pendentes** você atribui a máquina a um cliente (regra do cliente, regra só da máquina ou sem regra) e só então o cofre gera e libera a senha.
