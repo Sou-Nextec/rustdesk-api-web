@@ -12,6 +12,16 @@ Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no p
 - A autorização individual de 15 minutos continua como contingência. Máquinas existentes permanecem aprovadas, sem migração.
 - API (patch 0031): endpoint `self-enroll`, limites de inscrição por IP, total e de pendentes, e rotas de atribuição, rejeição, bloqueio e credencial no admin.
 
+## 2.10.6
+
+- **Corrigido, regravação do journal e do estado do agente no Windows PowerShell 5.1:** `[IO.File]::Replace` recebia `$null` no caminho de backup, que o 5.1 converte em texto vazio e lança "The path is not of a legal form" quando o arquivo já existia. Afetava `Provisionar-Agente-Nextec.ps1` e `Agente-Senha-Nextec.ps1`; agora usam `[NullString]::Value`. Novo teste de regressão `test_atomic_replace.ps1`, incluído no CI.
+
+## 2.10.5
+
+- **Gerar cliente, tela reorganizada:** abre em Novo instalador; as etapas Gerar, Conferir e Atualizar destacam onde você está; o guia "O que preencher" (você escolhe, deixe em branco, já vem travado) fica acima do formulário; o protocolo do botão Conectar passa para um bloco Avançado recolhido.
+- **Itens gerados:** cada item mostra situação, plataforma e data em destaque, downloads MSI e EXE como ações secundárias e "Enviar para Atualizações" como ação principal; versões e nome do arquivo ficam discretos. Estados de carregando, vazio (com atalho para Novo instalador), erro (com tentar novamente), progresso e falha com orientação.
+- Sem mudança de API, rotas ou comunicação com o gerador.
+
 ## 2.10.4
 
 - **Assinar versão em um comando:** `nextec/atualizacao/assinador/Assinar-Versao.ps1` obtém o pedido da versão pendente no painel, confere hash, produto e versão, pede a senha da chave só na janela local, assina e envia manifesto e assinatura. Sem baixar nem subir arquivos à mão.

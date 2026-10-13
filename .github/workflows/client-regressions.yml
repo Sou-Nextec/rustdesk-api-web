@@ -44,6 +44,11 @@ jobs:
         run: |
           powershell.exe -NoProfile -ExecutionPolicy Bypass -File nextec/atualizacao/test_registration.ps1
           if ($LASTEXITCODE -ne 0) { throw 'Updater registration regression failed' }
+      - name: Validar regravacao atomica no PowerShell 5.1
+        shell: powershell
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File nextec/atualizacao/test_atomic_replace.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Atomic replace regression failed' }
       - name: Validar journal e recuperacao da rotacao de senha
         shell: powershell
         run: |
