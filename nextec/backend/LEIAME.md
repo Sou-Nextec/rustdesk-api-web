@@ -164,3 +164,68 @@ O RustDesk registra no sistema o protocolo com o nome do app em minúsculas: um 
 `nextec-connect://`, não `rustdesk://`. `NextecConnectSchemeGet/Set` guardam o protocolo (padrão `rustdesk`, só letras minúsculas,
 números, `.`, `+` e `-`). `GET/POST /nextec/connect-scheme` (admin) lê e grava; `/my/connect-settings` devolve `scheme` e
 `/my/connect-link` monta o link com ele.
+
+## Patch 0031: inscrição global de máquinas
+
+O instalador é o mesmo para todos os clientes. A máquina se inscreve sozinha como **pendente** (sem senha, sem regra, sem
+acesso) e o admin a **atribui** a um cliente no painel. Só então o cofre gira e libera a senha. O fluxo de autorização
+individual de 15 minutos (patches 0028 e 0029) e o cadastro legado com `agent_key` continuam, e gravam a máquina já aprovada.
+
+**Credencial de inscrição:** `nx1.<época>.<HMAC-SHA256(chave do cofre, "enroll:"+época)>`. Em `data/nextec-settings.json` ficam só
+`enroll_epoch` e `enroll_min_epoch`. Girar soma 1 à época e sobe a mínima: credenciais de época abaixo da mínima nunca valem
+(comparação em tempo constante).
+
+**Estado** (colunas novas em `nextec_device_secrets`, `AutoMigrate`, sem migração de dados): `awaiting_approval` (padrão `false`,
+então as linhas existentes seguem aprovadas), `enrolled_via` (`self`, `bootstrap`, `legacy`; vazio conta como `legacy`),
+`enrolled_at`, `enrolled_ip`, `enroll_epoch`, `approved_at`, `approved_by`, `uuid`. Tabela nova `nextec_enroll_blocks` (id + uuid).
+
+**Endpoint público** `POST /api/nextec/agent/self-enroll {enroll_key, id, uuid, proposed_token}`:
+
+| Resposta | Corpo | Quando |
+| --- | --- | --- |
+| 200 | `{token, state}` (`token` é o eco de `proposed_token`; `state` é `pending` ou `assigned`) | inscrita ou repetição idempotente (mesmo hash de token) |
+| 400 | `{error:"bad_request"}` | `id` fora de `^\d{6,64}$`, uuid vazio, token fora de base64url com 43 a 128 caracteres |
+| 401 | `{error:"enroll_key_invalid"}` | credencial inválida, revogada ou de época abaixo da mínima |
+| 403 | `{error:"blocked"}` | par id + uuid bloqueado pelo admin |
+| 404 | `{error:"peer_not_registered"}` | sem Peer (sysinfo), sem uuid, ou sem heartbeat nos últimos 10 min |
+| 409 | `{error:"identity_conflict"}` | uuid diferente do Peer, ou pendente com outro token |
+| 409 | `{error:"already_enrolled"}` | agente já aprovado com outro token |
+| 429 | `{error:"too_many_failures"}` ou `{error:"pending_limit"}` | 10 credenciais erradas em 10 min por IP; 30 inscrições/h por IP, 100/h no total, 500 pendentes |
+
+Nunca sobrescreve token de máquina existente. Credenciais erradas contam em `nextecFailCheck`; conflitos de identidade não
+contam (várias máquinas atrás do mesmo NAT não se bloqueiam).
+
+**Agente pendente:** `/agent/sync` devolve `pending_approval:true`, `managed:false` e nenhuma `operation`. `/agent/password` e
+`/agent/confirm` respondem 403 `{error:"pending_approval"}` (a condição também vai no `WHERE` das atualizações).
+`NextecConnectPassword` e `Reveal` exigem agente aprovado.
+
+**Rotas de admin** (mesmo grupo `/api/admin/nextec`, só administrador; erros usam código 101 do envelope):
+
+- `GET /secrets` ganhou `devices[].state` (`pending` ou `assigned`), `enrolled_via`, `enrolled_at`, `last_ip`, `os`, `username`, além de
+  `pending_count`, `stale_count` e `blocked`. Pendente de credencial girada continua listada (`stale_key:true`, mais `uuid`) e
+  contada, e segue sujeita ao teto de 500; só a inscrição NOVA exige a credencial vigente.
+- `POST /secrets/assign {id, client_id, rule:"group"|"peer"|"none", interval_minutes?, move?, uuid?}`: em transação, define
+  `peer.group_id`, aprova (`approved_at`, `approved_by`) e aplica exatamente a regra (a da máquina vence a do grupo):
+  `group` apaga a regra própria e exige regra do cliente ligada (senão `no group rule`, sem aprovar nem mover);
+  `peer` grava regra própria com intervalo entre 15 e 1440 min (omitido usa 180; 0 e negativo são recusados);
+  `none` apaga a regra própria e, se o cliente tem regra ligada, grava regra própria desligada para não herdá-la.
+  `rule` é obrigatória. Recusa mover máquina que já está em outro cliente sem `move:true`. Repetir o mesmo pedido não muda
+  nada (`already:true`); outra regra para a mesma máquina e cliente atualiza e audita `enroll_rule_change`.
+  Chaves anteriores (`stale_key`) podem ser atribuídas normalmente.
+- `POST /secrets/reject {id, block, uuid?}`: remove a pendente; com `block:true` grava o par id + uuid (e o uuid atual do Peer,
+  se diferente) na tabela de bloqueios. Com `uuid` informado, recusa se a linha mudou de identidade.
+- `POST /secrets/unblock {id, uuid?}`, `GET /enroll-key` (`{key, epoch, min_epoch}`) e `POST /enroll-key/rotate`.
+
+**Identidade:** o `uuid` gravado na inscrição é comparado com o do Peer em `assign`/`reject` (admin: código 101, "identidade da
+máquina mudou"), em `agentAuth` (sync, password, confirm: 409 `{error:"identity_conflict"}`), em `NextecConnectPassword` e em
+`Reveal`. Linhas anteriores sem uuid não têm o que comparar e seguem como antes.
+
+**Credencial girada:** reenviar o self-enroll com a credencial nova, mesmo id + uuid e mesmo `proposed_token`, é idempotente e
+só atualiza `enroll_epoch` da linha (sem duplicar nem mexer em `enrolled_at`). Credencial revogada segue recusada (401).
+
+Auditoria: `self_enroll`, `enroll_assign`, `enroll_rule_change`, `enroll_reject`, `enroll_block`, `enroll_unblock`,
+`enroll_key_rotate`, `enroll_identity_conflict`, `agent_identity_conflict` (sem segredos nem uuid).
+Testes: `service/nextec_enroll_test.go`, `service/nextec_enroll_review_test.go`, `http/controller/api/nextec_enroll_test.go`,
+`http/controller/api/nextec_enroll_identity_test.go` e `http/controller/admin/nextec_enroll_test.go` (rodam no build da imagem).
+Rollback: remover o patch deixa as colunas novas sem uso; pendentes ficariam com token e sem política de aprovação, então
+atribua ou rejeite todas antes de voltar.

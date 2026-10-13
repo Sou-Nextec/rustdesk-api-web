@@ -2,6 +2,16 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.0
+
+- **Inscrição global de máquinas:** o instalador passa a ser o mesmo para todos os clientes. A máquina se inscreve sozinha como pendente, sem senha e sem acesso. Em **Senhas dos servidores > Pendentes** você atribui a máquina a um cliente (regra do cliente, regra só da máquina ou sem regra) e só então o cofre gera e libera a senha.
+- Rejeitar remove a inscrição; Bloquear impede a máquina de voltar (há uma lista de bloqueadas com Desbloquear).
+- **A regra escolhida vale exatamente:** "regra do cliente" apaga qualquer regra própria anterior da máquina e exige regra ligada no cliente (sem ela, nada é aprovado nem movido); "regra da máquina" valida o intervalo (15 minutos a 24 horas, nunca 0 nem negativo); "sem regra" aprova sem rotação e não herda a regra do cliente. Repetir o mesmo pedido não muda nada; pedir outra regra para a mesma máquina atualiza e fica na auditoria. Tudo em uma transação.
+- **Identidade conferida:** o UUID gravado na inscrição é comparado com o da máquina ao atribuir, rejeitar, sincronizar e entregar senha. Se divergir, o painel recusa (código 101, com a explicação), o agente recebe 409 `identity_conflict`, nenhuma senha é entregue e a recusa fica na auditoria, sem segredos.
+- **Credencial de inscrição:** card para ver, copiar e girar a credencial que vai no instalador. Girar invalida instaladores antigos para inscrições novas. As pendentes feitas com a credencial anterior continuam na aba Pendentes com o selo "Chave anterior" e podem ser atribuídas, rejeitadas ou bloqueadas; se o agente reenviar a inscrição com a credencial nova, a mesma linha é atualizada sem duplicar. Máquinas já atribuídas não são afetadas.
+- A autorização individual de 15 minutos continua como contingência. Máquinas existentes permanecem aprovadas, sem migração.
+- API (patch 0031): endpoint `self-enroll`, limites de inscrição por IP, total e de pendentes, e rotas de atribuição, rejeição, bloqueio e credencial no admin.
+
 ## 2.10.6
 
 - **Corrigido, regravação do journal e do estado do agente no Windows PowerShell 5.1:** `[IO.File]::Replace` recebia `$null` no caminho de backup, que o 5.1 converte em texto vazio e lança "The path is not of a legal form" quando o arquivo já existia. Afetava `Provisionar-Agente-Nextec.ps1` e `Agente-Senha-Nextec.ps1`; agora usam `[NullString]::Value`. Novo teste de regressão `test_atomic_replace.ps1`, incluído no CI.
