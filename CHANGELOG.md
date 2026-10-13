@@ -2,6 +2,16 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.4
+
+- **Fluxo guiado em "Senhas dos servidores":** cada máquina mostra em que etapa está (1 Cliente, 2 Agente, 3 Senha automática) e tem um único botão de próximo passo: Escolher cliente, Instalar agente, Ligar senha automática ou Conectar.
+- **Escolher cliente na própria tela:** diálogo curto com busca e "Criar cliente" no lugar, que já segue para a próxima etapa. Pendentes usam a atribuição do cofre (aprovação, identidade e regra continuam conferidas no servidor); máquinas já aprovadas sem cliente usam a mesma rota de "Mover para um cliente" de Dispositivos.
+- **Topo mais simples:** um aviso com o estado geral e um único botão contextual ("Você tem 2 máquinas sem cliente. Escolher cliente"), mais um bloco recolhível "Como funciona" em 3 passos. Regras, Auditoria, Credencial de inscrição e Autorização individual ficaram no menu "Mais".
+- **Instalar agente com um arquivo só:** o painel baixa `Ativar-Nextec-<ID>.cmd`. Basta copiar para o servidor e dar duplo clique como administrador: ele confere o prazo de 15 minutos e o ID da máquina, entrega a autorização ao agente já instalado, apaga o temporário e mostra "Pronto: máquina ativada. Pode fechar." ou o erro em português. Sem diálogo de arquivo e sem "assistente local".
+- A lista da Autorização individual mostra todas as máquinas; as sem cliente aparecem com selo e levam a "Escolher cliente agora". O estado vazio explica o que fazer.
+- Script do painel `Coordenar-Agente-Nextec.ps1`: novo parâmetro `-ArquivoAutorizacao` (usado com `-Receber`, sem diálogo; o arquivo é apagado ao final). **O rdgen precisa ressincronizar os scripts vendored.**
+- Novos testes: `secrets-flow`, `activation-cmd`, montagem da tela nos quatro estados e o teste do coordenador.
+
 ## 2.11.2
 
 - **Corrigido, tela quebrava ao voltar de "Senhas dos servidores" para outra:** o guarda de erro dessa tela tinha como raiz um slot, e o efeito de transição do conteúdo (entrada só depois da saída) não concluía a saída de uma raiz sem elemento. A tela seguinte nunca entrava e só o F5 resolvia. O guarda agora tem um elemento único na raiz e zera o estado de erro ao trocar de tela.
