@@ -2,6 +2,12 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.10.5
+
+- **Gerar cliente, tela reorganizada:** abre em Novo instalador; as etapas Gerar, Conferir e Atualizar destacam onde você está; o guia "O que preencher" (você escolhe, deixe em branco, já vem travado) fica acima do formulário; o protocolo do botão Conectar passa para um bloco Avançado recolhido.
+- **Itens gerados:** cada item mostra situação, plataforma e data em destaque, downloads MSI e EXE como ações secundárias e "Enviar para Atualizações" como ação principal; versões e nome do arquivo ficam discretos. Estados de carregando, vazio (com atalho para Novo instalador), erro (com tentar novamente), progresso e falha com orientação.
+- Sem mudança de API, rotas ou comunicação com o gerador.
+
 ## 2.10.4
 
 - **Assinar versão em um comando:** `nextec/atualizacao/assinador/Assinar-Versao.ps1` obtém o pedido da versão pendente no painel, confere hash, produto e versão, pede a senha da chave só na janela local, assina e envia manifesto e assinatura. Sem baixar nem subir arquivos à mão.
