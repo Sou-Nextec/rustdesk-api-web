@@ -2,6 +2,12 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.5
+
+- **Corrigido, "O agente Nextec não está instalado" em app com outro nome:** o `Ativar-Nextec-<ID>.cmd` agora localiza o agente sem depender do nome do app (pasta `%ProgramData%\Nextec\Acesso`, entrada de desinstalação com "Nextec-Connect", tarefa agendada Nextec e varredura de `%ProgramFiles%\*Nextec*`). Se achar os scripts na pasta do app, registra o coordenador sozinho.
+- **Mensagem precisa:** quando o app existe mas não traz o agente (ex.: `Client-Nextec-Connect`), o arquivo diz isso, mostra onde procurou e orienta gerar o instalador com o MESMO nome do app e instalar por cima (ID e cliente se mantêm).
+- Novos testes no PowerShell 5.1 simulando `Client-Nextec-Connect`. **O rdgen também precisa de correção:** o `build-msi.ps1` só inclui o agente quando o nome do app é exatamente `Nextec-Connect`.
+
 ## 2.11.4
 
 - **Fluxo guiado em "Senhas dos servidores":** cada máquina mostra em que etapa está (1 Cliente, 2 Agente, 3 Senha automática) e tem um único botão de próximo passo: Escolher cliente, Instalar agente, Ligar senha automática ou Conectar.
