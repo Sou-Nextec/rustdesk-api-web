@@ -2,6 +2,13 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.6
+
+- **Nome do app livre:** o painel não depende mais de nome fixo (Nextec-Connect, XPTO ou qualquer outro). O `Ativar-Nextec-<ID>.cmd` localiza o agente pelo marcador de instalação (`HKLM\SOFTWARE\Nextec\Agente` {InstallDir, AppName} ou `%ProgramData%\Nextec\Acesso\nextec-marker.json`), depois por entrada de desinstalação, serviço RustDesk e varredura limitada, e lista tudo o que procurou.
+- **Agente de senha e instalador:** quando há mais de um serviço RustDesk, o `AppName` do marcador escolhe o certo; a mensagem de "nenhum serviço" diz o que foi procurado.
+- **Assinatura:** o `ProductName` do MSI é conferido contra o `app_name` do pedido (opcional) em vez de exigir `Nextec-Connect`; o pacote DEB só precisa de nome válido.
+- Novos testes com `XPTO`, `Nextec-Connect` e `Client-Nextec-Connect` (PowerShell 5.1, node e Python). **O rdgen precisa gravar o marcador** (`HKLM\SOFTWARE\Nextec\Agente` e/ou `nextec-marker.json`) e pode enviar `app_name` no pedido.
+
 ## 2.11.5
 
 - **Corrigido, "O agente Nextec não está instalado" em app com outro nome:** o `Ativar-Nextec-<ID>.cmd` agora localiza o agente sem depender do nome do app (pasta `%ProgramData%\Nextec\Acesso`, entrada de desinstalação com "Nextec-Connect", tarefa agendada Nextec e varredura de `%ProgramFiles%\*Nextec*`). Se achar os scripts na pasta do app, registra o coordenador sozinho.
