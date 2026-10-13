@@ -81,7 +81,8 @@ export const supportSettings = (waiting_mode) => request({ url: '/nextec/support
 
 // patch 0031: inscrição global (a máquina se inscreve sozinha como pendente; o admin atribui a um cliente)
 export const secretsAssign = (data) => request({ url: '/nextec/secrets/assign', method: 'post', data })
-export const secretsReject = (id, block) => request({ url: '/nextec/secrets/reject', method: 'post', data: { id, block: !!block } })
+// uuid: a identidade que o admin viu na lista; se a linha mudou de identidade, a API recusa (conflito de identidade).
+export const secretsReject = (id, block, uuid) => request({ url: '/nextec/secrets/reject', method: 'post', data: { id, block: !!block, uuid: uuid || undefined } })
 export const secretsUnblock = (id, uuid) => request({ url: '/nextec/secrets/unblock', method: 'post', data: { id, uuid: uuid || undefined } })
 export const enrollKeyGet = () => request({ url: '/nextec/enroll-key' })
 export const enrollKeyRotate = () => request({ url: '/nextec/enroll-key/rotate', method: 'post', data: {} })

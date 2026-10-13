@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { secretActionState } from '../../src/nextec/secret-actions.mjs'
+import { secretActionState, assignPayload, pendingSummary } from '../../src/nextec/secret-actions.mjs'
 
 test('configured rotation waits for agent enrollment before claiming it is active', () => {
   const state = secretActionState({ managed: true, enrolled: false })
@@ -22,4 +22,23 @@ test('rotation requires both an enrolled agent and an enabled rule', () => {
   assert.equal(secretActionState({ enrolled: true, managed: false }).canRotate, false)
   assert.match(secretActionState({ enrolled: true }).rotateReason, /Ligue a regra/)
   assert.equal(secretActionState({ enrolled: false, managed: true }).canRotate, false)
+})
+
+test('assign payload sends the interval only for the machine rule and always carries the seen uuid', () => {
+  const base = { peer: '123456789', client: 7, interval: 60, move: false, uuid: 'uuid-visto' }
+  assert.deepEqual(assignPayload({ ...base, rule: 'group' }), { id: '123456789', client_id: 7, rule: 'group', move: false, uuid: 'uuid-visto' })
+  assert.deepEqual(assignPayload({ ...base, rule: 'none' }), { id: '123456789', client_id: 7, rule: 'none', move: false, uuid: 'uuid-visto' })
+  assert.deepEqual(assignPayload({ ...base, rule: 'peer' }), { id: '123456789', client_id: 7, rule: 'peer', move: false, uuid: 'uuid-visto', interval_minutes: 60 })
+  assert.equal('uuid' in assignPayload({ ...base, rule: 'group', uuid: '' }), false)
+})
+
+test('pending summary keeps machines enrolled with a rotated key visible and counted as stale', () => {
+  const sum = pendingSummary([
+    { peer_id: '1', state: 'pending', stale_key: true },
+    { peer_id: '2', state: 'pending' },
+    { peer_id: '3', state: 'assigned', stale_key: true },
+    { peer_id: '4' },
+  ])
+  assert.deepEqual(sum, { total: 2, stale: 1 })
+  assert.deepEqual(pendingSummary(), { total: 0, stale: 0 })
 })

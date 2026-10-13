@@ -202,15 +202,30 @@ contam (várias máquinas atrás do mesmo NAT não se bloqueiam).
 **Rotas de admin** (mesmo grupo `/api/admin/nextec`, só administrador; erros usam código 101 do envelope):
 
 - `GET /secrets` ganhou `devices[].state` (`pending` ou `assigned`), `enrolled_via`, `enrolled_at`, `last_ip`, `os`, `username`, além de
-  `pending_count` e `blocked`. Pendente só aparece, e só conta, se a inscrição foi feita com época ainda válida.
-- `POST /secrets/assign {id, client_id, rule:"group"|"peer"|"none", interval_minutes?, move?}`: em transação, define
-  `peer.group_id`, aprova (`approved_at`, `approved_by`), liga `force_rotate` e, se `rule=peer`, grava a regra da máquina.
-  `rule=group` exige regra do cliente ligada. Recusa mover máquina que já está em outro cliente sem `move:true`. Repetir o mesmo
-  pedido não muda nada (`already:true`).
-- `POST /secrets/reject {id, block}`: remove a pendente; com `block:true` grava o par id + uuid na tabela de bloqueios.
+  `pending_count`, `stale_count` e `blocked`. Pendente de credencial girada continua listada (`stale_key:true`, mais `uuid`) e
+  contada, e segue sujeita ao teto de 500; só a inscrição NOVA exige a credencial vigente.
+- `POST /secrets/assign {id, client_id, rule:"group"|"peer"|"none", interval_minutes?, move?, uuid?}`: em transação, define
+  `peer.group_id`, aprova (`approved_at`, `approved_by`) e aplica exatamente a regra (a da máquina vence a do grupo):
+  `group` apaga a regra própria e exige regra do cliente ligada (senão `no group rule`, sem aprovar nem mover);
+  `peer` grava regra própria com intervalo entre 15 e 1440 min (omitido usa 180; 0 e negativo são recusados);
+  `none` apaga a regra própria e, se o cliente tem regra ligada, grava regra própria desligada para não herdá-la.
+  `rule` é obrigatória. Recusa mover máquina que já está em outro cliente sem `move:true`. Repetir o mesmo pedido não muda
+  nada (`already:true`); outra regra para a mesma máquina e cliente atualiza e audita `enroll_rule_change`.
+  Chaves anteriores (`stale_key`) podem ser atribuídas normalmente.
+- `POST /secrets/reject {id, block, uuid?}`: remove a pendente; com `block:true` grava o par id + uuid (e o uuid atual do Peer,
+  se diferente) na tabela de bloqueios. Com `uuid` informado, recusa se a linha mudou de identidade.
 - `POST /secrets/unblock {id, uuid?}`, `GET /enroll-key` (`{key, epoch, min_epoch}`) e `POST /enroll-key/rotate`.
 
-Auditoria: `self_enroll`, `enroll_assign`, `enroll_reject`, `enroll_block`, `enroll_unblock`, `enroll_key_rotate`.
-Testes: `service/nextec_enroll_test.go` e `http/controller/api/nextec_enroll_test.go` (rodam no build da imagem).
+**Identidade:** o `uuid` gravado na inscrição é comparado com o do Peer em `assign`/`reject` (admin: código 101, "identidade da
+máquina mudou"), em `agentAuth` (sync, password, confirm: 409 `{error:"identity_conflict"}`), em `NextecConnectPassword` e em
+`Reveal`. Linhas anteriores sem uuid não têm o que comparar e seguem como antes.
+
+**Credencial girada:** reenviar o self-enroll com a credencial nova, mesmo id + uuid e mesmo `proposed_token`, é idempotente e
+só atualiza `enroll_epoch` da linha (sem duplicar nem mexer em `enrolled_at`). Credencial revogada segue recusada (401).
+
+Auditoria: `self_enroll`, `enroll_assign`, `enroll_rule_change`, `enroll_reject`, `enroll_block`, `enroll_unblock`,
+`enroll_key_rotate`, `enroll_identity_conflict`, `agent_identity_conflict` (sem segredos nem uuid).
+Testes: `service/nextec_enroll_test.go`, `service/nextec_enroll_review_test.go`, `http/controller/api/nextec_enroll_test.go`,
+`http/controller/api/nextec_enroll_identity_test.go` e `http/controller/admin/nextec_enroll_test.go` (rodam no build da imagem).
 Rollback: remover o patch deixa as colunas novas sem uso; pendentes ficariam com token e sem política de aprovação, então
 atribua ou rejeite todas antes de voltar.

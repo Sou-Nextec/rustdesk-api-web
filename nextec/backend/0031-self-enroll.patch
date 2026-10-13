@@ -13,10 +13,10 @@ index 1e322d9..f789670 100644
  	if err := global.DB.AutoMigrate(&model.NextecAppRelease{}, &model.NextecAppInstall{}, &model.NextecPendingAssign{}, &model.NextecAppPolicy{}, &model.NextecConnectNote{}, &model.NextecAppSignatureSequence{}); err != nil {
 diff --git a/http/controller/admin/nextec_enroll.go b/http/controller/admin/nextec_enroll.go
 new file mode 100644
-index 0000000..b9bdc26
+index 0000000..798fdb7
 --- /dev/null
 +++ b/http/controller/admin/nextec_enroll.go
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,152 @@
 +package admin
 +
 +import (
@@ -36,12 +36,14 @@ index 0000000..b9bdc26
 +	Id       string `json:"id"`
 +	ClientId uint   `json:"client_id"`
 +	Rule     string `json:"rule"`
-+	Interval int    `json:"interval_minutes"`
++	Interval *int   `json:"interval_minutes"` // ausente: padrão; presente: 0 e negativo são recusados
 +	Move     bool   `json:"move"`
++	Uuid     string `json:"uuid"`
 +}
 +
 +type nextecRejectForm struct {
 +	Id    string `json:"id"`
++	Uuid  string `json:"uuid"`
 +	Block bool   `json:"block"`
 +}
 +
@@ -61,14 +63,14 @@ index 0000000..b9bdc26
 +		msg = "O cliente não tem regra de senha automática ligada. Escolha a regra da máquina ou ligue a regra do cliente em Regras."
 +	case errors.Is(err, service.ErrNextecNoGroup):
 +		msg = "Cliente não encontrado."
++	case errors.Is(err, service.ErrNextecIdentityConflict):
++		msg = "A identidade da máquina mudou desde a inscrição (UUID diferente). Não foi aprovada nem alterada. Rejeite ou bloqueie a inscrição e deixe a máquina se inscrever de novo."
++	case errors.Is(err, service.ErrNextecBadInterval):
++		msg = "Intervalo fora do limite (15 minutos a 24 horas)."
 +	case errors.Is(err, service.ErrNextecBadRule), errors.Is(err, service.ErrNextecEnrollBadRequest):
 +		msg = "Pedido inválido."
 +	case errors.Is(err, service.ErrNextecPeerNotRegistered):
 +		msg = "A máquina ainda não se registrou no servidor."
-+	default:
-+		if err != nil && err.Error() == "intervalo fora do limite" {
-+			msg = "Intervalo fora do limite (15 minutos a 24 horas)."
-+		}
 +	}
 +	response.Fail(c, 101, msg)
 +}
@@ -82,7 +84,15 @@ index 0000000..b9bdc26
 +		return
 +	}
 +	u := service.AllService.UserService.CurUser(c)
-+	opt := service.NextecAssignOptions{PeerID: f.Id, ClientID: f.ClientId, Rule: f.Rule, Interval: f.Interval, Move: f.Move, IP: nextecIP(c)}
++	interval := 0
++	if f.Interval != nil {
++		if *f.Interval <= 0 {
++			response.Fail(c, 101, "Intervalo fora do limite (15 minutos a 24 horas).")
++			return
++		}
++		interval = *f.Interval
++	}
++	opt := service.NextecAssignOptions{PeerID: f.Id, ClientID: f.ClientId, Rule: f.Rule, Interval: interval, Move: f.Move, Uuid: f.Uuid, IP: nextecIP(c)}
 +	if u != nil {
 +		opt.UserID, opt.Username = u.Id, u.Username
 +	}
@@ -108,7 +118,7 @@ index 0000000..b9bdc26
 +	if u != nil {
 +		uid, name = u.Id, u.Username
 +	}
-+	if err := service.NextecEnrollReject(f.Id, f.Block, uid, name, nextecIP(c)); err != nil {
++	if err := service.NextecEnrollRejectIdentity(f.Id, f.Uuid, f.Block, uid, name, nextecIP(c)); err != nil {
 +		enrollFail(c, err)
 +		return
 +	}
@@ -159,29 +169,64 @@ index 0000000..b9bdc26
 +	service.NextecSecretAuditAdd(service.AllService.UserService.CurUser(c), "", "enroll_key_rotate", nextecIP(c), "época "+strconv.Itoa(epoch))
 +	response.Success(c, &gin.H{"key": key, "epoch": epoch, "min_epoch": minEpoch})
 +}
+diff --git a/http/controller/admin/nextec_enroll_test.go b/http/controller/admin/nextec_enroll_test.go
+new file mode 100644
+index 0000000..35ca666
+--- /dev/null
++++ b/http/controller/admin/nextec_enroll_test.go
+@@ -0,0 +1,26 @@
++package admin
++
++import (
++	"encoding/json"
++	"net/http/httptest"
++	"strings"
++	"testing"
++
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++)
++
++// Identidade trocada na aprovação usa o código 101 (o 403 do envelope derrubaria a sessão do painel) e diz o motivo.
++func TestEnrollFailIdentityConflictUsesCode101(t *testing.T) {
++	w := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(w)
++	enrollFail(c, service.ErrNextecIdentityConflict)
++	out := map[string]interface{}{}
++	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
++		t.Fatal(err)
++	}
++	msg, _ := out["message"].(string)
++	if out["code"] != float64(101) || !strings.Contains(msg, "identidade") {
++		t.Fatalf("resposta: %s", w.Body.String())
++	}
++}
 diff --git a/http/controller/admin/nextec_secret.go b/http/controller/admin/nextec_secret.go
-index 6ec0b2d..0ef3027 100644
+index 6ec0b2d..c9fbca1 100644
 --- a/http/controller/admin/nextec_secret.go
 +++ b/http/controller/admin/nextec_secret.go
-@@ -35,6 +35,8 @@ func (n *NextecSecret) Overview(c *gin.Context) {
+@@ -35,6 +35,9 @@ func (n *NextecSecret) Overview(c *gin.Context) {
  		"agent_key_set": service.NextecAgentKeyIsSet(),
  		"policies":      service.NextecSecretPolicies(),
  		"devices":       service.NextecSecretDevices(),
 +		"pending_count": service.NextecEnrollPendingCount(),
++		"stale_count":   service.NextecEnrollStaleCount(),
 +		"blocked":       service.NextecEnrollBlocks(),
  	})
  }
  
 diff --git a/http/controller/api/nextec_agent.go b/http/controller/api/nextec_agent.go
-index 2342971..15c7513 100644
+index 2342971..db33828 100644
 --- a/http/controller/api/nextec_agent.go
 +++ b/http/controller/api/nextec_agent.go
-@@ -34,6 +34,8 @@ func agentFail(c *gin.Context, err error) {
+@@ -34,6 +34,10 @@ func agentFail(c *gin.Context, err error) {
  		c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many failures"})
  	case errors.Is(err, service.ErrNextecAlreadyEnroll):
  		c.JSON(http.StatusConflict, gin.H{"error": "already enrolled"})
 +	case errors.Is(err, service.ErrNextecPendingApproval):
 +		c.JSON(http.StatusForbidden, gin.H{"error": "pending_approval"})
++	case errors.Is(err, service.ErrNextecIdentityConflict):
++		c.JSON(http.StatusConflict, gin.H{"error": "identity_conflict"})
  	case errors.Is(err, service.ErrNextecBadPassword), errors.Is(err, service.ErrNextecNoPending):
  		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
  	case errors.Is(err, service.ErrNextecOperationConflict), errors.Is(err, service.ErrNextecOperationRequired):
@@ -241,6 +286,85 @@ index 0000000..ec6c7c7
 +		return
 +	}
 +	c.JSON(http.StatusOK, gin.H{"token": res.Token, "state": res.State})
++}
+diff --git a/http/controller/api/nextec_enroll_identity_test.go b/http/controller/api/nextec_enroll_identity_test.go
+new file mode 100644
+index 0000000..c5fd453
+--- /dev/null
++++ b/http/controller/api/nextec_enroll_identity_test.go
+@@ -0,0 +1,73 @@
++package api
++
++import (
++	"bytes"
++	"encoding/base64"
++	"encoding/json"
++	"net/http/httptest"
++	"os"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++	"gorm.io/driver/sqlite"
++	"gorm.io/gorm"
++	"gorm.io/gorm/logger"
++)
++
++// Agente aprovado cuja identidade (uuid do Peer) mudou depois da inscrição recebe 409 identity_conflict
++// em sync, password e confirm, e nenhuma senha.
++func TestAgentIdentityConflictHTTP(t *testing.T) {
++	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := db.AutoMigrate(&model.Peer{}, &model.DeviceGroup{}, &model.NextecSecretPolicy{}, &model.NextecDeviceSecret{}, &model.NextecSecretAudit{}, &model.NextecAgentBootstrap{}, &model.NextecEnrollBlock{}); err != nil {
++		t.Fatal(err)
++	}
++	sqlDB, _ := db.DB()
++	sqlDB.SetMaxOpenConns(1)
++	oldDB, oldService := service.DB, service.AllService
++	service.DB, service.AllService = db, &service.Service{}
++	t.Setenv("NEXTEC_VAULT_KEY", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x52}, 32)))
++	wd, _ := os.Getwd()
++	if err := os.Chdir(t.TempDir()); err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { _ = os.Chdir(wd); service.DB, service.AllService = oldDB, oldService; sqlDB.Close() })
++	db.Create(&model.DeviceGroup{IdModel: model.IdModel{Id: 7}, Name: "Cliente A"})
++	db.Create(&model.Peer{Id: "313131313", Uuid: "uuid-id", LastOnlineTime: time.Now().Unix()})
++	key, _, _, err := service.NextecEnrollKeyInfo()
++	if err != nil {
++		t.Fatal(err)
++	}
++	token := base64.RawURLEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32))
++	if _, err := service.NextecSelfEnroll("10.40.0.1", key, "313131313", "uuid-id", token); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := service.NextecEnrollAssign(service.NextecAssignOptions{PeerID: "313131313", ClientID: 7, Rule: "none"}); err != nil {
++		t.Fatal(err)
++	}
++	db.Model(&model.Peer{}).Where("id = ?", "313131313").Update("uuid", "uuid-trocado")
++
++	r := gin.New()
++	ag := &NextecAgent{}
++	r.POST("/sync", ag.Sync)
++	r.POST("/password", ag.Password)
++	r.POST("/confirm", ag.Confirm)
++	for _, path := range []string{"/sync", "/password", "/confirm"} {
++		raw, _ := json.Marshal(map[string]interface{}{"id": "313131313", "token": token, "password": "ValidPassword123456", "operation_id": "x", "pending_version": 1})
++		req := httptest.NewRequest("POST", path, strings.NewReader(string(raw)))
++		req.Header.Set("Content-Type", "application/json")
++		w := httptest.NewRecorder()
++		r.ServeHTTP(w, req)
++		out := map[string]interface{}{}
++		_ = json.Unmarshal(w.Body.Bytes(), &out)
++		if w.Code != 409 || out["error"] != "identity_conflict" {
++			t.Fatalf("%s: %d %v", path, w.Code, out)
++		}
++	}
 +}
 diff --git a/http/controller/api/nextec_enroll_test.go b/http/controller/api/nextec_enroll_test.go
 new file mode 100644
@@ -463,10 +587,10 @@ index 21de576..6dcb1b4 100644
  				return updated.Error
 diff --git a/service/nextec_enroll.go b/service/nextec_enroll.go
 new file mode 100644
-index 0000000..4f876ad
+index 0000000..4359bed
 --- /dev/null
 +++ b/service/nextec_enroll.go
-@@ -0,0 +1,518 @@
+@@ -0,0 +1,659 @@
 +package service
 +
 +import (
@@ -518,6 +642,7 @@ index 0000000..4f876ad
 +	ErrNextecClientConflict    = errors.New("machine already belongs to another client")
 +	ErrNextecNoGroupRule       = errors.New("client has no password rule")
 +	ErrNextecBadRule           = errors.New("invalid rule")
++	ErrNextecBadInterval       = errors.New("intervalo fora do limite")
 +
 +	nextecEnrollPeerPattern  = regexp.MustCompile(`^\d{6,64}$`)
 +	nextecEnrollTokenPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{43,128}$`)
@@ -684,6 +809,16 @@ index 0000000..4f876ad
 +					return ErrNextecIdentityConflict
 +				}
 +				if subtle.ConstantTimeCompare([]byte(existing.TokenHash), []byte(proposedHash)) == 1 {
++					// Reenvio com a credencial vigente de uma pendente feita com a anterior: só atualiza a época
++					// (sai do estado "chave anterior"), sem duplicar nem mexer em token, data ou contadores.
++					if existing.AwaitingApproval && existing.EnrollEpoch < epoch {
++						res := tx.Model(&model.NextecDeviceSecret{}).
++							Where("id = ? AND peer_id = ? AND token_hash = ? AND awaiting_approval = ?", existing.Id, peerID, existing.TokenHash, true).
++							Update("enroll_epoch", epoch)
++						if res.Error != nil {
++							return res.Error
++						}
++					}
 +					result = &NextecSelfEnrollResult{Token: proposedToken, State: nextecEnrollState(&existing)}
 +					return nil
 +				}
@@ -772,6 +907,7 @@ index 0000000..4f876ad
 +	Rule     string // group | peer | none
 +	Interval int
 +	Move     bool
++	Uuid     string // opcional: identidade vista pelo admin na lista; divergindo da gravada, recusa
 +	UserID   uint
 +	Username string
 +	IP       string
@@ -787,28 +923,79 @@ index 0000000..4f876ad
 +	Interval int    `json:"interval_minutes"`
 +}
 +
-+// NextecEnrollAssign atribui uma máquina pendente a um cliente e libera o cofre. Tudo em uma transação.
++// nextecIdentityOK confere a identidade gravada na inscrição com a do Peer. seen é o uuid que o admin viu na lista (opcional).
++// Linha sem uuid (agente anterior à inscrição global) não tem o que comparar, exceto se ainda for pendente.
++func nextecIdentityOK(d *model.NextecDeviceSecret, peer *model.Peer, seen string) bool {
++	if seen != "" && peer != nil && seen != peer.Uuid {
++		return false
++	}
++	if d.Uuid == "" {
++		return !d.AwaitingApproval
++	}
++	if seen != "" && seen != d.Uuid {
++		return false
++	}
++	return peer != nil && peer.Uuid == d.Uuid
++}
++
++// nextecDeviceIdentityOK é a checagem usada na entrega de senha: só falha quando há uuid gravado e o Peer mudou.
++func nextecDeviceIdentityOK(d *model.NextecDeviceSecret) bool {
++	if d == nil || d.Uuid == "" {
++		return true
++	}
++	var peers []model.Peer
++	if DB.Select("uuid").Where("id = ?", d.PeerId).Limit(1).Find(&peers).Error != nil {
++		return false
++	}
++	return len(peers) == 0 || peers[0].Uuid == d.Uuid
++}
++
++// nextecIdentityAudit registra a recusa por identidade trocada, sem segredos nem uuid. Não repete mais de uma vez
++// por janela para o mesmo par máquina+ação (um agente em loop não enche a auditoria).
++func nextecIdentityAudit(action, peerID, ip, detail string, userID uint, username string) {
++	since := time.Now().Unix() - 600
++	var n int64
++	if DB.Model(&model.NextecSecretAudit{}).Where("peer_id = ? AND action = ? AND at > ?", peerID, action, since).Count(&n).Error == nil && n > 0 {
++		return
++	}
++	if err := DB.Create(&model.NextecSecretAudit{At: time.Now().Unix(), UserId: userID, Username: username, PeerId: peerID, Action: action, Ip: ip, Detail: detail}).Error; err != nil && Logger != nil {
++		Logger.Warn("nextec audit: ", err)
++	}
++}
++
++const nextecIdentityDetail = "identidade do dispositivo difere da registrada na inscricao"
++
++// NextecEnrollAssign atribui uma máquina a um cliente com a regra escolhida e libera o cofre. Tudo em uma transação.
++//
++//	group: a máquina segue a regra do cliente (a regra própria é apagada); exige regra ligada no cliente.
++//	peer:  regra própria com interval_minutes validado (omitido usa o padrão; nunca 0 nem negativo gravado).
++//	none:  sem rotação automática; apaga a regra própria e, se o cliente tem regra ligada, grava um bloqueio
++//	       (regra própria desligada) para a máquina não herdá-la, já que a regra da máquina vence a do grupo.
++//
++// Repetir o mesmo pedido não muda nada; pedir outra regra para a mesma máquina e cliente atualiza e audita.
 +func NextecEnrollAssign(o NextecAssignOptions) (*NextecAssignResult, error) {
 +	if o.PeerID == "" || len(o.PeerID) > 64 || o.ClientID == 0 {
 +		return nil, ErrNextecEnrollBadRequest
 +	}
 +	switch o.Rule {
-+	case "":
-+		o.Rule = "group"
 +	case "group", "peer", "none":
 +	default:
 +		return nil, ErrNextecBadRule
 +	}
-+	interval := o.Interval
++	interval := NextecSecretDefaultInterval
 +	if o.Rule == "peer" {
-+		if interval == 0 {
-+			interval = NextecSecretDefaultInterval
++		if o.Interval < 0 {
++			return nil, ErrNextecBadInterval
++		}
++		if o.Interval != 0 {
++			interval = o.Interval
 +		}
 +		if interval < NextecSecretMinInterval || interval > NextecSecretMaxInterval {
-+			return nil, errors.New("intervalo fora do limite")
++			return nil, ErrNextecBadInterval
 +		}
 +	}
 +	var out *NextecAssignResult
++	identityFail := false
 +	err := DB.Transaction(func(tx *gorm.DB) error {
 +		var group model.DeviceGroup
 +		if err := tx.First(&group, o.ClientID).Error; err != nil || group.Id == 0 {
@@ -823,40 +1010,78 @@ index 0000000..4f876ad
 +			return ErrNextecPeerNotRegistered
 +		}
 +		peer := peers[0]
-+		if d.AwaitingApproval && d.EnrollEpoch != 0 {
-+			if _, min := nextecEnrollEpochs(); d.EnrollEpoch < min {
-+				return ErrNextecEnrollNotFound // inscrita com credencial revogada: fora da lista
-+			}
++		if !nextecIdentityOK(&d, &peer, o.Uuid) {
++			identityFail = true
++			return ErrNextecIdentityConflict
 +		}
 +		if peer.GroupId != 0 && peer.GroupId != o.ClientID && !o.Move {
 +			return ErrNextecClientConflict
 +		}
-+		enabled, ruleInterval := effectivePolicyTx(tx, o.PeerID, o.ClientID)
-+		if !d.AwaitingApproval && peer.GroupId == o.ClientID {
-+			// Repetição do mesmo pedido: nada muda.
-+			out = &NextecAssignResult{PeerID: o.PeerID, State: NextecStateAssigned, ClientID: o.ClientID, Already: true, Managed: enabled, Interval: ruleInterval}
-+			return nil
++		clientRef := strconv.FormatUint(uint64(o.ClientID), 10)
++		var groupRule model.NextecSecretPolicy
++		groupRuleOn := tx.Where("kind = ? AND ref = ? AND enabled = ?", "group", clientRef, true).First(&groupRule).Error == nil
++		if o.Rule == "group" && !groupRuleOn {
++			return ErrNextecNoGroupRule
 +		}
-+		if o.Rule == "group" {
-+			var gp model.NextecSecretPolicy
-+			if tx.Where("kind = ? AND ref = ? AND enabled = ?", "group", strconv.FormatUint(uint64(o.ClientID), 10), true).First(&gp).Error != nil {
-+				return ErrNextecNoGroupRule
++		var own model.NextecSecretPolicy
++		hasOwn := tx.Where("kind = ? AND ref = ?", "peer", o.PeerID).First(&own).Error == nil
++		// Regra própria que a máquina deve ter ao final: nil = nenhuma.
++		var want *model.NextecSecretPolicy
++		switch o.Rule {
++		case "peer":
++			want = &model.NextecSecretPolicy{Kind: "peer", Ref: o.PeerID, Enabled: true, IntervalMinutes: interval}
++		case "none":
++			if groupRuleOn {
++				want = &model.NextecSecretPolicy{Kind: "peer", Ref: o.PeerID, Enabled: false, IntervalMinutes: NextecSecretDefaultInterval}
 +			}
 +		}
-+		now := time.Now().Unix()
-+		moved := peer.GroupId != 0 && peer.GroupId != o.ClientID
-+		if err := tx.Model(&model.Peer{}).Where("row_id = ?", peer.RowId).Update("group_id", o.ClientID).Error; err != nil {
-+			return err
++		sameRule := (want == nil && !hasOwn) || (want != nil && hasOwn && own.Enabled == want.Enabled &&
++			(!want.Enabled || own.IntervalMinutes == want.IntervalMinutes))
++		sameClient := peer.GroupId == o.ClientID
++		if !d.AwaitingApproval && sameClient && sameRule {
++			enabled, iv := effectivePolicyTx(tx, o.PeerID, o.ClientID)
++			if !enabled {
++				iv = 0
++			}
++			out = &NextecAssignResult{PeerID: o.PeerID, State: NextecStateAssigned, ClientID: o.ClientID, Already: true, Managed: enabled, Interval: iv}
++			return nil
 +		}
-+		if o.Rule == "peer" {
-+			p := &model.NextecSecretPolicy{}
-+			tx.Where("kind = ? AND ref = ?", "peer", o.PeerID).First(p)
-+			p.Kind, p.Ref, p.Enabled, p.IntervalMinutes = "peer", o.PeerID, true, interval
-+			if err := tx.Save(p).Error; err != nil {
++		now := time.Now().Unix()
++		moved := peer.GroupId != 0 && !sameClient
++		if !sameClient {
++			if err := tx.Model(&model.Peer{}).Where("row_id = ?", peer.RowId).Update("group_id", o.ClientID).Error; err != nil {
 +				return err
 +			}
 +		}
-+		updates := map[string]interface{}{"force_rotate": true}
++		if !sameRule {
++			switch {
++			case want == nil:
++				if err := tx.Where("kind = ? AND ref = ?", "peer", o.PeerID).Delete(&model.NextecSecretPolicy{}).Error; err != nil {
++					return err
++				}
++			case hasOwn:
++				if err := tx.Model(&model.NextecSecretPolicy{}).Where("id = ?", own.Id).
++					Updates(map[string]interface{}{"enabled": want.Enabled, "interval_minutes": want.IntervalMinutes}).Error; err != nil {
++					return err
++				}
++			default:
++				if err := tx.Create(want).Error; err != nil {
++					return err
++				}
++				// O GORM aplica o default (true) ao false do Create; grava o desligado de forma explícita.
++				if !want.Enabled {
++					if err := tx.Model(want).Update("enabled", false).Error; err != nil {
++						return err
++					}
++				}
++			}
++		}
++		enabled, iv := effectivePolicyTx(tx, o.PeerID, o.ClientID)
++		if !enabled {
++			iv = 0
++		}
++		// Troca imediata só quando a regra final gerencia a senha; "none" também desarma uma troca armada.
++		updates := map[string]interface{}{"force_rotate": enabled}
 +		if d.AwaitingApproval {
 +			updates["awaiting_approval"] = false
 +			updates["approved_at"] = now
@@ -871,18 +1096,27 @@ index 0000000..4f876ad
 +		if res.RowsAffected != 1 {
 +			return ErrNextecEnrollNotFound
 +		}
-+		detail := "cliente " + strconv.FormatUint(uint64(o.ClientID), 10) + ", regra " + o.Rule
++		action := "enroll_assign"
++		if !d.AwaitingApproval {
++			action = "enroll_rule_change"
++		}
++		detail := "cliente " + clientRef + ", regra " + o.Rule
++		if o.Rule == "peer" {
++			detail += " " + strconv.Itoa(interval) + " min"
++		}
 +		if moved {
 +			detail += ", movida"
 +		}
-+		if err := tx.Create(&model.NextecSecretAudit{At: now, UserId: o.UserID, Username: o.Username, PeerId: o.PeerID, Action: "enroll_assign", Ip: o.IP, Detail: detail}).Error; err != nil {
++		if err := tx.Create(&model.NextecSecretAudit{At: now, UserId: o.UserID, Username: o.Username, PeerId: o.PeerID, Action: action, Ip: o.IP, Detail: detail}).Error; err != nil {
 +			return err
 +		}
-+		enabled, ruleInterval = effectivePolicyTx(tx, o.PeerID, o.ClientID)
-+		out = &NextecAssignResult{PeerID: o.PeerID, State: NextecStateAssigned, ClientID: o.ClientID, Moved: moved, Managed: enabled, Interval: ruleInterval}
++		out = &NextecAssignResult{PeerID: o.PeerID, State: NextecStateAssigned, ClientID: o.ClientID, Moved: moved, Managed: enabled, Interval: iv}
 +		return nil
 +	})
 +	if err != nil {
++		if identityFail {
++			nextecIdentityAudit("enroll_identity_conflict", o.PeerID, o.IP, nextecIdentityDetail, o.UserID, o.Username)
++		}
 +		return nil, err
 +	}
 +	return out, nil
@@ -901,30 +1135,49 @@ index 0000000..4f876ad
 +
 +// NextecEnrollReject remove uma inscrição pendente; com block, o par id+uuid não consegue voltar.
 +func NextecEnrollReject(peerID string, block bool, userID uint, username, ip string) error {
++	return NextecEnrollRejectIdentity(peerID, "", block, userID, username, ip)
++}
++
++// NextecEnrollRejectIdentity é o Reject com a identidade (uuid) que o admin viu na lista.
++func NextecEnrollRejectIdentity(peerID, uuidSeen string, block bool, userID uint, username, ip string) error {
 +	if peerID == "" || len(peerID) > 64 {
 +		return ErrNextecEnrollBadRequest
 +	}
-+	return DB.Transaction(func(tx *gorm.DB) error {
++	identityFail := false
++	err := DB.Transaction(func(tx *gorm.DB) error {
 +		var d model.NextecDeviceSecret
 +		if err := tx.Where("peer_id = ? AND awaiting_approval = ?", peerID, true).First(&d).Error; err != nil {
 +			return ErrNextecEnrollNotFound
 +		}
++		// O admin agiu sobre uma identidade vista na lista: se a linha agora é de outra, não age às cegas.
++		if uuidSeen != "" && d.Uuid != uuidSeen {
++			identityFail = true
++			return ErrNextecIdentityConflict
++		}
 +		now := time.Now().Unix()
 +		if block {
-+			uuid := d.Uuid
-+			if uuid == "" {
-+				var peer model.Peer
-+				if tx.Where("id = ?", peerID).First(&peer).Error == nil {
-+					uuid = peer.Uuid
-+				}
++			uuids := []string{}
++			var peer model.Peer
++			havePeer := tx.Where("id = ?", peerID).First(&peer).Error == nil
++			if d.Uuid != "" {
++				uuids = append(uuids, d.Uuid)
 +			}
-+			var n int64
-+			if err := tx.Model(&model.NextecEnrollBlock{}).Where("peer_id = ? AND uuid = ?", peerID, uuid).Count(&n).Error; err != nil {
-+				return err
++			// A identidade atual do Peer também é barrada quando difere da inscrita.
++			if havePeer && peer.Uuid != "" && peer.Uuid != d.Uuid {
++				uuids = append(uuids, peer.Uuid)
 +			}
-+			if n == 0 {
-+				if err := tx.Create(&model.NextecEnrollBlock{PeerId: peerID, Uuid: uuid, BlockedAt: now, BlockedBy: userID}).Error; err != nil {
++			if len(uuids) == 0 {
++				uuids = append(uuids, "")
++			}
++			for _, uuid := range uuids {
++				var n int64
++				if err := tx.Model(&model.NextecEnrollBlock{}).Where("peer_id = ? AND uuid = ?", peerID, uuid).Count(&n).Error; err != nil {
 +					return err
++				}
++				if n == 0 {
++					if err := tx.Create(&model.NextecEnrollBlock{PeerId: peerID, Uuid: uuid, BlockedAt: now, BlockedBy: userID}).Error; err != nil {
++						return err
++					}
 +				}
 +			}
 +		}
@@ -941,6 +1194,10 @@ index 0000000..4f876ad
 +		}
 +		return tx.Create(&model.NextecSecretAudit{At: now, UserId: userID, Username: username, PeerId: peerID, Action: action, Ip: ip}).Error
 +	})
++	if err != nil && identityFail {
++		nextecIdentityAudit("enroll_identity_conflict", peerID, ip, nextecIdentityDetail, userID, username)
++	}
++	return err
 +}
 +
 +// NextecEnrollUnblock libera um par bloqueado (uuid vazio libera todos os pares do ID).
@@ -978,19 +1235,483 @@ index 0000000..4f876ad
 +	return out
 +}
 +
-+// NextecEnrollPendingCount conta as pendentes visíveis (inscritas com credencial ainda válida).
++// NextecEnrollPendingCount conta todas as pendentes, inclusive as inscritas com uma credencial já girada
++// (elas continuam na lista, marcadas como chave anterior, e ocupam o teto de 500).
 +func NextecEnrollPendingCount() int {
++	var n int64
++	DB.Model(&model.NextecDeviceSecret{}).Where("awaiting_approval = ?", true).Count(&n)
++	return int(n)
++}
++
++// NextecEnrollStaleCount conta as pendentes inscritas com credencial anterior à vigente.
++func NextecEnrollStaleCount() int {
 +	_, min := nextecEnrollEpochs()
 +	var n int64
-+	DB.Model(&model.NextecDeviceSecret{}).Where("awaiting_approval = ? AND enroll_epoch >= ?", true, min).Count(&n)
++	DB.Model(&model.NextecDeviceSecret{}).Where("awaiting_approval = ? AND enroll_epoch < ?", true, min).Count(&n)
 +	return int(n)
++}
+diff --git a/service/nextec_enroll_review_test.go b/service/nextec_enroll_review_test.go
+new file mode 100644
+index 0000000..37e4f10
+--- /dev/null
++++ b/service/nextec_enroll_review_test.go
+@@ -0,0 +1,450 @@
++package service
++
++import (
++	"errors"
++	"strconv"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"gorm.io/gorm"
++)
++
++// Revisão do PR #72: regra escolhida na atribuição, identidade (uuid) após a inscrição e pendentes de chave girada.
++
++func enrollPending(t *testing.T, ip string) (*gorm.DB, string) {
++	t.Helper()
++	db := enrollSetup(t)
++	token := enrollToken()
++	if _, err := NextecSelfEnroll(ip, enrollKey(t), enrollPeer, enrollUUID, token); err != nil {
++		t.Fatal(err)
++	}
++	return db, token
++}
++
++func peerPolicy(db *gorm.DB, peerID string) *model.NextecSecretPolicy {
++	p := &model.NextecSecretPolicy{}
++	if db.Where("kind = ? AND ref = ?", "peer", peerID).First(p).Error != nil {
++		return nil
++	}
++	return p
++}
++
++func peerGroupOf(t *testing.T, db *gorm.DB) uint {
++	t.Helper()
++	var p model.Peer
++	if err := db.Where("id = ?", enrollPeer).First(&p).Error; err != nil {
++		t.Fatal(err)
++	}
++	return p.GroupId
++}
++
++func auditCount(db *gorm.DB, action string) int64 {
++	var n int64
++	db.Model(&model.NextecSecretAudit{}).Where("action = ?", action).Count(&n)
++	return n
++}
++
++// ---------- P1-A: a regra escolhida vale exatamente ----------
++
++func TestAssignGroupDropsResidualMachineRule(t *testing.T) {
++	db, _ := enrollPending(t, "10.30.0.1")
++	if _, err := NextecSecretUpsertPolicy("group", "7", true, 60); err != nil {
++		t.Fatal(err)
++	}
++	// Resíduo de uma atribuição anterior: regra própria da máquina venceria a do cliente.
++	if _, err := NextecSecretUpsertPolicy("peer", enrollPeer, true, 15); err != nil {
++		t.Fatal(err)
++	}
++	res, err := NextecEnrollAssign(NextecAssignOptions{PeerID: enrollPeer, ClientID: 7, Rule: "group"})
++	if err != nil || !res.Managed || res.Interval != 60 {
++		t.Fatalf("assign group: %#v %v", res, err)
++	}
++	if peerPolicy(db, enrollPeer) != nil {
++		t.Fatal("regra própria residual continuou valendo sobre a do cliente")
++	}
++	if on, iv := effectivePolicy(enrollPeer, 7); !on || iv != 60 {
++		t.Fatalf("regra efetiva: %v %d", on, iv)
++	}
++}
++
++func TestAssignNoneMeansNoRotationNotInheritedNorResidual(t *testing.T) {
++	db, token := enrollPending(t, "10.30.0.2")
++	if _, err := NextecSecretUpsertPolicy("group", "7", true, 60); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := NextecSecretUpsertPolicy("peer", enrollPeer, true, 30); err != nil {
++		t.Fatal(err)
++	}
++	res, err := NextecEnrollAssign(NextecAssignOptions{PeerID: enrollPeer, ClientID: 7, Rule: "none"})
++	if err != nil || res.Managed || res.Interval != 0 || res.State != NextecStateAssigned {
++		t.Fatalf("assign none: %#v %v", res, err)
++	}
++	if on, _ := effectivePolicy(enrollPeer, 7); on {
++		t.Fatal("regra do cliente ou da máquina continuou valendo com rule none")
++	}
++	if p := peerPolicy(db, enrollPeer); p != nil && p.Enabled {
++		t.Fatalf("regra própria ligada após none: %#v", p)
++	}
++	d := deviceRow(t, db, enrollPeer)
++	if d.AwaitingApproval || d.ForceRotate {
++		t.Fatalf("none deve aprovar sem armar troca: %#v", d)
++	}
++	s, err := NextecAgentSyncStateWithCapabilities("10.30.0.2", enrollPeer, token, []string{"transaction_v1"})
++	if err != nil || s.Managed || s.Rotate || s.Operation != nil || s.PendingApproval {
++		t.Fatalf("sync após none: %#v %v", s, err)
++	}
++}
++
++func TestAssignPeerIntervalValidatedAndNothingChangesOnFailure(t *testing.T) {
++	db, _ := enrollPending(t, "10.30.0.3")
++	for _, iv := range []int{-1, -60, 1, NextecSecretMinInterval - 1, NextecSecretMaxInterval + 1} {
++		_, err := NextecEnrollAssign(NextecAssignOptions{PeerID: enrollPeer, ClientID: 7, Rule: "peer", Interval: iv})
++		if err == nil {
++			t.Fatalf("intervalo %d aceito", iv)
++		}
++		if !deviceRow(t, db, enrollPeer).AwaitingApproval || peerGroupOf(t, db) != 0 || peerPolicy(db, enrollPeer) != nil {
++			t.Fatalf("intervalo %d recusado mas algo mudou", iv)
++		}
++	}
++	// Omitido (0) usa o padrão e nunca grava 0.
++	res, err := NextecEnrollAssign(NextecAssignOptions{PeerID: enrollPeer, ClientID: 7, Rule: "peer"})
++	if err != nil || res.Interval != NextecSecretDefaultInterval {
++		t.Fatalf("padrão: %#v %v", res, err)
++	}
++	if p := peerPolicy(db, enrollPeer); p == nil || p.IntervalMinutes != NextecSecretDefaultInterval || !p.Enabled {
++		t.Fatalf("política gravada: %#v", p)
++	}
++}
++
++func TestAssignRequiresExplicitValidRule(t *testing.T) {
++	db, _ := enrollPending(t, "10.30.0.4")
++	if _, err := NextecSecretUpsertPolicy("group", "7", true, 60); err != nil {
++		t.Fatal(err)
++	}
++	for _, r := range []string{"", "GROUP", "peers", "all"} {
++		if _, err := NextecEnrollAssign(NextecAssignOptions{PeerID: enrollPeer, ClientID: 7, Rule: r}); !errors.Is(err, ErrNextecBadRule) {
++			t.Fatalf("regra %q: %v", r, err)
++		}
++	}
++	if !deviceRow(t, db, enrollPeer).AwaitingApproval || peerGroupOf(t, db) != 0 {
++		t.Fatal("regra inválida alterou a máquina")
++	}
++}
++
++func TestAssignGroupWithoutRuleChangesNothingEvenWhenMoving(t *testing.T) {
++	db, _ := enrollPending(t, "10.30.0.5")
++	db.Model(&model.Peer{}).Where("id = ?", enrollPeer).Update("group_id", 8)
++	if _, err := NextecSecretUpsertPolicy("peer", enrollPeer, true, 45); err != nil {
++		t.Fatal(err)
++	}
++	// Regra do cliente 7 existe mas está desligada: conta como ausente.
++	if _, err := NextecSecretUpsertPolicy("group", "7", false, 60); err != nil {
++		t.Fatal(err)
++	}
++	_, err := NextecEnrollAssign(NextecAssignOptions{PeerID: enrollPeer, ClientID: 7, Rule: "group", Move: true})
++	if !errors.Is(err, ErrNextecNoGroupRule) {
++		t.Fatalf("esperava ErrNextecNoGroupRule: %v", err)
++	}
++	if !deviceRow(t, db, enrollPeer).AwaitingApproval || peerGroupOf(t, db) != 8 {
++		t.Fatal("falha aprovou ou moveu parcialmente")
++	}
++	if p := peerPolicy(db, enrollPeer); p == nil || p.IntervalMinutes != 45 {
++		t.Fatalf("falha alterou a regra da máquina: %#v", p)
++	}
++	if auditCount(db, "enroll_assign") != 0 {
++		t.Fatal("auditou atribuição que falhou")
++	}
++}
++
++func TestAssignIdempotentAndExplicitRuleChange(t *testing.T) {
++	db, _ := enrollPending(t, "10.30.0.6")
++	if _, err := NextecSecretUpsertPolicy("group", "7", true, 60); err != nil {
++		t.Fatal(err)
++	}
++	opt := NextecAssignOptions{PeerID: enrollPeer, ClientID: 7, Rule: "group", UserID: 2, Username: "admin"}
++	first, err := NextecEnrollAssign(opt)
++	if err != nil || first.Already {
++		t.Fatalf("primeira: %#v %v", first, err)
++	}
++	again, err := NextecEnrollAssign(opt)
++	if err != nil || !again.Already || again.Interval != 60 {
++		t.Fatalf("repetição: %#v %v", again, err)
++	}
++	// Outra regra para a mesma máquina e mesmo cliente: atualiza de forma explícita (não vira "Already").
++	peer := opt
++	peer.Rule, peer.Interval = "peer", 30
++	changed, err := NextecEnrollAssign(peer)
++	if err != nil || changed.Already || !changed.Managed || changed.Interval != 30 {
++		t.Fatalf("troca para peer: %#v %v", changed, err)
++	}
++	if p := peerPolicy(db, enrollPeer); p == nil || !p.Enabled || p.IntervalMinutes != 30 {
++		t.Fatalf("política da máquina: %#v", p)
++	}
++	if r, err := NextecEnrollAssign(peer); err != nil || !r.Already {
++		t.Fatalf("repetir peer: %#v %v", r, err)
++	}
++	peer.Interval = 90
++	if r, err := NextecEnrollAssign(peer); err != nil || r.Already || r.Interval != 90 {
++		t.Fatalf("novo intervalo: %#v %v", r, err)
++	}
++	none := opt
++	none.Rule = "none"
++	if r, err := NextecEnrollAssign(none); err != nil || r.Already || r.Managed {
++		t.Fatalf("troca para none: %#v %v", r, err)
++	}
++	if r, err := NextecEnrollAssign(none); err != nil || !r.Already || r.Managed {
++		t.Fatalf("repetir none: %#v %v", r, err)
++	}
++	back, err := NextecEnrollAssign(opt)
++	if err != nil || back.Already || !back.Managed || back.Interval != 60 {
++		t.Fatalf("volta para group: %#v %v", back, err)
++	}
++	if peerPolicy(db, enrollPeer) != nil {
++		t.Fatal("group deixou regra própria")
++	}
++	// 1 atribuição inicial + 4 mudanças explícitas, nenhuma repetição auditada.
++	if n := auditCount(db, "enroll_assign") + auditCount(db, "enroll_rule_change"); n != 5 {
++		t.Fatalf("auditorias: %d", n)
++	}
++}
++
++// ---------- P1-B: identidade (uuid) travada na inscrição ----------
++
++func TestAssignRefusesChangedUUIDAndAudits(t *testing.T) {
++	db, token := enrollPending(t, "10.31.0.1")
++	if _, err := NextecSecretUpsertPolicy("group", "7", true, 60); err != nil {
++		t.Fatal(err)
++	}
++	db.Model(&model.Peer{}).Where("id = ?", enrollPeer).Update("uuid", "uuid-de-outra-maquina")
++	_, err := NextecEnrollAssign(NextecAssignOptions{PeerID: enrollPeer, ClientID: 7, Rule: "group", UserID: 2, Username: "admin", IP: "10.9.9.9"})
++	if !errors.Is(err, ErrNextecIdentityConflict) {
++		t.Fatalf("aprovou identidade trocada: %v", err)
++	}
++	d := deviceRow(t, db, enrollPeer)
++	if !d.AwaitingApproval || d.ActiveEnc != "" || peerGroupOf(t, db) != 0 {
++		t.Fatalf("estado mudou: %#v", d)
++	}
++	var a model.NextecSecretAudit
++	if err := db.Where("action = ?", "enroll_identity_conflict").First(&a).Error; err != nil {
++		t.Fatalf("sem auditoria do conflito: %v", err)
++	}
++	if a.PeerId != enrollPeer || a.UserId != 2 || strings.Contains(a.Detail, token) || strings.Contains(a.Detail, "uuid-de-outra") || strings.Contains(a.Detail, enrollUUID) {
++		t.Fatalf("auditoria: %#v", a)
++	}
++	// Voltando o uuid original, a atribuição passa.
++	db.Model(&model.Peer{}).Where("id = ?", enrollPeer).Update("uuid", enrollUUID)
++	if _, err := NextecEnrollAssign(NextecAssignOptions{PeerID: enrollPeer, ClientID: 7, Rule: "group"}); err != nil {
++		t.Fatalf("uuid original: %v", err)
++	}
++}
++
++func TestAssignChecksUUIDSeenByAdmin(t *testing.T) {
++	db, _ := enrollPending(t, "10.31.0.2")
++	_, err := NextecEnrollAssign(NextecAssignOptions{PeerID: enrollPeer, ClientID: 7, Rule: "none", Uuid: "uuid-que-o-admin-nao-viu"})
++	if !errors.Is(err, ErrNextecIdentityConflict) {
++		t.Fatalf("uuid da lista divergente: %v", err)
++	}
++	if !deviceRow(t, db, enrollPeer).AwaitingApproval {
++		t.Fatal("aprovou com uuid divergente")
++	}
++	if _, err := NextecEnrollAssign(NextecAssignOptions{PeerID: enrollPeer, ClientID: 7, Rule: "none", Uuid: enrollUUID}); err != nil {
++		t.Fatalf("uuid correto: %v", err)
++	}
++}
++
++func TestApprovedAgentWithChangedUUIDGetsNoPasswordOrSync(t *testing.T) {
++	db, token := enrollPending(t, "10.31.0.3")
++	if _, err := NextecSecretUpsertPolicy("group", "7", true, 60); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := NextecEnrollAssign(NextecAssignOptions{PeerID: enrollPeer, ClientID: 7, Rule: "group"}); err != nil {
++		t.Fatal(err)
++	}
++	caps := []string{"transaction_v1"}
++	good := "ValidPassword123456"
++	s, err := NextecAgentSyncStateWithCapabilities("10.31.0.3", enrollPeer, token, caps)
++	if err != nil || s.Operation == nil {
++		t.Fatalf("sync normal: %#v %v", s, err)
++	}
++	enc, err := vaultEncrypt("SecretThatMustNotLeak1")
++	if err != nil {
++		t.Fatal(err)
++	}
++	db.Model(&model.NextecDeviceSecret{}).Where("peer_id = ?", enrollPeer).Updates(map[string]interface{}{"active_enc": enc, "version": 1})
++	admin := true
++	u := &model.User{IdModel: model.IdModel{Id: 1}, Username: "admin", IsAdmin: &admin}
++	if pw, ok := NextecConnectPassword(u, enrollPeer); !ok || pw != "SecretThatMustNotLeak1" {
++		t.Fatalf("senha antes da troca de identidade: %q %v", pw, ok)
++	}
++	// Identidade trocada depois de aprovada.
++	db.Model(&model.Peer{}).Where("id = ?", enrollPeer).Update("uuid", "uuid-trocado")
++	before := deviceRow(t, db, enrollPeer)
++	if _, err := NextecAgentSyncStateWithCapabilities("10.31.0.3", enrollPeer, token, caps); !errors.Is(err, ErrNextecIdentityConflict) {
++		t.Fatalf("sync: %v", err)
++	}
++	if err := NextecAgentPropose("10.31.0.3", enrollPeer, token, good); !errors.Is(err, ErrNextecIdentityConflict) {
++		t.Fatalf("propose: %v", err)
++	}
++	if err := NextecAgentProposeTransaction("10.31.0.3", enrollPeer, token, "op", 1, good); !errors.Is(err, ErrNextecIdentityConflict) {
++		t.Fatalf("propose transacional: %v", err)
++	}
++	if err := NextecAgentConfirm("10.31.0.3", enrollPeer, token); !errors.Is(err, ErrNextecIdentityConflict) {
++		t.Fatalf("confirm: %v", err)
++	}
++	if err := NextecAgentConfirmTransaction("10.31.0.3", enrollPeer, token, "op", 1); !errors.Is(err, ErrNextecIdentityConflict) {
++		t.Fatalf("confirm transacional: %v", err)
++	}
++	if pw, _ := NextecConnectPassword(u, enrollPeer); pw != "" {
++		t.Fatal("entregou a senha para identidade trocada")
++	}
++	if _, err := NextecSecretReveal(enrollPeer); err == nil {
++		t.Fatal("revelou a senha de identidade trocada")
++	}
++	after := deviceRow(t, db, enrollPeer)
++	if after.Version != before.Version || after.PendingEnc != before.PendingEnc || after.ActiveEnc != before.ActiveEnc || after.PendingOperation != before.PendingOperation {
++		t.Fatalf("estado do cofre mudou com identidade trocada: %#v", after)
++	}
++	if auditCount(db, "agent_identity_conflict") == 0 {
++		t.Fatal("sem auditoria de identidade trocada")
++	}
++}
++
++func TestRejectAndBlockByIDAndUUID(t *testing.T) {
++	db, _ := enrollPending(t, "10.31.0.4")
++	// O admin viu uma identidade; a linha agora é outra: não rejeita às cegas.
++	if err := NextecEnrollRejectIdentity(enrollPeer, "outra-identidade", true, 1, "admin", ""); !errors.Is(err, ErrNextecIdentityConflict) {
++		t.Fatalf("rejeitar com uuid divergente: %v", err)
++	}
++	var n int64
++	db.Model(&model.NextecDeviceSecret{}).Count(&n)
++	if n != 1 || len(NextecEnrollBlocks()) != 0 {
++		t.Fatal("recusa alterou linha ou bloqueios")
++	}
++	// Peer trocou de identidade: bloquear barra a identidade inscrita e a atual.
++	db.Model(&model.Peer{}).Where("id = ?", enrollPeer).Update("uuid", "uuid-novo")
++	if err := NextecEnrollRejectIdentity(enrollPeer, enrollUUID, true, 1, "admin", ""); err != nil {
++		t.Fatal(err)
++	}
++	if !nextecEnrollBlocked(DB, enrollPeer, enrollUUID) || !nextecEnrollBlocked(DB, enrollPeer, "uuid-novo") {
++		t.Fatalf("bloqueios: %#v", NextecEnrollBlocks())
++	}
++}
++
++// ---------- P2: pendentes de chave girada continuam visíveis e atribuíveis ----------
++
++func devicePending(peerID string) *NextecSecretDevice {
++	for _, d := range NextecSecretDevices() {
++		if d.PeerId == peerID {
++			return d
++		}
++	}
++	return nil
++}
++
++func TestStalePendingStaysVisibleAndAssignable(t *testing.T) {
++	db, _ := enrollPending(t, "10.32.0.1")
++	if _, _, _, err := NextecEnrollKeyRotate(); err != nil {
++		t.Fatal(err)
++	}
++	d := devicePending(enrollPeer)
++	if d == nil {
++		t.Fatal("pendente de chave anterior sumiu da lista")
++	}
++	if d.State != NextecStatePending || !d.StaleKey || d.Uuid != enrollUUID {
++		t.Fatalf("pendente de chave anterior sumiu ou sem selo: %#v", d)
++	}
++	if NextecEnrollPendingCount() != 1 {
++		t.Fatalf("contador: %d", NextecEnrollPendingCount())
++	}
++	res, err := NextecEnrollAssign(NextecAssignOptions{PeerID: enrollPeer, ClientID: 7, Rule: "none", Uuid: enrollUUID})
++	if err != nil || res.State != NextecStateAssigned {
++		t.Fatalf("atribuir pendente de chave anterior: %#v %v", res, err)
++	}
++	if deviceRow(t, db, enrollPeer).AwaitingApproval {
++		t.Fatal("continuou pendente")
++	}
++	if d := devicePending(enrollPeer); d == nil || d.StaleKey || d.State != NextecStateAssigned {
++		t.Fatalf("aprovada ainda marcada: %#v", d)
++	}
++}
++
++func TestStalePendingCanBeRejectedAndBlocked(t *testing.T) {
++	db, _ := enrollPending(t, "10.32.0.2")
++	if _, _, _, err := NextecEnrollKeyRotate(); err != nil {
++		t.Fatal(err)
++	}
++	if err := NextecEnrollReject(enrollPeer, true, 1, "admin", ""); err != nil {
++		t.Fatalf("rejeitar: %v", err)
++	}
++	var n int64
++	db.Model(&model.NextecDeviceSecret{}).Count(&n)
++	if n != 0 || !nextecEnrollBlocked(DB, enrollPeer, enrollUUID) {
++		t.Fatal("linha ou bloqueio")
++	}
++}
++
++func TestStalePendingRefreshedByNewKeyIsIdempotent(t *testing.T) {
++	db := enrollSetup(t)
++	token := enrollToken()
++	if _, err := NextecSelfEnroll("10.32.0.3", enrollKey(t), enrollPeer, enrollUUID, token); err != nil {
++		t.Fatal(err)
++	}
++	oldKey := enrollKey(t)
++	key2, epoch2, _, err := NextecEnrollKeyRotate()
++	if err != nil {
++		t.Fatal(err)
++	}
++	// Chave revogada continua recusada para novas inscrições (outra máquina).
++	db.Create(&model.Peer{Id: "987654321", Uuid: "uuid-outra", LastOnlineTime: time.Now().Unix()})
++	if _, err := NextecSelfEnroll("10.32.0.3", oldKey, "987654321", "uuid-outra", enrollToken()); !errors.Is(err, ErrNextecEnrollKeyInvalid) {
++		t.Fatalf("chave revogada: %v", err)
++	}
++	if _, err := NextecSelfEnroll("10.32.0.3", oldKey, enrollPeer, enrollUUID, token); !errors.Is(err, ErrNextecEnrollKeyInvalid) {
++		t.Fatalf("chave revogada reenviada: %v", err)
++	}
++	before := deviceRow(t, db, enrollPeer)
++	if !devicePending(enrollPeer).StaleKey {
++		t.Fatal("deveria estar marcada como chave anterior")
++	}
++	res, err := NextecSelfEnroll("10.32.0.3", key2, enrollPeer, enrollUUID, token)
++	if err != nil || res.State != NextecStatePending || res.Token != token {
++		t.Fatalf("reenvio com chave nova: %#v %v", res, err)
++	}
++	var n int64
++	db.Model(&model.NextecDeviceSecret{}).Where("peer_id = ?", enrollPeer).Count(&n)
++	if n != 1 {
++		t.Fatalf("duplicou: %d linhas", n)
++	}
++	after := deviceRow(t, db, enrollPeer)
++	if after.EnrollEpoch != epoch2 || after.Id != before.Id || after.TokenHash != before.TokenHash || after.EnrolledAt != before.EnrolledAt {
++		t.Fatalf("época não atualizada ou linha alterada: %#v", after)
++	}
++	if devicePending(enrollPeer).StaleKey {
++		t.Fatal("continuou com selo de chave anterior")
++	}
++	// Identidade diferente com a chave nova continua conflito.
++	if _, err := NextecSelfEnroll("10.32.0.3", key2, enrollPeer, "intruso", token); !errors.Is(err, ErrNextecIdentityConflict) {
++		t.Fatalf("uuid diferente: %v", err)
++	}
++}
++
++func TestStalePendingsStillCountTowardCap(t *testing.T) {
++	db := enrollSetup(t)
++	now := time.Now().Unix()
++	for i := 0; i < nextecEnrollPendingMax; i++ {
++		id := 100000000 + i
++		db.Create(&model.NextecDeviceSecret{PeerId: strconv.Itoa(id), TokenHash: "h" + strconv.Itoa(id), AwaitingApproval: true, EnrolledVia: "self", EnrolledAt: now - 7200, EnrollEpoch: 1, Uuid: "u" + strconv.Itoa(id)})
++	}
++	if _, _, _, err := NextecEnrollKeyRotate(); err != nil {
++		t.Fatal(err)
++	}
++	key, _, _, _ := NextecEnrollKeyInfo()
++	if NextecEnrollPendingCount() != nextecEnrollPendingMax {
++		t.Fatalf("contador: %d", NextecEnrollPendingCount())
++	}
++	if _, err := NextecSelfEnroll("10.32.0.4", key, enrollPeer, enrollUUID, enrollToken()); !errors.Is(err, ErrNextecPendingLimit) {
++		t.Fatalf("teto: %v", err)
++	}
 +}
 diff --git a/service/nextec_enroll_test.go b/service/nextec_enroll_test.go
 new file mode 100644
-index 0000000..84e596f
+index 0000000..4351efe
 --- /dev/null
 +++ b/service/nextec_enroll_test.go
-@@ -0,0 +1,707 @@
+@@ -0,0 +1,712 @@
 +package service
 +
 +import (
@@ -1665,7 +2386,7 @@ index 0000000..84e596f
 +	}
 +}
 +
-+func TestPendingListHiddenAfterKeyRotation(t *testing.T) {
++func TestPendingListKeepsStaleKeyAfterRotation(t *testing.T) {
 +	db := enrollSetup(t)
 +	if _, err := NextecSelfEnroll("10.8.0.1", enrollKey(t), enrollPeer, enrollUUID, enrollToken()); err != nil {
 +		t.Fatal(err)
@@ -1679,27 +2400,32 @@ index 0000000..84e596f
 +			found = d
 +		}
 +	}
-+	if found == nil || found.State != NextecStatePending || found.EnrolledVia != "self" || found.Os != "windows" || found.Username != "ana" || found.Managed {
++	if found == nil || found.State != NextecStatePending || found.EnrolledVia != "self" || found.Os != "windows" || found.Username != "ana" || found.Managed || found.StaleKey {
 +		t.Fatalf("item pendente: %#v", found)
 +	}
 +	if _, _, _, err := NextecEnrollKeyRotate(); err != nil {
 +		t.Fatal(err)
 +	}
-+	if NextecEnrollPendingCount() != 0 {
-+		t.Fatal("pendente de credencial revogada continuou contado")
++	// Girar a credencial não esconde a pendente: ela segue visível, marcada, contada e atribuível.
++	if NextecEnrollPendingCount() != 1 || NextecEnrollStaleCount() != 1 {
++		t.Fatalf("contadores: %d %d", NextecEnrollPendingCount(), NextecEnrollStaleCount())
 +	}
++	found = nil
 +	for _, d := range NextecSecretDevices() {
 +		if d.PeerId == enrollPeer {
-+			t.Fatal("pendente de credencial revogada continuou listado")
++			found = d
 +		}
 +	}
-+	if _, err := NextecEnrollAssign(NextecAssignOptions{PeerID: enrollPeer, ClientID: 7, Rule: "none"}); !errors.Is(err, ErrNextecEnrollNotFound) {
-+		t.Fatalf("atribuiu pendente revogado: %v", err)
++	if found == nil || !found.StaleKey || found.State != NextecStatePending {
++		t.Fatalf("pendente de credencial anterior: %#v", found)
++	}
++	if _, err := NextecEnrollAssign(NextecAssignOptions{PeerID: enrollPeer, ClientID: 7, Rule: "none"}); err != nil {
++		t.Fatalf("atribuir pendente de credencial anterior: %v", err)
 +	}
 +	_ = db
 +}
 diff --git a/service/nextec_secret.go b/service/nextec_secret.go
-index 91536fa..4c4dc1f 100644
+index 91536fa..27cdea8 100644
 --- a/service/nextec_secret.go
 +++ b/service/nextec_secret.go
 @@ -40,6 +40,7 @@ var (
@@ -1710,7 +2436,33 @@ index 91536fa..4c4dc1f 100644
  	errNextecCASRetry          = errors.New("retry password operation CAS")
  	nextecPasswordPattern      = regexp.MustCompile(`^[A-Za-z0-9]{16,64}$`)
  	nextecVaultKeyOnce         sync.Once
-@@ -314,6 +315,9 @@ func NextecAgentEnroll(ip, key, peerID string) (string, error) {
+@@ -224,6 +225,13 @@ func NextecSecretUpsertPolicy(kind, ref string, enabled bool, interval int) (*mo
+ 	if err := DB.Save(p).Error; err != nil {
+ 		return nil, err
+ 	}
++	// Regra nova desligada: o GORM aplica o default da coluna (true) ao zero value no Create.
++	if !enabled {
++		if err := DB.Model(p).Update("enabled", false).Error; err != nil {
++			return nil, err
++		}
++		p.Enabled = false
++	}
+ 	return p, nil
+ }
+ 
+@@ -286,6 +294,11 @@ func agentAuth(ip, peerID, token string) (*model.NextecDeviceSecret, error) {
+ 		nextecFailAdd(ip)
+ 		return nil, ErrNextecBadAgentAuth
+ 	}
++	// A identidade gravada na inscrição tem de ser a do Peer atual: máquina trocada não recebe operação nem senha.
++	if !nextecDeviceIdentityOK(d) {
++		nextecIdentityAudit("agent_identity_conflict", peerID, ip, nextecIdentityDetail, 0, "")
++		return nil, ErrNextecIdentityConflict
++	}
+ 	return d, nil
+ }
+ 
+@@ -314,6 +327,9 @@ func NextecAgentEnroll(ip, key, peerID string) (string, error) {
  	token := randomHex(32)
  	d.PeerId, d.TokenHash = peerID, sha256Hex(token)
  	d.LastSeenAt = time.Now().Unix()
@@ -1720,7 +2472,7 @@ index 91536fa..4c4dc1f 100644
  	if err := DB.Save(d).Error; err != nil {
  		return "", err
  	}
-@@ -330,6 +334,7 @@ type NextecAgentSync struct {
+@@ -330,6 +346,7 @@ type NextecAgentSync struct {
  	TransactionV1      bool                  `json:"transaction_v1"`
  	UpgradeRequired    bool                  `json:"upgrade_required"`
  	Recovery           bool                  `json:"recovery"`
@@ -1728,7 +2480,7 @@ index 91536fa..4c4dc1f 100644
  	Operation          *NextecAgentOperation `json:"operation,omitempty"`
  }
  
-@@ -360,6 +365,13 @@ func NextecAgentSyncStateWithCapabilities(ip, peerID, token string, capabilities
+@@ -360,6 +377,13 @@ func NextecAgentSyncStateWithCapabilities(ip, peerID, token string, capabilities
  	if seen.RowsAffected != 1 {
  		return nil, ErrNextecBadAgentAuth
  	}
@@ -1742,7 +2494,7 @@ index 91536fa..4c4dc1f 100644
  	enabled, interval := effectivePolicy(peerID, peerGroup(peerID))
  	if !hasNextecCapability(capabilities, "transaction_v1") {
  		if d.ProtocolVersion > 0 {
-@@ -401,6 +413,10 @@ func nextecAgentSyncTransaction(deviceID uint, peerID, tokenHash string, enabled
+@@ -401,6 +425,10 @@ func nextecAgentSyncTransaction(deviceID uint, peerID, tokenHash string, enabled
  			if err := tx.Where("id = ? AND peer_id = ? AND token_hash = ?", deviceID, peerID, tokenHash).First(d).Error; err != nil {
  				return ErrNextecBadAgentAuth
  			}
@@ -1753,7 +2505,7 @@ index 91536fa..4c4dc1f 100644
  			// Al migrar um agente, associa qualquer segredo legacy pendente a uma operação nova sem
  			// trocar nem descartar a senha que o agente talvez já tenha aplicado.
  			if d.ProtocolVersion == 0 && d.PendingOperation == "" {
-@@ -493,6 +509,9 @@ func NextecAgentPropose(ip, peerID, token, password string) error {
+@@ -493,6 +521,9 @@ func NextecAgentPropose(ip, peerID, token, password string) error {
  	if err != nil {
  		return err
  	}
@@ -1763,7 +2515,7 @@ index 91536fa..4c4dc1f 100644
  	if d.ProtocolVersion > 0 {
  		return ErrNextecOperationRequired
  	}
-@@ -504,7 +523,7 @@ func NextecAgentPropose(ip, peerID, token, password string) error {
+@@ -504,7 +535,7 @@ func NextecAgentPropose(ip, peerID, token, password string) error {
  		return err
  	}
  	res := DB.Model(&model.NextecDeviceSecret{}).
@@ -1772,7 +2524,7 @@ index 91536fa..4c4dc1f 100644
  		Update("pending_enc", enc)
  	if res.Error != nil {
  		return res.Error
-@@ -524,6 +543,9 @@ func NextecAgentProposeTransaction(ip, peerID, token, operationID string, pendin
+@@ -524,6 +555,9 @@ func NextecAgentProposeTransaction(ip, peerID, token, operationID string, pendin
  	if err != nil {
  		return err
  	}
@@ -1782,7 +2534,7 @@ index 91536fa..4c4dc1f 100644
  	if !nextecPasswordPattern.MatchString(password) {
  		return ErrNextecBadPassword
  	}
-@@ -535,7 +557,7 @@ func NextecAgentProposeTransaction(ip, peerID, token, operationID string, pendin
+@@ -535,7 +569,7 @@ func NextecAgentProposeTransaction(ip, peerID, token, operationID string, pendin
  		return err
  	}
  	res := DB.Model(&model.NextecDeviceSecret{}).
@@ -1791,7 +2543,7 @@ index 91536fa..4c4dc1f 100644
  		Update("pending_enc", enc)
  	if res.Error != nil {
  		return res.Error
-@@ -563,6 +585,9 @@ func NextecAgentConfirm(ip, peerID, token string) error {
+@@ -563,6 +597,9 @@ func NextecAgentConfirm(ip, peerID, token string) error {
  	if err != nil {
  		return err
  	}
@@ -1801,7 +2553,7 @@ index 91536fa..4c4dc1f 100644
  	if d.ProtocolVersion > 0 {
  		return ErrNextecOperationRequired
  	}
-@@ -575,7 +600,7 @@ func NextecAgentConfirm(ip, peerID, token string) error {
+@@ -575,7 +612,7 @@ func NextecAgentConfirm(ip, peerID, token string) error {
  	}
  	now := time.Now().Unix()
  	res := DB.Model(&model.NextecDeviceSecret{}).
@@ -1810,7 +2562,7 @@ index 91536fa..4c4dc1f 100644
  		Updates(map[string]interface{}{
  			"active_enc": d.PendingEnc, "pending_enc": "", "version": d.Version + 1,
  			"active_at": now, "next_rotation_at": now + int64(interval)*60, "force_rotate": false,
-@@ -599,6 +624,9 @@ func NextecAgentConfirmTransaction(ip, peerID, token, operationID string, pendin
+@@ -599,6 +636,9 @@ func NextecAgentConfirmTransaction(ip, peerID, token, operationID string, pendin
  	if err != nil {
  		return err
  	}
@@ -1820,7 +2572,7 @@ index 91536fa..4c4dc1f 100644
  	if operationID == "" || pendingVersion <= 0 {
  		return ErrNextecOperationConflict
  	}
-@@ -625,7 +653,7 @@ func NextecAgentConfirmTransaction(ip, peerID, token, operationID string, pendin
+@@ -625,7 +665,7 @@ func NextecAgentConfirmTransaction(ip, peerID, token, operationID string, pendin
  		"active_at": now, "next_rotation_at": now + int64(interval)*60, "force_rotate": false,
  	}
  	res := DB.Model(&model.NextecDeviceSecret{}).
@@ -1829,12 +2581,14 @@ index 91536fa..4c4dc1f 100644
  		Updates(updates)
  	if res.Error != nil {
  		return res.Error
-@@ -661,12 +689,28 @@ type NextecSecretDevice struct {
+@@ -661,12 +701,25 @@ type NextecSecretDevice struct {
  	NextRotationAt int64  `json:"next_rotation_at"`
  	LastSeenAt     int64  `json:"last_seen_at"`
  	ForceRotate    bool   `json:"force_rotate"`
 +	// Inscrição global
 +	State       string `json:"state,omitempty"` // pending | assigned (vazio: máquina sem agente)
++	StaleKey    bool   `json:"stale_key,omitempty"` // pendente inscrita com credencial já girada
++	Uuid        string `json:"uuid,omitempty"`      // só de pendentes: identidade gravada na inscrição
 +	EnrolledVia string `json:"enrolled_via,omitempty"`
 +	EnrolledAt  int64  `json:"enrolled_at,omitempty"`
 +	LastIp      string `json:"last_ip,omitempty"`
@@ -1848,19 +2602,14 @@ index 91536fa..4c4dc1f 100644
 -	DB.Find(&states)
 +	var allStates []*model.NextecDeviceSecret
 +	DB.Find(&allStates)
-+	// Pendente só aparece com credencial de inscrição ainda válida (a época da inscrição não foi revogada).
++	// Pendente de credencial girada continua na lista (marcada como chave anterior): o admin ainda pode
++	// atribuir, rejeitar ou bloquear. Só a inscrição NOVA exige a credencial vigente.
 +	_, minEpoch := nextecEnrollEpochs()
-+	states := make([]*model.NextecDeviceSecret, 0, len(allStates))
-+	for _, s := range allStates {
-+		if s.AwaitingApproval && s.EnrollEpoch < minEpoch {
-+			continue
-+		}
-+		states = append(states, s)
-+	}
++	states := allStates
  	byID := map[string]*model.NextecDeviceSecret{}
  	for _, s := range states {
  		byID[s.PeerId] = s
-@@ -703,14 +747,31 @@ func NextecSecretDevices() []*NextecSecretDevice {
+@@ -703,14 +756,30 @@ func NextecSecretDevices() []*NextecSecretDevice {
  	q.Find(&peers)
  	seen := map[string]bool{}
  	out := make([]*NextecSecretDevice, 0, len(peers)+len(states))
@@ -1876,9 +2625,6 @@ index 91536fa..4c4dc1f 100644
 +			dv.LastIp, dv.Os, dv.Username = peer.LastOnlineIp, peer.Os, peer.Username
 +		}
  		if s := byID[peerID]; s != nil {
-+			if s.AwaitingApproval && s.EnrollEpoch < minEpoch {
-+				return
-+			}
 +			if s.TokenHash != "" {
 +				dv.State = nextecEnrollState(s)
 +				dv.EnrolledVia, dv.EnrolledAt = s.EnrolledVia, s.EnrolledAt
@@ -1889,11 +2635,13 @@ index 91536fa..4c4dc1f 100644
 +			if s.AwaitingApproval {
 +				// Pendente nunca é gerenciada: sem regra efetiva, sem senha.
 +				dv.Managed, dv.IntervalMin = false, 0
++				dv.StaleKey = s.EnrollEpoch < minEpoch
++				dv.Uuid = s.Uuid
 +			}
  			dv.Enrolled = s.TokenHash != ""
  			dv.HasPassword = s.ActiveEnc != ""
  			dv.Pending = s.PendingEnc != ""
-@@ -720,17 +781,17 @@ func NextecSecretDevices() []*NextecSecretDevice {
+@@ -720,17 +789,17 @@ func NextecSecretDevices() []*NextecSecretDevice {
  		out = append(out, dv)
  	}
  	for _, p := range peers {
@@ -1914,22 +2662,25 @@ index 91536fa..4c4dc1f 100644
  	if res.Error != nil {
  		return res.Error
  	}
-@@ -765,6 +826,9 @@ func NextecSecretReveal(peerID string) (*NextecRevealed, error) {
+@@ -765,6 +834,12 @@ func NextecSecretReveal(peerID string) (*NextecRevealed, error) {
  	if err := DB.Where("peer_id = ?", peerID).First(d).Error; err != nil {
  		return nil, errors.New("máquina sem senha guardada")
  	}
 +	if d.AwaitingApproval {
 +		return nil, errors.New("a máquina aguarda aprovação e ainda não tem senha")
 +	}
++	if !nextecDeviceIdentityOK(d) {
++		return nil, errors.New("a identidade da máquina mudou desde a inscrição; reaprove a máquina")
++	}
  	active, err := vaultDecrypt(d.ActiveEnc)
  	if err != nil {
  		return nil, err
-@@ -856,7 +920,7 @@ func NextecConnectPassword(u *model.User, peerID string) (string, bool) {
+@@ -856,7 +931,7 @@ func NextecConnectPassword(u *model.User, peerID string) (string, bool) {
  		return "", true
  	}
  	d := &model.NextecDeviceSecret{}
 -	if DB.Where("peer_id = ?", peerID).First(d).Error != nil || d.ActiveEnc == "" {
-+	if DB.Where("peer_id = ?", peerID).First(d).Error != nil || d.ActiveEnc == "" || d.AwaitingApproval {
++	if DB.Where("peer_id = ?", peerID).First(d).Error != nil || d.ActiveEnc == "" || d.AwaitingApproval || !nextecDeviceIdentityOK(d) {
  		return "", true
  	}
  	pw, err := vaultDecrypt(d.ActiveEnc)

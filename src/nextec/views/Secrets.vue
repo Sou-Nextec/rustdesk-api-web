@@ -51,6 +51,10 @@
           <template #default="{ row }">
             <div class="nx-name">{{ row.alias || row.hostname || fmtId(row.peer_id) }}</div>
             <div class="nx-muted nx-small nx-mono">{{ fmtId(row.peer_id) }}</div>
+            <el-tooltip v-if="row.stale_key" placement="top"
+                        content="Inscrita com uma credencial que já foi girada. Se você reconhece a máquina, atribua normalmente; se não, rejeite ou bloqueie.">
+              <el-tag type="warning" size="small" disable-transitions class="nx-stale-tag">Chave anterior</el-tag>
+            </el-tooltip>
           </template>
         </el-table-column>
         <el-table-column label="Sistema e usuário" min-width="170">
@@ -83,6 +87,10 @@
         <p v-if="!pendingAll.length">Quando alguém instalar o Nextec-Connect com a credencial de inscrição, a máquina aparece aqui para você atribuir a um cliente.</p>
         <el-button v-if="!pendingAll.length" @click="openKey">Ver credencial de inscrição</el-button>
       </el-empty>
+      <p v-if="staleCount" class="nx-help nx-small">
+        {{ staleCount }} {{ staleCount === 1 ? 'máquina foi inscrita' : 'máquinas foram inscritas' }} com uma credencial anterior (selo “Chave anterior”).
+        Elas continuam aqui até você atribuir, rejeitar ou bloquear. Só as inscrições novas exigem a credencial atual.
+      </p>
       <div class="nx-foot">
         <el-button text :disabled="!blocked.length" @click="blockedDlg.visible = true">Bloqueadas ({{ blocked.length }})</el-button>
       </div>
@@ -219,7 +227,7 @@
         <el-button size="small" :disabled="!keyDlg.key" @click="keyDlg.show = !keyDlg.show">{{ keyDlg.show ? 'Ocultar' : 'Ver' }}</el-button>
         <el-button size="small" :disabled="!keyDlg.key" @click="copy(keyDlg.key)">Copiar</el-button>
       </div>
-      <p class="nx-help">Versão {{ keyDlg.epoch || '-' }}. Girar invalida a credencial atual: instaladores já distribuídos deixam de inscrever máquinas novas e as pendentes feitas com ela saem da lista. Máquinas já atribuídas não são afetadas.</p>
+      <p class="nx-help">Versão {{ keyDlg.epoch || '-' }}. Girar invalida a credencial atual: instaladores já distribuídos deixam de inscrever máquinas novas. As pendentes feitas com ela continuam na lista, marcadas como “Chave anterior”, e você ainda pode atribuí-las, rejeitá-las ou bloqueá-las. Máquinas já atribuídas não são afetadas.</p>
       <template #footer>
         <el-button type="danger" plain :loading="keyDlg.rotating" @click="rotateKey">Girar credencial</el-button>
         <el-button type="primary" @click="keyDlg.visible = false">Fechar</el-button>
@@ -333,7 +341,7 @@
   import { computed, onMounted, reactive, ref } from 'vue'
   import { fmtId, rawId } from '@/nextec/id'
   import { ElMessage, ElMessageBox } from 'element-plus'
-  import { secretActionState } from '@/nextec/secret-actions.mjs'
+  import { secretActionState, assignPayload, pendingSummary } from '@/nextec/secret-actions.mjs'
   import { list as groupList } from '@/api/device_group'
   import { list as peerList } from '@/api/peer'
   import { timeAgo } from '@/utils/time'
@@ -352,6 +360,7 @@
   const agentKeySet = ref(false)
   const blocked = ref([])
   const pendingCount = ref(0)
+  const staleCount = ref(0)
   const loadError = ref(false)
   const tab = ref('machines')
   const viaText = { self: 'Inscrição global', bootstrap: 'Autorização individual', legacy: 'Chave do agente' }
@@ -372,7 +381,9 @@
       policies.value = (ov.data.policies || []).map(p => ({ ...p }))
       agentKeySet.value = !!ov.data.agent_key_set
       blocked.value = ov.data.blocked || []
-      pendingCount.value = Number(ov.data.pending_count) || 0
+      const sum = pendingSummary(devices.value)
+      pendingCount.value = Number(ov.data.pending_count) || sum.total
+      staleCount.value = Number(ov.data.stale_count) || sum.stale
     }
     if (g) groups.value = g.data.list || []
   }
@@ -452,11 +463,11 @@
   }
 
   // ---------- pendentes: atribuir, rejeitar, bloquear ----------
-  const assign = reactive({ visible: false, loading: false, error: '', peer: '', name: '', client: null, rule: 'group', interval: 180, move: false, currentGroup: 0 })
+  const assign = reactive({ visible: false, loading: false, error: '', peer: '', name: '', client: null, rule: 'group', interval: 180, move: false, currentGroup: 0, uuid: '' })
   const openAssign = (row) => {
     Object.assign(assign, {
       visible: true, loading: false, error: '', peer: row.peer_id, name: row.alias || row.hostname || 'Máquina',
-      client: row.group_id || null, rule: 'group', interval: 180, move: false, currentGroup: row.group_id || 0,
+      client: row.group_id || null, rule: 'group', interval: 180, move: false, currentGroup: row.group_id || 0, uuid: row.uuid || '',
     })
   }
   const groupRuleOn = computed(() => policies.value.some(p => p.kind === 'group' && Number(p.ref) === assign.client && p.enabled))
@@ -466,10 +477,7 @@
     assign.loading = true
     assign.error = ''
     try {
-      const r = await secretsAssign({
-        id: assign.peer, client_id: assign.client, rule: assign.rule,
-        interval_minutes: assign.rule === 'peer' ? assign.interval : undefined, move: assign.move,
-      })
+      const r = await secretsAssign(assignPayload(assign))
       assign.visible = false
       ElMessage.success(`${assign.name} foi atribuída a ${groupName(assign.client)}. A senha é gerada na próxima verificação do agente (até 5 minutos).`)
       if (r && r.data && r.data.already) ElMessage.info('Esta máquina já estava atribuída a este cliente.')
@@ -486,7 +494,7 @@
     const c = await ElMessageBox.confirm(text, block ? 'Bloquear máquina' : 'Rejeitar máquina',
       { confirmButtonText: block ? 'Bloquear' : 'Rejeitar', cancelButtonText: 'Cancelar', type: 'warning' }).catch(() => false)
     if (!c) return
-    if (await secretsReject(row.peer_id, block).catch(() => false)) {
+    if (await secretsReject(row.peer_id, block, row.uuid).catch(() => false)) {
       ElMessage.success(block ? 'Máquina bloqueada.' : 'Inscrição rejeitada.')
       load()
     }
@@ -506,7 +514,7 @@
     else keyDlg.error = 'Não foi possível ler a credencial. Tente de novo.'
   }
   const rotateKey = async () => {
-    const c = await ElMessageBox.confirm('Girar invalida a credencial atual. Instaladores já distribuídos deixam de inscrever máquinas novas e as pendentes feitas com ela saem da lista. Máquinas já atribuídas continuam funcionando. Continuar?',
+    const c = await ElMessageBox.confirm('Girar invalida a credencial atual. Instaladores já distribuídos deixam de inscrever máquinas novas. As pendentes feitas com ela continuam na lista, marcadas como “Chave anterior”, para você atribuir, rejeitar ou bloquear. Máquinas já atribuídas continuam funcionando. Continuar?',
       'Girar credencial de inscrição', { confirmButtonText: 'Girar', cancelButtonText: 'Cancelar', type: 'warning' }).catch(() => false)
     if (!c) return
     keyDlg.rotating = true
@@ -553,7 +561,8 @@
     connect: 'Conectou com a senha', reveal: 'Viu a senha', rotated: 'Senha trocada', rotate_now: 'Pediu troca imediata',
     policy_set: 'Mudou a regra', policy_remove: 'Removeu a regra', unenroll: 'Removeu o agente', agent_enroll: 'Agente cadastrado',
     agent_key_new: 'Gerou chave de cadastro',
-    self_enroll: 'Máquina se inscreveu', enroll_assign: 'Atribuiu a um cliente', enroll_reject: 'Rejeitou inscrição',
+    self_enroll: 'Máquina se inscreveu', enroll_assign: 'Atribuiu a um cliente', enroll_rule_change: 'Mudou a regra da máquina', enroll_identity_conflict: 'Recusou: identidade da máquina mudou',
+    agent_identity_conflict: 'Agente recusado: identidade da máquina mudou', enroll_reject: 'Rejeitou inscrição',
     enroll_block: 'Bloqueou máquina', enroll_unblock: 'Desbloqueou máquina', enroll_key_rotate: 'Girou a credencial de inscrição',
     agent_bootstrap_issue: 'Autorização individual emitida', agent_bootstrap_enroll: 'Agente cadastrado (autorização individual)',
     app_policy_set: 'Mudou a política do app', app_policy_remove: 'Removeu a política do app', session_disconnect: 'Derrubou uma conexão',
@@ -581,6 +590,7 @@
   .nx-tabs { margin-bottom: 4px; }
   .nx-tabs :deep(.el-tabs__item) { padding: 0 16px !important; font-weight: 600; }
   .nx-badge { margin-left: 6px; vertical-align: middle; }
+  .nx-stale-tag { margin-top: 4px; }
   .nx-foot { padding: 8px 14px; border-top: 1px solid var(--nx-divider); }
   .nx-radios { display: flex; flex-direction: column; align-items: flex-start; }
   .nx-error { margin: 10px 0 0; font-size: 13px; color: #B3261E; }
