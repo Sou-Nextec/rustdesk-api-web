@@ -2,6 +2,14 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.0
+
+- **Inscrição global de máquinas:** o instalador passa a ser o mesmo para todos os clientes. A máquina se inscreve sozinha como pendente, sem senha e sem acesso. Em **Senhas dos servidores > Pendentes** você atribui a máquina a um cliente (regra do cliente, regra só da máquina ou sem regra) e só então o cofre gera e libera a senha.
+- Rejeitar remove a inscrição; Bloquear impede a máquina de voltar (há uma lista de bloqueadas com Desbloquear).
+- **Credencial de inscrição:** card para ver, copiar e girar a credencial que vai no instalador. Girar invalida instaladores antigos e some com as pendentes feitas com a credencial anterior; máquinas já atribuídas não são afetadas.
+- A autorização individual de 15 minutos continua como contingência. Máquinas existentes permanecem aprovadas, sem migração.
+- API (patch 0031): endpoint `self-enroll`, limites de inscrição por IP, total e de pendentes, e rotas de atribuição, rejeição, bloqueio e credencial no admin.
+
 ## 2.10.2
 
 - **Senhas dos servidores:** aviso explica que o agente de senha só é cadastrado após autorização individual temporária; máquinas sem agente aparecem como "Agente não cadastrado", com orientação para cadastrar.

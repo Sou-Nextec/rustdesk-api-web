@@ -164,3 +164,53 @@ O RustDesk registra no sistema o protocolo com o nome do app em minúsculas: um 
 `nextec-connect://`, não `rustdesk://`. `NextecConnectSchemeGet/Set` guardam o protocolo (padrão `rustdesk`, só letras minúsculas,
 números, `.`, `+` e `-`). `GET/POST /nextec/connect-scheme` (admin) lê e grava; `/my/connect-settings` devolve `scheme` e
 `/my/connect-link` monta o link com ele.
+
+## Patch 0031: inscrição global de máquinas
+
+O instalador é o mesmo para todos os clientes. A máquina se inscreve sozinha como **pendente** (sem senha, sem regra, sem
+acesso) e o admin a **atribui** a um cliente no painel. Só então o cofre gira e libera a senha. O fluxo de autorização
+individual de 15 minutos (patches 0028 e 0029) e o cadastro legado com `agent_key` continuam, e gravam a máquina já aprovada.
+
+**Credencial de inscrição:** `nx1.<época>.<HMAC-SHA256(chave do cofre, "enroll:"+época)>`. Em `data/nextec-settings.json` ficam só
+`enroll_epoch` e `enroll_min_epoch`. Girar soma 1 à época e sobe a mínima: credenciais de época abaixo da mínima nunca valem
+(comparação em tempo constante).
+
+**Estado** (colunas novas em `nextec_device_secrets`, `AutoMigrate`, sem migração de dados): `awaiting_approval` (padrão `false`,
+então as linhas existentes seguem aprovadas), `enrolled_via` (`self`, `bootstrap`, `legacy`; vazio conta como `legacy`),
+`enrolled_at`, `enrolled_ip`, `enroll_epoch`, `approved_at`, `approved_by`, `uuid`. Tabela nova `nextec_enroll_blocks` (id + uuid).
+
+**Endpoint público** `POST /api/nextec/agent/self-enroll {enroll_key, id, uuid, proposed_token}`:
+
+| Resposta | Corpo | Quando |
+| --- | --- | --- |
+| 200 | `{token, state}` (`token` é o eco de `proposed_token`; `state` é `pending` ou `assigned`) | inscrita ou repetição idempotente (mesmo hash de token) |
+| 400 | `{error:"bad_request"}` | `id` fora de `^\d{6,64}$`, uuid vazio, token fora de base64url com 43 a 128 caracteres |
+| 401 | `{error:"enroll_key_invalid"}` | credencial inválida, revogada ou de época abaixo da mínima |
+| 403 | `{error:"blocked"}` | par id + uuid bloqueado pelo admin |
+| 404 | `{error:"peer_not_registered"}` | sem Peer (sysinfo), sem uuid, ou sem heartbeat nos últimos 10 min |
+| 409 | `{error:"identity_conflict"}` | uuid diferente do Peer, ou pendente com outro token |
+| 409 | `{error:"already_enrolled"}` | agente já aprovado com outro token |
+| 429 | `{error:"too_many_failures"}` ou `{error:"pending_limit"}` | 10 credenciais erradas em 10 min por IP; 30 inscrições/h por IP, 100/h no total, 500 pendentes |
+
+Nunca sobrescreve token de máquina existente. Credenciais erradas contam em `nextecFailCheck`; conflitos de identidade não
+contam (várias máquinas atrás do mesmo NAT não se bloqueiam).
+
+**Agente pendente:** `/agent/sync` devolve `pending_approval:true`, `managed:false` e nenhuma `operation`. `/agent/password` e
+`/agent/confirm` respondem 403 `{error:"pending_approval"}` (a condição também vai no `WHERE` das atualizações).
+`NextecConnectPassword` e `Reveal` exigem agente aprovado.
+
+**Rotas de admin** (mesmo grupo `/api/admin/nextec`, só administrador; erros usam código 101 do envelope):
+
+- `GET /secrets` ganhou `devices[].state` (`pending` ou `assigned`), `enrolled_via`, `enrolled_at`, `last_ip`, `os`, `username`, além de
+  `pending_count` e `blocked`. Pendente só aparece, e só conta, se a inscrição foi feita com época ainda válida.
+- `POST /secrets/assign {id, client_id, rule:"group"|"peer"|"none", interval_minutes?, move?}`: em transação, define
+  `peer.group_id`, aprova (`approved_at`, `approved_by`), liga `force_rotate` e, se `rule=peer`, grava a regra da máquina.
+  `rule=group` exige regra do cliente ligada. Recusa mover máquina que já está em outro cliente sem `move:true`. Repetir o mesmo
+  pedido não muda nada (`already:true`).
+- `POST /secrets/reject {id, block}`: remove a pendente; com `block:true` grava o par id + uuid na tabela de bloqueios.
+- `POST /secrets/unblock {id, uuid?}`, `GET /enroll-key` (`{key, epoch, min_epoch}`) e `POST /enroll-key/rotate`.
+
+Auditoria: `self_enroll`, `enroll_assign`, `enroll_reject`, `enroll_block`, `enroll_unblock`, `enroll_key_rotate`.
+Testes: `service/nextec_enroll_test.go` e `http/controller/api/nextec_enroll_test.go` (rodam no build da imagem).
+Rollback: remover o patch deixa as colunas novas sem uso; pendentes ficariam com token e sem política de aprovação, então
+atribua ou rejeite todas antes de voltar.
