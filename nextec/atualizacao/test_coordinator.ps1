@@ -254,6 +254,20 @@ try {
   Write-Host 'PASS Coordinator_SourceEqualsDestinationIsIdempotent'
 
   New-CaseRoot
+  $enrollSource = Join-Path $script:root 'msi'
+  New-Item -ItemType Directory -Path $enrollSource -Force | Out-Null
+  foreach ($name in @('Coordenar-Agente-Nextec.ps1','Provisionar-Agente-Nextec.ps1','Agente-Senha-Nextec.ps1')) {
+    Microsoft.PowerShell.Management\Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $enrollSource $name)
+  }
+  Set-Content -LiteralPath (Join-Path $enrollSource 'inscricao.json') -Value '{"v":1,"painel":"https://painel-remoto.nex.tec.br","chave":"ChaveGlobalDeTesteNaoSecreta0123456789"}' -Encoding UTF8
+  $dataRoot = Join-Path $script:root 'dados'
+  $script:copyCount = 0; $script:aclPaths = @()
+  Register-NextecCoordinatorTask -Root $dataRoot -SourceRoot $enrollSource | Out-Null
+  Assert ($script:copyCount -eq 4 -and (Test-Path -LiteralPath (Join-Path $dataRoot 'inscricao.json') -PathType Leaf)) 'inscricao.json from the MSI folder was not copied to the data folder'
+  Assert ($script:aclPaths -contains (Join-Path $dataRoot 'inscricao.json')) 'inscricao.json did not receive the protected ACL'
+  Write-Host 'PASS Coordinator_CopiesEnrollmentFileWhenPresent'
+
+  New-CaseRoot
   $maliciousDestination = Join-Path $script:root 'Provisionar-Agente-Nextec.ps1'
   $script:blockedCoordinatorPath = $maliciousDestination
   $rejected = $false
