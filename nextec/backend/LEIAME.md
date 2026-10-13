@@ -230,7 +230,7 @@ Testes: `service/nextec_enroll_test.go`, `service/nextec_enroll_review_test.go`,
 Rollback: remover o patch deixa as colunas novas sem uso; pendentes ficariam com token e sem política de aprovação, então
 atribua ou rejeite todas antes de voltar.
 
-## Patch 0032: credencial de inscrição para o gerador
+## Patch 0033: credencial de inscrição para o gerador
 
 `GET /api/nextec/gen/enroll-key`, rota interna (grupo `/api`, fora do `/api/admin`) usada pelo rdgen a cada build.
 
