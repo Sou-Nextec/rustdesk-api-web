@@ -32,6 +32,16 @@ test('assign payload sends the interval only for the machine rule and always car
   assert.equal('uuid' in assignPayload({ ...base, rule: 'group', uuid: '' }), false)
 })
 
+test('assign payload: group-enable liga a regra do cliente na mesma chamada', () => {
+  const base = { peer: '123456789', client: 7, interval: 180, move: false, uuid: 'u' }
+  assert.deepEqual(assignPayload({ ...base, rule: 'group-enable' }), {
+    id: '123456789', client_id: 7, rule: 'group', move: false, uuid: 'u', enable_group_rule: true, group_interval_minutes: 180,
+  })
+  const plain = assignPayload({ ...base, rule: 'group' })
+  assert.equal('enable_group_rule' in plain, false)
+  assert.equal('group_interval_minutes' in plain, false)
+})
+
 test('pending summary keeps machines enrolled with a rotated key visible and counted as stale', () => {
   const sum = pendingSummary([
     { peer_id: '1', state: 'pending', stale_key: true },

@@ -30,7 +30,7 @@
         <template #prefix><el-icon><el-icon-Search/></el-icon></template>
       </el-input>
       <div class="nx-bar-right">
-        <el-button :loading="loading" @click="load"><el-icon><el-icon-Refresh/></el-icon><span>Atualizar</span></el-button>
+        <el-button :loading="loading" @click="load()"><el-icon><el-icon-Refresh/></el-icon><span>Atualizar</span></el-button>
         <el-dropdown trigger="click" @command="onMore">
           <el-button aria-label="Mais opções"><span>Mais</span><el-icon class="el-icon--right"><el-icon-ArrowDown/></el-icon></el-button>
           <template #dropdown>
@@ -55,7 +55,7 @@
       description="Confira a conexão com o painel e tente de novo."
       class="nx-agent-help"
     >
-      <el-button size="small" :loading="loading" @click="load">Tentar de novo</el-button>
+      <el-button size="small" :loading="loading" @click="load()">Tentar de novo</el-button>
     </el-alert>
 
     <el-tabs v-model="tab" class="nx-tabs">
@@ -94,6 +94,7 @@
           <template #default="{ row }">
             <div>{{ ago(row.enrolled_at) }}</div>
             <div class="nx-muted nx-small">{{ viaText[row.enrolled_via] || 'Inscrição global' }}</div>
+            <div class="nx-muted nx-small nx-next-check">{{ nextCheckText(row) }}</div>
           </template>
         </el-table-column>
         <el-table-column label="Próximo passo" min-width="250">
@@ -152,6 +153,7 @@
                 <span class="nx-dot" :class="seenRecently(row) ? 'is-on' : 'is-warn'" aria-hidden="true"></span>
                 <span>Agente {{ seenRecently(row) ? 'ativo' : 'sem contato' }}</span>
                 <span class="nx-muted nx-small"> · visto {{ ago(row.last_seen_at).toLowerCase() }}</span>
+                <div class="nx-muted nx-small nx-next-check">{{ nextCheckText(row) }}</div>
               </template>
               <span v-else class="nx-muted"><span class="nx-dot is-off" aria-hidden="true"></span>Agente não cadastrado</span>
             </div>
@@ -216,15 +218,16 @@
         <template v-if="pick.pending">
           <el-form-item label="Senha automática">
             <el-radio-group v-model="pick.rule" class="nx-radios">
-              <el-radio value="group">Usar a regra do cliente</el-radio>
+              <el-radio v-if="groupRuleOn" value="group">Usar a regra do cliente</el-radio>
+              <el-radio v-else value="group-enable">Senha automática do cliente (ligar agora)</el-radio>
               <el-radio value="peer">Regra só desta máquina</el-radio>
               <el-radio value="none">Não ligar agora</el-radio>
             </el-radio-group>
-            <p v-if="pick.rule === 'group' && pick.client && !groupRuleOn" class="nx-help nx-warn-text" role="alert">
-              Este cliente não tem regra ligada. Escolha a regra da máquina ou ligue a regra do cliente em Mais, Regras.
+            <p v-if="pick.rule === 'group-enable' && pick.client" class="nx-help">
+              Este cliente ainda não tem senha automática. Ao confirmar, ela é ligada para o cliente e a máquina é atribuída de uma vez.
             </p>
           </el-form-item>
-          <el-form-item v-if="pick.rule === 'peer'" label="Trocar a cada">
+          <el-form-item v-if="pick.rule === 'peer' || pick.rule === 'group-enable'" label="Trocar a cada">
             <el-select v-model="pick.interval"><el-option v-for="o in intervals" :key="o.value" :label="o.label" :value="o.value"/></el-select>
           </el-form-item>
           <el-form-item v-if="pickOtherClient">
@@ -353,7 +356,7 @@
       </el-select>
       <div v-if="!agentChoices.length" class="nx-empty-inline" role="status">
         <p class="nx-help">{{ AGENT_EMPTY_NOTICE }}</p>
-        <el-button size="small" :loading="loading" @click="load">Atualizar</el-button>
+        <el-button size="small" :loading="loading" @click="load()">Atualizar</el-button>
       </div>
       <el-alert v-if="agentNeedsClient" type="warning" :closable="false" show-icon :title="NEEDS_CLIENT_NOTICE" class="nx-agent-warn">
         <el-button size="small" type="primary" @click="chooseFromAgent">Escolher cliente agora</el-button>
@@ -381,7 +384,7 @@
 </template>
 
 <script setup>
-  import { computed, onMounted, reactive, ref, watch } from 'vue'
+  import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
   import { fmtId } from '@/nextec/id'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { secretActionState, assignPayload } from '@/nextec/secret-actions.mjs'
@@ -392,6 +395,7 @@
   } from '@/nextec/secrets-flow.mjs'
   import { buildActivationCmd, activationFileName, downloadActivationCmd } from '@/nextec/activation-cmd.mjs'
   import { connectDevice } from '@/nextec/connect'
+  import { nextCheck, createAutoRefresh } from '@/nextec/agent-cycle.mjs'
   import { list as groupList, create as groupCreate } from '@/api/device_group'
   import { list as peerList, update as peerUpdate } from '@/api/peer'
   import MachineSteps from './MachineSteps.vue'
@@ -424,11 +428,16 @@
   ]
   const every = (m) => (m % 60 === 0 ? (m / 60 === 1 ? 'hora' : `${m / 60} h`) : `${m} min`)
 
-  const load = async () => {
-    loading.value = true
+  let inflight = false
+  // silent: atualização automática, sem spinner e sem trocar a lista por erro se uma rodada falhar.
+  const load = async (silent = false) => {
+    if (silent && inflight) return
+    inflight = true
+    if (!silent) loading.value = true
     const [ov, g] = await Promise.all([secretsOverview().catch(() => false), groupList({ page: 1, page_size: 9999 }).catch(() => false)])
-    loading.value = false
-    loadError.value = !ov
+    inflight = false
+    if (!silent) loading.value = false
+    if (!silent || ov) loadError.value = !ov
     if (ov) loaded.value = true
     if (ov) {
       const n = normalizeOverview(ov)
@@ -441,7 +450,15 @@
     }
     if (g) groups.value = normalizeGroups(g)
   }
-  onMounted(load)
+  // Ciclo do agente (~5 min): relógio da tela a cada 30 s e lista recarregada a cada 60 s, só com a aba visível.
+  const nowSec = ref(Math.floor(Date.now() / 1000))
+  const refresher = createAutoRefresh({
+    onTick: () => { nowSec.value = Math.floor(Date.now() / 1000) },
+    onRefresh: () => load(true),
+  })
+  const nextCheckText = (row) => nextCheck(row.last_seen_at, nowSec.value).text
+  onMounted(() => { load(); refresher.start() })
+  onBeforeUnmount(() => refresher.stop())
   const reloadGroups = async () => {
     const g = await groupList({ page: 1, page_size: 9999 }).catch(() => false)
     if (g) groups.value = normalizeGroups(g)
@@ -574,6 +591,7 @@
   const groupRuleOn = computed(() => policies.value.some(p => p.kind === 'group' && Number(p.ref) === pick.client && p.enabled))
   watch(() => pick.client, () => { if (pick.pending) pick.rule = defaultAssignRule(groupRuleOn.value) })
   const pickOtherClient = computed(() => !!pick.currentGroup && !!pick.client && pick.client !== pick.currentGroup)
+  // 'group' só existe quando a regra do cliente está ligada; sem ela o padrão é 'group-enable' (liga e atribui junto).
   const canPick = computed(() => !!pick.client && !pick.loading &&
     (!pick.pending || (!(pick.rule === 'group' && !groupRuleOn.value) && (!pickOtherClient.value || pick.move))))
   const startCreate = () => { pick.creating = true; pick.createError = ''; pick.newName = pick.term || '' }
@@ -615,6 +633,7 @@
       const r = await savePick()
       pick.visible = false
       ElMessage.success(`${pick.name} agora é do cliente ${groupName(pick.client)}.`)
+      if (r && r.data && r.data.group_rule_enabled) ElMessage.info('Senha automática ligada para o cliente.')
       if (r && r.data && r.data.already) ElMessage.info('Esta máquina já estava neste cliente.')
       await load()
       const fresh = devices.value.find(d => String(d.peer_id) === String(pick.peer))

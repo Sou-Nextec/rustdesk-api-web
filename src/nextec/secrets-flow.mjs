@@ -135,10 +135,11 @@ export function movePayload(peerRow, groupId) {
   return body
 }
 
-// Regra padrão ao atribuir uma pendente: a do cliente se estiver ligada; senão "não ligar agora" (o próximo passo da
-// máquina vira "Ligar senha automática"). Nunca escolhe uma regra que o backend recusaria.
+// Regra padrão ao atribuir uma pendente: a do cliente se estiver ligada; senão 'group-enable', que liga a regra do
+// cliente junto com a atribuição (o servidor faz as duas coisas na mesma transação). O operador não precisa passar
+// por Regras antes.
 export function defaultAssignRule(groupRuleOn) {
-  return groupRuleOn ? 'group' : 'none'
+  return groupRuleOn ? 'group' : 'group-enable'
 }
 
 // O que fazer logo depois de vincular o cliente: segue para a próxima etapa da máquina já atualizada.
