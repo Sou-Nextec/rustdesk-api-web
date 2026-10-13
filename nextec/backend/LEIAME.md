@@ -229,3 +229,12 @@ Testes: `service/nextec_enroll_test.go`, `service/nextec_enroll_review_test.go`,
 `http/controller/api/nextec_enroll_identity_test.go` e `http/controller/admin/nextec_enroll_test.go` (rodam no build da imagem).
 Rollback: remover o patch deixa as colunas novas sem uso; pendentes ficariam com token e sem política de aprovação, então
 atribua ou rejeite todas antes de voltar.
+
+## Patch 0032: credencial de inscrição para o gerador
+
+`GET /api/nextec/gen/enroll-key`, rota interna (grupo `/api`, fora do `/api/admin`) usada pelo rdgen a cada build.
+
+- Cabeçalho `X-Nextec-Gen-Secret` comparado em tempo constante com `NX_RDGEN_SHARED_SECRET` (a stack já repassa o segredo à API e ao gerador).
+- 503 `gen_secret_not_configured` se o segredo da API estiver vazio; 403 `internal_only` se a requisição trouxer `CF-Connecting-IP` ou `CF-Ray` (veio pelo túnel); 401 `gen_secret_invalid` se o segredo faltar ou estiver errado; 429 depois de 10 erros em 10 minutos do mesmo IP.
+- 200 `{"enroll_key": "...", "epoch": N}` com `Cache-Control: no-store`. A chave não é gravada em log.
+- Testes: `http/controller/api/nextec_genkey_test.go`.

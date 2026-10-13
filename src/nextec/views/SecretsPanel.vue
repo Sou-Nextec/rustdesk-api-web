@@ -246,7 +246,8 @@
     <!-- credencial de inscrição -->
     <el-dialog v-model="keyDlg.visible" class="nx-dlg" title="Credencial de inscrição" width="min(620px, 92vw)">
       <p class="nx-help nx-help-top">
-        É a credencial que vai dentro do instalador global. Com ela, a máquina se inscreve como pendente e nada mais: não recebe senha nem acesso.
+        O gerador usa esta credencial automaticamente, a cada instalador novo: você não precisa copiá-la para lugar nenhum.
+        Com ela, a máquina se inscreve como pendente e nada mais: não recebe senha nem acesso.
         Trate como segredo interno e gire se achar que vazou.
       </p>
       <p v-if="keyDlg.error" class="nx-error" role="alert">{{ keyDlg.error }}</p>
@@ -255,7 +256,7 @@
         <el-button size="small" :disabled="!keyDlg.key" @click="keyDlg.show = !keyDlg.show">{{ keyDlg.show ? 'Ocultar' : 'Ver' }}</el-button>
         <el-button size="small" :disabled="!keyDlg.key" @click="copy(keyDlg.key)">Copiar</el-button>
       </div>
-      <p class="nx-help">Versão {{ keyDlg.epoch || '-' }}. Girar invalida a credencial atual: instaladores já distribuídos deixam de inscrever máquinas novas. As pendentes feitas com ela continuam na lista, marcadas como “Chave anterior”, e você ainda pode atribuí-las, rejeitá-las ou bloqueá-las. Máquinas já atribuídas não são afetadas.</p>
+      <p class="nx-help">Versão {{ keyDlg.epoch || '-' }}. Girar invalida a credencial atual: instaladores já distribuídos deixam de inscrever máquinas novas, e o gerador passa a embutir a nova sozinho. As pendentes feitas com ela continuam na lista, marcadas como “Chave anterior”, e você ainda pode atribuí-las, rejeitá-las ou bloqueá-las. Máquinas já atribuídas não são afetadas.</p>
       <template #footer>
         <el-button type="danger" plain :loading="keyDlg.rotating" @click="rotateKey">Girar credencial</el-button>
         <el-button type="primary" @click="keyDlg.visible = false">Fechar</el-button>

@@ -2,6 +2,12 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.8
+
+- **O gerador obtém a credencial de inscrição sozinho:** a cada build o rdgen busca a credencial vigente no painel pela rede interna da stack (`GET /api/nextec/gen/enroll-key`, protegido pelo segredo compartilhado `GERADOR_SH_SECRET` e recusado quando vem pelo túnel da Cloudflare). Não é mais preciso copiar a credencial para `GERADOR_ENROLL_KEY` no Portainer nem refazer o deploy ao girar: o próximo instalador já sai com a nova. `GERADOR_ENROLL_KEY` virou override opcional (usado só se a busca falhar).
+- Novo patch de backend `0032-gen-enroll-key.patch` (aplicar sobre a série, com a API v2.6.29). **A imagem da API precisa ser reconstruída**; o rdgen precisa da versão com a busca automática.
+- Texto do card "Credencial de inscrição" atualizado: "O gerador usa esta credencial automaticamente". `GERADOR.md` e o cabeçalho da stack também.
+
 ## 2.11.5
 
 - **Corrigido, "O agente Nextec não está instalado" em app com outro nome:** o `Ativar-Nextec-<ID>.cmd` agora localiza o agente sem depender do nome do app (pasta `%ProgramData%\Nextec\Acesso`, entrada de desinstalação com "Nextec-Connect", tarefa agendada Nextec e varredura de `%ProgramFiles%\*Nextec*`). Se achar os scripts na pasta do app, registra o coordenador sozinho.
