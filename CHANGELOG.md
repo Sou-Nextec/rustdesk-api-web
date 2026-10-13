@@ -2,6 +2,10 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.10.6
+
+- **Corrigido, regravação do journal e do estado do agente no Windows PowerShell 5.1:** `[IO.File]::Replace` recebia `$null` no caminho de backup, que o 5.1 converte em texto vazio e lança "The path is not of a legal form" quando o arquivo já existia. Afetava `Provisionar-Agente-Nextec.ps1` e `Agente-Senha-Nextec.ps1`; agora usam `[NullString]::Value`. Novo teste de regressão `test_atomic_replace.ps1`, incluído no CI.
+
 ## 2.10.5
 
 - **Gerar cliente, tela reorganizada:** abre em Novo instalador; as etapas Gerar, Conferir e Atualizar destacam onde você está; o guia "O que preencher" (você escolhe, deixe em branco, já vem travado) fica acima do formulário; o protocolo do botão Conectar passa para um bloco Avançado recolhido.
