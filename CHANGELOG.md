@@ -2,6 +2,13 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.2
+
+- **Corrigido, tela quebrava ao voltar de "Senhas dos servidores" para outra:** o guarda de erro dessa tela tinha como raiz um slot, e o efeito de transição do conteúdo (entrada só depois da saída) não concluía a saída de uma raiz sem elemento. A tela seguinte nunca entrava e só o F5 resolvia. O guarda agora tem um elemento único na raiz e zera o estado de erro ao trocar de tela.
+- **Corrigido, rodapé com a versão coberto pelo menu:** a versão ("Painel v2.11.2" e `master-<commit>`) agora é uma barra fixa no fundo do menu lateral, fora da área que rola, nos temas claro e escuro, com o menu aberto ou recolhido.
+- Corrigida a coluna do dispositivo no log de login, que lia um nome inexistente no template.
+- Novos testes no CI: navegação real entre as telas (A, B, A, C, sem erro nem tela vazia), verificação de nomes do template de todas as telas Nextec e do layout do rodapé.
+
 ## 2.11.1
 
 - **Corrigido, tela "Senhas dos servidores" abria em branco:** a tela usava `blockedDlg` (diálogo "Bloqueadas") sem declará-lo, o que derrubava a renderização inteira. Agora o diálogo existe e abre normalmente.

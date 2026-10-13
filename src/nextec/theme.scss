@@ -731,13 +731,13 @@ html.dark .nx-danger-text { color: #FF9C93; }
   .el-button { margin: 0 !important; }
 }
 
-// versão do painel no rodapé do menu lateral (--nx-version vem do build; ver src/nextec/index.js)
-#app .app-left::after {
-  content: var(--nx-version, '');
-  position: absolute; left: 20px; bottom: 10px;
-  font-size: 11px; color: rgba(255, 255, 255, 0.5); pointer-events: none;
+// versão do painel: rodapé real do menu lateral (src/layout/components/aside.vue), fora da área que rola
+#app .app-left .aside-box { background-color: var(--nx-base); }
+#app .app-left .nx-aside-version {
+  background-color: var(--nx-base);
+  color: rgba(255, 255, 255, 0.72);
 }
-#app .app-left:has(.el-menu--collapse)::after { display: none; }
+#app .app-left .nx-aside-version.is-collapsed { padding: 8px 4px; text-align: center; font-size: 10px; }
 
 // bolinha de situação no escuro: verde claro com halo discreto (o halo claro do tema claro ofusca)
 html.dark .nx-listpage .nx-dot.is-on { background: #4CC38A; box-shadow: 0 0 0 3px rgba(76, 195, 138, 0.22); }

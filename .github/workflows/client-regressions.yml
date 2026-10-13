@@ -24,8 +24,10 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --no-audit --no-fund
-      - name: Validar preparacao autorizada da conexao
+      - name: Validar preparacao autorizada da conexao, nomes do template e rodape da versao
         run: node --test nextec/testes/*.test.mjs
+      - name: Navegacao entre telas (monta o painel e percorre as rotas A, B, A, C)
+        run: npx vitest run --config vitest.config.mjs
       - run: npm run build
 
   identity:

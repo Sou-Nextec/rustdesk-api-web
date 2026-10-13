@@ -43,7 +43,6 @@ if (faces.length) {
 
 // 0b. Versão do painel (vem do build da imagem; "dev" fora dela). Aparece no rodapé do menu e no menu do usuário.
 export { NEXTEC_SEMVER, NEXTEC_BUILD, NEXTEC_VERSION_LABEL } from './version'
-document.documentElement.style.setProperty('--nx-version', JSON.stringify('Painel ' + NEXTEC_VERSION_LABEL))
 
 // 1. Logo e título da marca
 const appStore = useAppStore(pinia)

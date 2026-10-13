@@ -3,25 +3,10 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { parse, compileScript, compileTemplate } from '@vue/compiler-sfc'
+import { undeclaredTemplateNames } from './template-names.mjs'
 import { normalizeOverview, normalizeGroups } from '../../src/nextec/secrets-data.mjs'
 
 const views = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/nextec/views')
-
-// Nomes que o template usa sem ter sido declarados no <script setup> viram `_ctx.nome` na compilação.
-// Em runtime isso é undefined e o render quebra (tela em branco). Foi o que aconteceu com `blockedDlg` na 2.11.0.
-export function undeclaredTemplateNames(source, filename = 'x.vue') {
-  const { descriptor } = parse(source, { filename })
-  const script = compileScript(descriptor, { id: 'x' })
-  const out = compileTemplate({
-    source: descriptor.template.content, filename, id: 'x',
-    compilerOptions: { bindingMetadata: script.bindings, prefixIdentifiers: true },
-  })
-  assert.deepEqual(out.errors, [])
-  const names = new Set()
-  for (const m of out.code.matchAll(/_ctx\.([A-Za-z_$][\w$]*)/g)) names.add(m[1])
-  return [...names].filter(n => !n.startsWith('$')).sort()
-}
 
 test('o template da tela Senhas dos servidores só usa nomes declarados no script', () => {
   const src = fs.readFileSync(path.join(views, 'SecretsPanel.vue'), 'utf8')
