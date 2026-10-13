@@ -38,17 +38,45 @@ function toBase64(text) {
   return btoa(unescape(encodeURIComponent(text)))
 }
 
-// Localiza o agente sem depender do nome do app (Nextec-Connect, Client-Nextec-Connect, ...). Ordem: pasta de dados
-// fixa, entrada de desinstalação com "Nextec-Connect" no nome, tarefa agendada Nextec, varredura de %ProgramFiles%\*Nextec*.
-// $Entries/$TaskArgs podem ser injetados (testes); sem eles lê o registro e as tarefas reais.
+// Localiza o agente sem depender do nome do app (qualquer nome serve: Nextec-Connect, Client-Nextec-Connect, XPTO...).
+// Ordem: 1) pasta de dados fixa; 2) MARCADOR de instalação (HKLM\SOFTWARE\Nextec\Agente {InstallDir,AppName} e
+// nextec-marker.json na pasta de dados); 3) entrada de desinstalação cuja pasta contém o Coordenar-*.ps1 (qualquer
+// DisplayName); 4) serviço RustDesk (--service) cujo exe vizinho contém o Coordenar-*.ps1, e tarefa agendada Nextec;
+// 5) varredura limitada (até 2 níveis, 300 pastas) de %ProgramFiles%. Nada aqui depende de nome literal.
+// $Marker/$Entries/$Services/$TaskArgs podem ser injetados (testes); sem eles lê o registro, os serviços e as tarefas reais.
 export const FIND_AGENT_PS = String.raw`function Find-NextecAgent {
-  param([string]$DataRoot, [string[]]$ProgramRoots, $Entries, $TaskArgs)
+  param([string]$DataRoot, [string[]]$ProgramRoots, $Entries, $TaskArgs, $Marker, $Services, [string]$MarkerFile)
   $name = 'Coordenar-Agente-Nextec.ps1'
   $searched = New-Object System.Collections.ArrayList
   $r = [pscustomobject]@{ Script = ''; App = ''; AppPath = ''; Searched = $searched }
   $c = Join-Path $DataRoot $name
   [void]$searched.Add($c)
+  if ($null -eq $Marker) {
+    $Marker = [pscustomobject]@{ InstallDir = ''; AppName = '' }
+    try {
+      $reg = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Nextec\Agente' -ErrorAction Stop
+      $Marker.InstallDir = [string]$reg.InstallDir; $Marker.AppName = [string]$reg.AppName
+    } catch { }
+    if (-not $Marker.InstallDir -and -not $Marker.AppName) {
+      $mp = $MarkerFile
+      if (-not $mp) { $mp = Join-Path $DataRoot 'nextec-marker.json' }
+      try {
+        if (Test-Path -LiteralPath $mp -PathType Leaf) {
+          $mj = Get-Content -Raw -LiteralPath $mp -ErrorAction Stop | ConvertFrom-Json
+          if ($mj.InstallDir) { $Marker.InstallDir = [string]$mj.InstallDir } elseif ($mj.install_dir) { $Marker.InstallDir = [string]$mj.install_dir }
+          if ($mj.AppName) { $Marker.AppName = [string]$mj.AppName } elseif ($mj.app_name) { $Marker.AppName = [string]$mj.app_name }
+        }
+      } catch { }
+    }
+  }
+  if ($Marker.AppName) { $r.App = [string]$Marker.AppName }
   if (Test-Path -LiteralPath $c -PathType Leaf) { $r.Script = $c; return $r }
+  if ($Marker.InstallDir) {
+    $r.AppPath = [string]$Marker.InstallDir
+    $p = Join-Path ([string]$Marker.InstallDir) $name
+    [void]$searched.Add($p)
+    if (Test-Path -LiteralPath $p -PathType Leaf) { $r.Script = $p; return $r }
+  }
   if ($null -eq $Entries) {
     $Entries = New-Object System.Collections.ArrayList
     foreach ($k in @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall')) {
@@ -56,15 +84,35 @@ export const FIND_AGENT_PS = String.raw`function Find-NextecAgent {
     }
   }
   foreach ($e in @($Entries)) {
-    if ($e.DisplayName -and ($e.DisplayName -like '*Nextec-Connect*')) {
-      if (-not $r.App) { $r.App = [string]$e.DisplayName }
-      $loc = [string]$e.InstallLocation
-      if ($loc) {
-        if (-not $r.AppPath) { $r.AppPath = $loc }
-        $p = Join-Path $loc $name
-        [void]$searched.Add($p)
-        if (Test-Path -LiteralPath $p -PathType Leaf) { $r.Script = $p; return $r }
-      }
+    $loc = [string]$e.InstallLocation
+    if (-not $loc) { continue }
+    $p = Join-Path $loc $name
+    $isMarkerApp = ($r.App -and $e.DisplayName -and ([string]$e.DisplayName -ieq $r.App))
+    [void]$searched.Add($p)
+    if (Test-Path -LiteralPath $p -PathType Leaf) {
+      if ($e.DisplayName -and -not $r.App) { $r.App = [string]$e.DisplayName }
+      if (-not $r.AppPath) { $r.AppPath = $loc }
+      $r.Script = $p; return $r
+    }
+    if ($isMarkerApp -and -not $r.AppPath) { $r.AppPath = $loc }
+  }
+  if ($null -eq $Services) {
+    $Services = @()
+    try { $Services = @(Get-CimInstance -ClassName Win32_Service -ErrorAction Stop) } catch { $Services = @() }
+  }
+  foreach ($s in @($Services)) {
+    $pn = [string]$s.PathName
+    if ($pn -notmatch '(?i)(?:^|\s)--service(?:\s|$)') { continue }
+    $m = [regex]::Match($pn, '^\s*"([^"]+\.exe)"')
+    if (-not $m.Success) { $m = [regex]::Match($pn, '^\s*(\S.*?\.exe)(?=\s|$)') }
+    if (-not $m.Success) { continue }
+    $dir = Split-Path -Parent $m.Groups[1].Value
+    $p = Join-Path $dir $name
+    [void]$searched.Add($p)
+    if (Test-Path -LiteralPath $p -PathType Leaf) {
+      if (-not $r.App) { $r.App = [string]$s.Name }
+      if (-not $r.AppPath) { $r.AppPath = $dir }
+      $r.Script = $p; return $r
     }
   }
   if ($null -eq $TaskArgs) {
@@ -79,17 +127,23 @@ export const FIND_AGENT_PS = String.raw`function Find-NextecAgent {
       if (Test-Path -LiteralPath $p -PathType Leaf) { $r.Script = $p; return $r }
     }
   }
+  $budget = 300
   foreach ($root in @($ProgramRoots)) {
     if (-not $root -or -not (Test-Path -LiteralPath $root -PathType Container)) { continue }
-    foreach ($d in @(Get-ChildItem -LiteralPath $root -Directory -Filter '*Nextec*' -ErrorAction SilentlyContinue)) {
-      if (-not $r.App) { $r.App = $d.Name }
-      if (-not $r.AppPath) { $r.AppPath = $d.FullName }
+    foreach ($d in @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue)) {
+      if ($budget -le 0) { break }
+      $budget--
       $cands = @((Join-Path $d.FullName $name))
-      foreach ($sub in @(Get-ChildItem -LiteralPath $d.FullName -Directory -ErrorAction SilentlyContinue)) { $cands += (Join-Path $sub.FullName $name) }
+      foreach ($sub in @(Get-ChildItem -LiteralPath $d.FullName -Directory -ErrorAction SilentlyContinue)) { $budget--; $cands += (Join-Path $sub.FullName $name) }
       foreach ($p in $cands) {
-        [void]$searched.Add($p)
-        if (Test-Path -LiteralPath $p -PathType Leaf) { $r.Script = $p; return $r }
+        if (Test-Path -LiteralPath $p -PathType Leaf) {
+          if (-not $r.App) { $r.App = $d.Name }
+          if (-not $r.AppPath) { $r.AppPath = $d.FullName }
+          [void]$searched.Add($p)
+          $r.Script = $p; return $r
+        }
       }
+      [void]$searched.Add((Join-Path $d.FullName $name))
     }
   }
   return $r
@@ -97,7 +151,7 @@ export const FIND_AGENT_PS = String.raw`function Find-NextecAgent {
 
 export const MESSAGES = {
   expired: 'O prazo de 15 minutos venceu. Gere uma nova autorização no painel.',
-  notInstalled: 'O agente Nextec não está instalado nesta máquina e nenhum app Nextec foi encontrado. Instale o Nextec-Connect gerado pelo painel e tente de novo.',
+  notInstalled: 'O agente Nextec não está instalado nesta máquina e nenhum app Nextec foi encontrado. Instale o app gerado pelo painel (com o agente) e tente de novo.',
   appWithoutAgent: 'O app instalado ({0}) não contém o agente Nextec. Gere o instalador no gerador com o MESMO nome do app ({0}) e instale por cima: o ID e o cliente são mantidos. Depois execute este arquivo de novo.',
   appUnknown: 'O app instalado não contém o agente Nextec. Gere o instalador no gerador com o MESMO nome do app instalado e instale por cima: o ID e o cliente são mantidos. Depois execute este arquivo de novo.',
   searched: ' Procurei em: ',
@@ -105,7 +159,7 @@ export const MESSAGES = {
   pending: 'Já existe uma ativação em andamento nesta máquina. Aguarde até 5 minutos.',
   invalid: 'A autorização é inválida. Gere outra no painel.',
   notAdmin: 'Execute como administrador. Clique com o botão direito no arquivo e escolha Executar como administrador.',
-  unsafe: 'A pasta do agente não está protegida como esperado. Reinstale o Nextec-Connect.',
+  unsafe: 'A pasta do agente não está protegida como esperado. Reinstale o app gerado pelo painel.',
   failed: 'Não foi possível ativar. Gere uma nova autorização no painel e tente de novo.',
   ok: 'Pronto: máquina ativada. Pode fechar.',
 }
