@@ -1,35 +1,117 @@
 <template>
   <section class="nx-generated" aria-label="Itens gerados">
-    <div class="nx-generated-head"><div><h3>Itens gerados</h3><p>Instaladores desta equipe. Os arquivos permanecem aqui depois da geração.</p></div><el-button :loading="loading" @click="load">Atualizar</el-button></div>
-    <el-alert v-if="error" :title="error" type="error" :closable="false" show-icon />
-    <el-empty v-if="!loading && !rows.length && !error" description="Nenhum instalador gerado ainda." />
-    <article v-for="row in rows" :key="row.uuid" class="nx-generation">
-      <div class="nx-generation-head"><strong>{{ row.client_name || (row.profile === 'analysts' ? 'Analistas' : 'Cliente padrão') }}</strong><el-tag :type="generationState(row).tone">{{ generationState(row).label }}</el-tag></div>
-      <p class="nx-generation-meta">{{ row.filename || 'Instalador' }} · {{ row.platform || 'Plataforma não informada' }} · {{ date(row.created_at) }}</p>
-      <dl><div><dt>Pacote Nextec</dt><dd>{{ row.package_version || 'Não informado' }}</dd></div><div><dt>Base RustDesk</dt><dd>{{ row.rustdesk_version || 'Não informada' }}</dd></div></dl>
-      <p v-if="row.notes" class="nx-generation-notes">{{ row.notes }}</p>
-      <template v-if="activeGeneration(row)"><el-progress :percentage="row.progress?.percent || 0" :indeterminate="row.progress?.percent == null" /><p class="nx-generation-meta">{{ row.progress?.stage || 'Aguardando informações da geração' }} · progresso por etapas, aproximado</p></template>
-      <el-alert v-if="row.submission_error || row.missing_files?.length" :title="row.submission_error || ('Arquivos faltantes: ' + row.missing_files.join(', '))" type="warning" :closable="false" />
-      <div class="nx-generation-actions">
-        <a v-for="file in row.files || []" :key="file.name" :href="generationDownload(file.url) || undefined" class="nx-download">Baixar {{ file.name }}</a>
-        <el-button v-if="msi(row)" type="primary" :loading="importing === row.uuid" :disabled="!!importing || row.status !== 'success'" @click="sendToUpdates(row)">Enviar para Atualizações</el-button>
-        <el-button v-if="row.github_run_id || row.log_url" @click="refreshRow(row)">Consultar andamento</el-button>
+    <div class="nx-generated-head">
+      <div>
+        <h3>Itens gerados</h3>
+        <p>Os instaladores desta equipe ficam aqui depois da geração.</p>
       </div>
-    </article>
+      <el-button :loading="loading" @click="load">
+        <el-icon v-if="!loading" aria-hidden="true"><el-icon-Refresh /></el-icon><span>Atualizar lista</span>
+      </el-button>
+    </div>
+
+    <p v-if="activeCount" class="nx-generated-live" role="status" aria-live="polite">
+      {{ activeCount === 1 ? '1 instalador está sendo gerado.' : activeCount + ' instaladores estão sendo gerados.' }}
+      A lista confere o andamento sozinha a cada 15 segundos.
+    </p>
+
+    <el-alert v-if="error" type="error" :closable="false" show-icon class="nx-generated-alert">
+      <template #title>{{ error }}</template>
+      <el-button size="small" :loading="loading" @click="load">Tentar novamente</el-button>
+    </el-alert>
+
+    <div v-if="loading && !rows.length && !error" class="nx-generated-loading" role="status" aria-live="polite">
+      <el-skeleton :rows="4" animated />
+      <span class="nx-sr">Carregando os itens gerados.</span>
+    </div>
+
+    <div v-if="!loading && !rows.length && !error" class="nx-generated-empty">
+      <el-empty description="Nenhum instalador gerado ainda.">
+        <p class="nx-generated-empty-hint">Gere o primeiro em Novo instalador. Ele aparece aqui assim que o envio for aceito.</p>
+        <el-button type="primary" @click="$emit('create')">Ir para Novo instalador</el-button>
+      </el-empty>
+    </div>
+
+    <ul v-if="rows.length" class="nx-generation-list">
+      <li v-for="row in rows" :key="row.uuid" class="nx-generation" :class="'is-' + generationState(row).tone">
+        <div class="nx-generation-head">
+          <div class="nx-generation-title">
+            <strong>{{ row.client_name || (row.profile === 'analysts' ? 'Analistas' : 'Cliente padrão') }}</strong>
+            <span class="nx-generation-meta">{{ platformLabel(row.platform) }} · {{ date(row.created_at) }}</span>
+          </div>
+          <el-tag :type="generationState(row).tone" effect="light">{{ generationState(row).label }}</el-tag>
+        </div>
+
+        <template v-if="activeGeneration(row)">
+          <div class="nx-generation-progress">
+            <el-progress :percentage="row.progress?.percent || 0" :indeterminate="row.progress?.percent == null"
+              :show-text="row.progress?.percent != null" :stroke-width="10" />
+            <p><strong>{{ row.progress?.stage || 'Aguardando informações da geração' }}</strong>
+              <span>Andamento aproximado, por etapas.</span></p>
+          </div>
+        </template>
+
+        <el-alert v-if="row.submission_error" :title="'Não foi possível gerar: ' + row.submission_error"
+          type="error" :closable="false" show-icon />
+        <el-alert v-else-if="row.missing_files?.length" type="warning" :closable="false" show-icon
+          :title="'Faltam arquivos neste item: ' + row.missing_files.join(', ')"
+          description="Baixe o que estiver disponível ou gere novamente." />
+
+        <p v-if="row.notes" class="nx-generation-notes">{{ row.notes }}</p>
+
+        <div v-if="(row.files && row.files.length) || msi(row) || row.github_run_id || row.log_url" class="nx-generation-actions">
+          <a v-for="file in row.files || []" :key="file.name" :href="generationDownload(file.url) || undefined"
+            class="nx-download" :aria-label="'Baixar ' + file.name" :title="file.name">
+            <el-icon aria-hidden="true"><el-icon-Download /></el-icon><span>Baixar {{ fileKind(file.name) }}</span>
+          </a>
+          <el-button v-if="row.github_run_id || row.log_url" @click="refreshRow(row)">
+            {{ activeGeneration(row) ? 'Consultar andamento' : 'Atualizar situação' }}
+          </el-button>
+          <el-button v-if="msi(row)" type="primary" class="nx-send" :loading="importing === row.uuid"
+            :disabled="!!importing || row.status !== 'success'" @click="sendToUpdates(row)">
+            <el-icon v-if="importing !== row.uuid" aria-hidden="true"><el-icon-Upload /></el-icon><span>Enviar para Atualizações</span>
+          </el-button>
+        </div>
+
+        <p class="nx-generation-tech">
+          Pacote Nextec {{ row.package_version || 'sem versão' }} · Base RustDesk {{ row.rustdesk_version || 'não informada' }}
+          <template v-if="row.filename"> · {{ row.filename }}</template>
+        </p>
+      </li>
+    </ul>
+
     <el-pagination v-if="count > 20" :current-page="page" :page-size="20" :total="count" layout="prev, pager, next" @current-change="changePage" />
-    <p class="nx-generation-meta">Enviar para Atualizações prepara a versão. Autorizar com assinatura e publicar são os próximos passos.</p>
+
+    <aside v-if="rows.length" class="nx-generated-next" aria-label="Depois de gerar">
+      <h4>Depois de gerar</h4>
+      <ol>
+        <li><strong>Baixe e teste.</strong> Instale em uma máquina de teste e confira se o app mostra <em>Pronto</em>. Ela deve aparecer em Dispositivos em até 1 minuto.</li>
+        <li><strong>Envie para Atualizações.</strong> Use o botão do item pronto. Isso apenas prepara a versão.</li>
+        <li><strong>Autorize e publique.</strong> Em <router-link to="/user/updates">Atualizações do app</router-link>, autorize o manifesto assinado e publique para os destinos escolhidos.</li>
+      </ol>
+    </aside>
   </section>
 </template>
 <script setup>
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { generationDownload, generationState, activeGeneration, validGenerationId } from '@/nextec/generation-catalog.mjs'
 import { importGeneratedRelease } from '@/nextec/api'
+defineEmits(['create'])
 const rows = ref([]), count = ref(0), page = ref(1), loading = ref(false), error = ref(''), importing = ref('')
 const router = useRouter()
 let timer, disposed = false, busy = false, cursor = 0
-const date = value => value ? new Date(value).toLocaleString('pt-BR') : 'Data não informada'
+const activeCount = computed(() => rows.value.filter(activeGeneration).length)
+const date = value => value ? new Date(value).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : 'Data não informada'
+const platformLabel = value => {
+  const text = String(value || '').toLowerCase()
+  if (!text) return 'Plataforma não informada'
+  if (text.includes('win')) return 'Windows'
+  if (text.includes('linux')) return 'Linux'
+  return value
+}
+const fileKind = name => /\.msi$/i.test(name) ? 'MSI' : /\.exe$/i.test(name) ? 'EXE' : name
 const msi = row => row.files?.find(file => file.name.endsWith('.msi'))
 async function get(path) {
   const controller = new AbortController(), timeout = setTimeout(() => controller.abort(), 20000)
@@ -80,6 +162,40 @@ onMounted(() => { load(); document.addEventListener('visibilitychange', visible)
 onBeforeUnmount(() => { disposed = true; clearTimeout(timer); document.removeEventListener('visibilitychange', visible) })
 defineExpose({ reload: load })
 </script>
-<style scoped>
-.nx-generated{padding:16px 20px;min-width:0}.nx-generated-head,.nx-generation-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}.nx-generated-head h3{margin:0}.nx-generated-head p,.nx-generation-meta{color:var(--nx-text-muted);font-size:13px;line-height:1.5}.nx-generation{border:1px solid var(--nx-divider);border-radius:14px;padding:16px;margin:16px 0;overflow-wrap:anywhere}.nx-generation dl{display:flex;gap:24px;flex-wrap:wrap}.nx-generation dt{font-size:12px;color:var(--nx-text-muted)}.nx-generation dd{margin:4px 0;font-weight:600}.nx-generation-notes{white-space:pre-wrap}.nx-generation-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px}.nx-generation-actions .el-button{margin:0;white-space:normal;min-height:42px;height:auto;padding:10px 14px}.nx-download{border:1px solid var(--nx-divider);padding:10px 14px;border-radius:10px;color:var(--nx-purple);text-decoration:none;max-width:100%;overflow-wrap:anywhere}@media(max-width:900px){.nx-generated{padding:12px}.nx-generation{padding:12px}.nx-generation-actions>*{width:100%;box-sizing:border-box;text-align:center}}
+<style scoped lang="scss">
+.nx-generated { padding: 8px 20px 20px; min-width: 0; }
+.nx-generated-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; h3 { margin: 0; font-size: 16px; color: var(--nx-text); } p { margin: 2px 0 0; color: var(--nx-text-muted); font-size: 13px; line-height: 1.5; } .el-button { margin: 0; } }
+.nx-generated-live { margin: 12px 0 0; padding: 8px 12px; border-radius: 10px; background: var(--nx-tint); color: var(--nx-text); font-size: 13px; line-height: 1.5; }
+.nx-generated-alert { margin-top: 14px; }
+.nx-generated-loading { margin-top: 16px; }
+.nx-generated-empty { margin-top: 8px; }
+.nx-generated-empty-hint { margin: 0 0 14px; max-width: 420px; color: var(--nx-text-muted); font-size: 13px; line-height: 1.5; text-align: center; }
+.nx-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.nx-generation-list { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 12px; }
+.nx-generation { position: relative; display: grid; gap: 12px; border: 1px solid var(--nx-border); border-left: 4px solid var(--nx-border); border-radius: 14px; padding: 14px 16px; background: var(--nx-surface); min-width: 0; overflow-wrap: anywhere;
+  &.is-success { border-left-color: var(--el-color-success); }
+  &.is-warning { border-left-color: var(--el-color-warning); }
+  &.is-danger { border-left-color: var(--el-color-danger); }
+}
+.nx-generation-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.nx-generation-title { display: grid; gap: 2px; min-width: 0; flex: 1 1 260px; strong { font-size: 15px; line-height: 1.35; color: var(--nx-text); } }
+.nx-generation-meta { color: var(--nx-text-muted); font-size: 13px; }
+.nx-generation-progress { p { margin: 6px 0 0; font-size: 13px; color: var(--nx-text); span { margin-left: 8px; color: var(--nx-text-muted); } } }
+.nx-generation-notes { margin: 0; padding: 8px 12px; border-radius: 10px; background: var(--nx-field); color: var(--nx-text); font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
+.nx-generation-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding-top: 12px; border-top: 1px solid var(--nx-divider);
+  .el-button { margin: 0; } .nx-send { margin-left: auto; } }
+.nx-download { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 14px; border: 1px solid var(--nx-border); border-radius: var(--nx-radius-btn); color: var(--nx-text); background: var(--nx-surface); font-size: 13px; font-weight: 600; text-decoration: none; box-sizing: border-box;
+  &:hover { background: var(--nx-field); } }
+.nx-generation-tech { margin: 0; color: var(--nx-text-subtle); font-size: 12px; line-height: 1.5; }
+.nx-generated-next { margin-top: 18px; padding: 14px 16px; border-radius: 14px; background: var(--nx-bg); border: 1px solid var(--nx-divider);
+  h4 { margin: 0 0 8px; font-size: 14px; color: var(--nx-text); }
+  ol { margin: 0; padding-left: 20px; font-size: 13px; line-height: 1.6; color: var(--nx-text-muted); li + li { margin-top: 4px; } strong { color: var(--nx-text); } a { color: var(--nx-focus); } } }
+@media (max-width: 560px) {
+  .nx-generated { padding: 8px 14px 16px; }
+  .nx-generated-head .el-button { width: 100%; }
+  .nx-generation { padding: 12px; }
+  .nx-generation-actions > * { flex: 1 1 100%; justify-content: center; box-sizing: border-box; }
+  .nx-generation-actions .nx-send { order: -1; margin-left: 0; }
+  .nx-generation-actions .el-button { white-space: normal; height: auto; min-height: 40px; }
+}
 </style>
