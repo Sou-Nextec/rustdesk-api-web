@@ -114,3 +114,20 @@ $cfg | Add-Member applied_operation_id 'confirmed-op'
 Invoke-NextecPasswordCycle $cfg
 Assert (-not $cfg.pending_password -and -not $cfg.applied_operation_id -and $applied -eq 0) 'Completed operation retained local secret'
 Write-Host 'PASS Transaction_ClearsCompletedJournal'
+
+Reset-Case
+$response = [pscustomobject]@{ managed=$false; rotate=$false; transaction_v1=$false; pending_approval=$true; approve_mode=''; verification_method='' }
+Invoke-NextecPasswordCycle $cfg
+Assert ($applied -eq 0 -and $generated -eq 0 -and $options -eq 0) 'Pending approval applied or generated a password'
+Assert ($calls.Count -eq 1 -and $calls[0].path -eq '/api/nextec/agent/sync') 'Pending approval contacted routes other than sync'
+Assert ($cfg.enrollment_state -eq 'pending_approval') 'Pending approval was not recorded in the agent state'
+$savesAfterFirst = $saves
+Invoke-NextecPasswordCycle $cfg
+Assert ($saves -eq $savesAfterFirst -and $applied -eq 0) 'Pending approval rewrote state on every cycle'
+Write-Host 'PASS Transaction_PendingApprovalWaitsWithoutRotation'
+
+Reset-Case
+$cfg | Add-Member enrollment_state 'pending_approval'
+Invoke-NextecPasswordCycle $cfg
+Assert (-not $cfg.enrollment_state -and $applied -eq 1) 'Assignment did not clear the pending state and resume rotation'
+Write-Host 'PASS Transaction_AssignmentResumesNormalCycle'

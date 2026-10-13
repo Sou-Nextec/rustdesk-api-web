@@ -9,3 +9,11 @@ O coordenador autorizado entrega esse código à máquina por canal protegido. N
 O consumo não substitui token ativo. Revogar o agente invalida também códigos ainda não consumidos. Falha de cadastro reverte o consumo. A auditoria registra emissão/cadastro sem credenciais. Agentes antigos continuam compatíveis com o cadastro legado durante a migração.
 
 Validação: testes Linux/CGO de service, controller API, router e controller admin passaram em container isolado no APP03, incluindo prazo, replay, UUID/grupo divergentes, agente ativo, revogação de código e acesso administrativo. Homologação e integração do coordenador ainda são pendentes.
+
+## Inscrição global (agente do cliente)
+
+O instalador global traz `inscricao.json` (`{v,painel,chave}`) ao lado dos scripts. O coordenador o copia para `%ProgramData%\Nextec\Acesso\inscricao.json` (somente SYSTEM e Administradores) ou, no Linux, para `/var/lib/nextec-connect/inscricao.json` (0600). Sem `bootstrap.json` e sem `agente-senha.json`, o agente chama `POST /api/nextec/agent/self-enroll` com `{enroll_key,id,uuid,proposed_token}` e a máquina entra como pendente; o administrador a atribui depois no painel.
+
+O `uuid` é o mesmo que o RustDesk 1.5.0 informa no heartbeat e no sysinfo: base64 padrão (com preenchimento) do `MachineGuid` (Windows, visão de 64 bits do registro) ou de `/var/lib/dbus/machine-id`, com fallback para `/etc/machine-id` (Linux), sem espaços nas pontas.
+
+Respostas: 200 grava o token e registra a tarefa; 404 e 429 repetem com recuo de 5, 10, 20, 40 e 60 minutos usando o mesmo token proposto; 401 e 409 exigem autorização manual (o fluxo com `bootstrap.json` continua valendo, e uma chave nova no MSI reabilita a tentativa); 403 para por 24 horas. Enquanto `/agent/sync` devolver `pending_approval` sem `managed`, o agente só registra "aguardando atribuição" e nunca rotaciona.
