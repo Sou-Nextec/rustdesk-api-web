@@ -11,6 +11,7 @@ Achados da revisão do PR do instalador (rdgen #45). Nenhuma mudança de tela; v
 - **Atualizador:** o `-UrlBase` definido no build é preservado; o painel da inscrição só é usado quando nenhum `-UrlBase` é dado.
 - **Tarefa de senha:** só vale com SYSTEM (`S-1-5-18`) e RunLevel Highest, uma única ação com o Windows PowerShell 5.1, `-File` do script esperado com `-Executar` e gatilho periódico de no máximo 5 minutos; qualquer divergência registra a tarefa de novo.
 - **Teste de integração do 401:** o agente real contra um painel falso local (HTTP) recebe 401 três vezes seguidas, descarta a credencial e refaz o cadastro; 1 ou 2 respostas 401 não descartam.
+- **Pendente do painel anterior não bloqueia mais a inscrição:** o cadastro pendente (journal) e o estado de inscrição própria registram o host normalizado do painel em que foram criados. Se o painel atual (marcador, `inscricao.json` ou registro) for outro, o pendente é descartado (só o código vai ao `coordenador.log`) e a inscrição recomeça no painel atual; no mesmo painel a espera continua, mas expira (autorização em 15 minutos, recusa manual em 24 horas) e a máquina se inscreve de novo. Antes o fluxo respondia `identity_conflict` para sempre.
 
 ## 2.11.16
 

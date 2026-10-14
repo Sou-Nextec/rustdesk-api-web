@@ -518,6 +518,88 @@ try {
   $coordinatorText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Coordenar-Agente-Nextec.ps1') -Raw -Encoding UTF8
   Assert ($coordinatorText -match '\[string\]\$ArquivoAutorizacao' -and $coordinatorText -match 'Remove-Item -LiteralPath \$selectedPath') 'Coordinator lacks -ArquivoAutorizacao or temp file cleanup'
   Write-Host 'PASS Receive_UsesGivenFileWithoutDialogAndRemovesIt'
+
+  # Achado P2 (revisao do PR #90): pendente do painel anterior nao bloqueia a inscricao no painel atual.
+  $script:chaveInscricao = 'C' * 43
+  function Add-Enrollment {
+    $paths = Get-NextecProvisionPaths -Root $script:root
+    @{ v = 1; painel = $script:NextecPainelFixo; chave = $script:chaveInscricao } | ConvertTo-Json -Compress | Set-Content -LiteralPath $paths.Enroll -Encoding UTF8
+  }
+  function Add-PendingJournal([string]$Panel, [string]$State = 'pending', [int]$AgeMinutes = 1) {
+    $paths = Get-NextecProvisionPaths -Root $script:root
+    $journal = [pscustomobject]@{
+      painel=$Panel; id='536822159'; uuid='device-uuid-1'; bootstrap='Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+      proposed_token='Zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'; created_utc=$script:current.AddMinutes(-$AgeMinutes); state=$State
+    }
+    Save-NextecProvisionJournal -Journal $journal -Path $paths.Journal
+  }
+  function Invoke-WithSelfEnroll([scriptblock]$BootstrapPost = { param($p,$b) throw 'network unavailable' }) {
+    $script:selfPosts = New-Object System.Collections.Generic.List[object]
+    $selfPost = { param($panel,$body) $script:selfPosts.Add([pscustomobject]@{ panel=$panel; body=$body }) | Out-Null; [pscustomobject]@{ status=200; token=$body.proposed_token; state='pending' } }
+    Invoke-NextecProvisioning -Root $script:root -DiscoverId { '536822159' } -Now $script:current -NewToken { New-NextecProposedToken } `
+      -PostBootstrap $BootstrapPost -PostSelfEnroll $selfPost -GetUuid { 'uuid-b64' } -RegisterAgent { param($path) $script:registerCalls.Add($path) | Out-Null }
+  }
+
+  # painel diferente: o journal pendente do painel A e descartado e a inscricao segue no painel atual
+  New-CaseRoot; Add-Enrollment
+  $paths = Get-NextecProvisionPaths -Root $script:root
+  Add-PendingJournal -Panel 'https://painel-antigo.exemplo.com.br'
+  $result = Invoke-WithSelfEnroll
+  Assert ($result -eq 'complete') "Pending journal of another panel blocked the enrollment: $result"
+  Assert (-not (Test-Path -LiteralPath $paths.Journal)) 'Journal of another panel was kept'
+  Assert ($script:logs -contains 'pending_other_panel') 'Discard of the other panel pending was not logged'
+  Assert ($script:selfPosts.Count -eq 1 -and $script:selfPosts[0].panel -ceq $script:NextecPainelFixo) 'Enrollment did not go to the current panel'
+  Assert (($script:logs -join ',') -notmatch 'Zzzz|Bbbb') 'Secret value reached the log'
+  Write-Host 'PASS PendingOtherPanel_IsDiscardedAndEnrollsInCurrentPanel'
+
+  # mesmo painel (host normalizado: caixa e barra final) e dentro do prazo: mantem a espera, sem reinscrever
+  New-CaseRoot; Add-Enrollment
+  $paths = Get-NextecProvisionPaths -Root $script:root
+  Add-PendingJournal -Panel $script:NextecPainelFixo
+  $result = Invoke-WithSelfEnroll
+  Assert ($result -eq 'network_retry') "Pending journal of the same panel did not keep waiting: $result"
+  Assert (Test-Path -LiteralPath $paths.Journal -PathType Leaf) 'Journal of the same panel was discarded early'
+  Assert ($script:selfPosts.Count -eq 0) 'Same panel pending triggered a new enrollment'
+  Assert ($script:logs -notcontains 'pending_other_panel') 'Same panel was treated as another panel'
+  Write-Host 'PASS PendingSamePanel_KeepsWaiting'
+
+  # pendente expirado do mesmo painel: reinscreve (nunca espera para sempre)
+  New-CaseRoot; Add-Enrollment
+  $paths = Get-NextecProvisionPaths -Root $script:root
+  Add-PendingJournal -Panel $script:NextecPainelFixo -AgeMinutes 30
+  $result = Invoke-WithSelfEnroll
+  Assert ($result -eq 'complete') "Expired pending did not re-enroll: $result"
+  Assert (-not (Test-Path -LiteralPath $paths.Journal) -and $script:logs -contains 'pending_expired') 'Expired pending was not discarded and logged'
+  Assert ($script:selfPosts.Count -eq 1) 'Expired pending did not enroll again'
+  Write-Host 'PASS PendingExpired_ReEnrolls'
+
+  # recusa manual: dentro de 24 h espera; depois de 24 h reinscreve
+  New-CaseRoot; Add-Enrollment
+  Add-PendingJournal -Panel $script:NextecPainelFixo -State 'manual' -AgeMinutes (23 * 60)
+  $result = Invoke-WithSelfEnroll
+  Assert ($result -eq 'manual_authorization_required' -and $script:selfPosts.Count -eq 0) 'Manual journal inside 24 h should keep waiting'
+  New-CaseRoot; Add-Enrollment
+  Add-PendingJournal -Panel $script:NextecPainelFixo -State 'manual' -AgeMinutes (25 * 60)
+  $result = Invoke-WithSelfEnroll
+  Assert ($result -eq 'complete' -and $script:selfPosts.Count -eq 1) 'Manual journal older than 24 h did not re-enroll'
+  Write-Host 'PASS ManualPending_ExpiresAfter24Hours'
+
+  # estado de inscricao propria criado contra outro painel: descartado, novo token, painel atual gravado
+  New-CaseRoot; Add-Enrollment
+  $paths = Get-NextecProvisionPaths -Root $script:root
+  $keyHash = Get-NextecSha256Hex -Value $script:chaveInscricao
+  Save-NextecSelfState -Path $paths.SelfState -State ([pscustomobject]@{ state='manual'; chave_sha256=$keyHash; proposed_token='Yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy'; attempts=0; next_try_utc=($script:current.AddHours(5).Ticks); blocked_until_utc=0L; painel='https://painel-antigo.exemplo.com.br' })
+  $result = Invoke-WithSelfEnroll
+  Assert ($result -eq 'complete') "Self state of another panel blocked the enrollment: $result"
+  Assert ($script:selfPosts.Count -eq 1 -and $script:selfPosts[0].body.proposed_token -ceq 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA') 'Self state of another panel reused its token'
+  Assert ($script:logs -contains 'pending_other_panel') 'Self state discard was not logged'
+  # estado do mesmo painel dentro do prazo continua em espera
+  New-CaseRoot; Add-Enrollment
+  $paths = Get-NextecProvisionPaths -Root $script:root
+  Save-NextecSelfState -Path $paths.SelfState -State ([pscustomobject]@{ state='manual'; chave_sha256=$keyHash; proposed_token='Yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy'; attempts=0; next_try_utc=($script:current.AddHours(5).Ticks); blocked_until_utc=0L; painel=$script:NextecPainelFixo })
+  $result = Invoke-WithSelfEnroll
+  Assert ($result -eq 'manual_authorization_required' -and $script:selfPosts.Count -eq 0) 'Self state of the same panel did not keep waiting'
+  Write-Host 'PASS SelfStateOtherPanel_IsDiscarded'
 } finally {
   if (Test-Path -LiteralPath $script:root) { Remove-Item -LiteralPath $script:root -Recurse -Force }
 }

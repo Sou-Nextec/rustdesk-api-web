@@ -195,7 +195,7 @@ function New-NextecProposedToken {
 
 function Write-NextecProvisionLog {
   param([Parameter(Mandatory)][string]$Code, [string]$Root = (Join-Path $env:ProgramData 'Nextec\Acesso'))
-  if ($Code -notmatch '^(pending|complete|network_retry|manual_authorization_required|already_configured|identity_conflict|already_enrolled|registration_retry|invalid_input|invalid_panel|invalid_identity|invalid_bootstrap|protocol_error|unsafe_path|component_missing|self_enrolled|self_backoff|self_blocked|self_manual|peer_not_registered|rate_limited|painel_padrao|agent_config_replaced|agent_config_unreadable|identity_changed|bootstrap_discarded)$') { $Code = 'protocol_error' }
+  if ($Code -notmatch '^(pending|complete|network_retry|manual_authorization_required|already_configured|identity_conflict|already_enrolled|registration_retry|invalid_input|invalid_panel|invalid_identity|invalid_bootstrap|protocol_error|unsafe_path|component_missing|self_enrolled|self_backoff|self_blocked|self_manual|peer_not_registered|rate_limited|painel_padrao|agent_config_replaced|agent_config_unreadable|identity_changed|bootstrap_discarded|pending_other_panel|pending_expired)$') { $Code = 'protocol_error' }
   $paths = Get-NextecProvisionPaths -Root $Root
   Assert-NextecProvisionPath -Path $paths.Root
   if (-not (Test-Path -LiteralPath $paths.Root -PathType Container)) { Initialize-NextecProvisionDirectory -Root $paths.Root }
@@ -409,6 +409,9 @@ function Read-NextecSelfState {
   if (-not $raw) { return $null }
   $expected = @('state','chave_sha256','proposed_token_protected','attempts','next_try_utc_ticks','blocked_until_utc_ticks')
   $actual = @($raw.PSObject.Properties | ForEach-Object { $_.Name })
+  # 'painel' (host normalizado em que o estado foi criado) e opcional: estados gravados antes dele continuam validos.
+  $painelGravado = ''
+  if ($actual -contains 'painel') { $painelGravado = [string]$raw.painel; $actual = @($actual | Where-Object { $_ -cne 'painel' }) }
   if ($actual.Count -ne $expected.Count -or @($expected | Where-Object { $_ -notin $actual }).Count -ne 0) { throw 'protocol_error' }
   if ([string]$raw.state -notin @('self','manual','blocked')) { throw 'protocol_error' }
   $token = ''
@@ -420,6 +423,7 @@ function Read-NextecSelfState {
     attempts = [int]$raw.attempts
     next_try_utc = [long]$raw.next_try_utc_ticks
     blocked_until_utc = [long]$raw.blocked_until_utc_ticks
+    painel = $painelGravado
   }
 }
 
@@ -434,6 +438,7 @@ function Save-NextecSelfState {
     attempts = [int]$State.attempts
     next_try_utc_ticks = [long]$State.next_try_utc
     blocked_until_utc_ticks = [long]$State.blocked_until_utc
+    painel = [string]$State.painel
   })
 }
 
@@ -483,6 +488,12 @@ function Invoke-NextecSelfEnrollment {
   $utc = $Now.ToUniversalTime()
   $state = Read-NextecSelfState -Path $paths.SelfState
   if ($state -and $state.chave_sha256 -cne $keyHash) { $state = $null }
+  # Estado de inscricao criado contra outro painel (troca de dominio): descarta e recomeca no painel atual.
+  # Sem 'painel' gravado (estado antigo) vale o limite de tempo abaixo, nunca uma espera sem fim.
+  $enrollPanel = ConvertTo-NextecPainelUrl ([string]$enroll.painel)
+  if ($state -and $state.painel) {
+    if ((ConvertTo-NextecPainelUrl $state.painel) -cne $enrollPanel) { Write-NextecProvisionLog 'pending_other_panel' -Root $Root; $state = $null }
+  }
 
   if ($state -and $state.state -eq 'manual' -and $utc.Ticks -lt $state.next_try_utc) {
     Write-NextecProvisionLog 'self_manual' -Root $Root
@@ -500,9 +511,10 @@ function Invoke-NextecSelfEnrollment {
   if (-not $state -or -not $state.proposed_token) {
     $proposed = [string](& $NewToken)
     if ($proposed -notmatch '^[A-Za-z0-9_-]{43}$') { Write-NextecProvisionLog 'protocol_error' -Root $Root; throw 'protocol_error' }
-    $state = [pscustomobject]@{ state='self'; chave_sha256=$keyHash; proposed_token=$proposed; attempts=0; next_try_utc=0L; blocked_until_utc=0L }
+    $state = [pscustomobject]@{ state='self'; chave_sha256=$keyHash; proposed_token=$proposed; attempts=0; next_try_utc=0L; blocked_until_utc=0L; painel=$enrollPanel }
   } else {
     $state.state = 'self'
+    $state.painel = $enrollPanel
   }
   # O token proposto fica gravado antes da chamada: o replay reenvia o mesmo par id/uuid/token.
   Save-NextecSelfState -Path $paths.SelfState -State $state
@@ -577,6 +589,27 @@ function Invoke-NextecProvisioning {
 
   $journal = Read-NextecProvisionJournal -Path $paths.Journal
   if ($journal -and $journal.state -notin @('pending','manual')) { throw 'protocol_error' }
+  # Pendente de OUTRO painel (troca de dominio) nunca bloqueia a inscricao no painel atual: o journal e descartado
+  # (so o codigo vai ao log, sem segredos) e o fluxo segue como maquina sem pendencia.
+  if ($journal) {
+    $journalPanel = ConvertTo-NextecPainelUrl $journal.painel
+    if (-not $journalPanel -or $journalPanel -cne (ConvertTo-NextecPainelUrl ([string]$script:NextecPainelFixo))) {
+      Remove-Item -LiteralPath $paths.Journal -Force -ErrorAction SilentlyContinue
+      Write-NextecProvisionLog 'pending_other_panel' -Root $Root
+      $journal = $null
+    }
+  }
+  # Pendente do mesmo painel espera ate expirar (autorizacao: 15 min; recusa manual: 24 h) e depois reinscreve.
+  if ($journal -and -not (Test-Path -LiteralPath $paths.Input -PathType Leaf)) {
+    $pendingAge = ($Now.ToUniversalTime() - $journal.created_utc).TotalSeconds
+    $pendingLimit = 900
+    if ($journal.state -eq 'manual') { $pendingLimit = 86400 }
+    if ($pendingAge -ge $pendingLimit -or $pendingAge -lt -60) {
+      Remove-Item -LiteralPath $paths.Journal -Force -ErrorAction SilentlyContinue
+      Write-NextecProvisionLog 'pending_expired' -Root $Root
+      $journal = $null
+    }
+  }
   $input = $null
   if (Test-Path -LiteralPath $paths.Input -PathType Leaf) {
     $raw = Get-Content -LiteralPath $paths.Input -Raw -Encoding UTF8
