@@ -258,3 +258,29 @@ o 0033 toca `http/router/api.go` e cria arquivos novos em `api/` e `service/`, s
 tinha fim de linha CRLF e o `git apply` do Linux o rejeitava ("patch failed ... nextec_bootstrap.go:52"); os `.patch` devem ser LF.
 O workflow `Imagem Nextec` agora aplica toda a série em ordem antes do build e aponta qual patch não aplica.
 
+
+## Patch 0036: nome do app por máquina e protocolo do link
+
+O RustDesk registra no sistema o protocolo com o nome do app em minúsculas. O patch 0020 guarda um protocolo global; este
+passa a usar o da própria máquina, descoberto por dados, com o global como fallback.
+
+- **Coluna aditiva** `nextec_device_secrets.app_name` (`AutoMigrate`, padrão vazio, sem migração de dados). Rollback: remover o
+  patch deixa a coluna sem uso.
+- **Entrada:** `POST /api/nextec/agent/sync` aceita `app_name` (opcional). O agente lê o `AppName` do marcador
+  (`HKLM\SOFTWARE\Nextec\Agente` ou `nextec-marker.json`) e envia a cada verificação. Validação `^[A-Za-z0-9-]{1,64}$`: valor
+  inválido ou ausente é ignorado e o sync responde normalmente (agente antigo e painel antigo seguem funcionando). Só grava com o
+  token autenticado da máquina e quando o nome muda.
+- **Derivação:** protocolo = nome em minúsculas, desde que sirva de protocolo (`^[a-z][a-z0-9+.-]{1,31}$`) e não esteja na lista
+  proibida (`http`, `https`, `file`, `ftp`, `ws`, `wss`, `javascript`, `vbscript`, `data`, `blob`, `about`, `mailto`, `tel`, `sms`,
+  `chrome`, `edge`, `view-source`, `ms-msdt`, `search-ms`), porque o link leva a senha da máquina. Só máquina **aprovada** decide o
+  protocolo (inscrição pendente usa o global). Sem nome válido: protocolo global (`NextecConnectSchemeGet`, padrão `rustdesk`).
+- **Saída:** `GET /my/connect-link` mantém `url` e `auto_password` e acrescenta `scheme`, `scheme_source` (`machine` ou `global`),
+  `app_name`, `agent_enrolled`, `agent_active` (contato nos últimos 20 min), `password_state` (`none`, `pending_approval`,
+  `waiting_first`, `ready`, `restricted`), `last_seen_at` e `interval_minutes`. `GET /nextec/secrets` ganhou `devices[].app_name`,
+  `scheme` e `scheme_source`.
+- **Painel:** o link é o do servidor, sem alteração. O front só decide se abre direto (lembrança por protocolo no navegador ou
+  agente ativo) e se avisa que a primeira senha ainda não foi aplicada.
+- **Série:** 0001..0034 + 0036 aplicam limpas em ordem sobre `v2.6.29`, e também com o 0035 da pilha pendente antes do 0036.
+  O 0036 só toca `model/nextec_secret.go`, `service/nextec_secret.go`, `http/controller/api/nextec_agent.go`,
+  `http/controller/admin/my/nextec_connect.go` e arquivos novos.
+- Testes: `service/nextec_appname_test.go` e `http/controller/api/nextec_appname_test.go` (rodam no build da imagem; também com `-race`).

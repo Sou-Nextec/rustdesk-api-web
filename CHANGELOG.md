@@ -2,6 +2,16 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.20
+
+Conectar abre o app direto, com o protocolo da própria máquina, e avisa quando a senha automática ainda não foi aplicada.
+
+- **Abre direto, sem diálogo:** ao clicar em Conectar (Senhas dos servidores, Dispositivos, Acesso rápido, Meus dispositivos, Salvos, Compartilhados, lista de espera e busca do topo), o painel dispara o protocolo na hora quando o app já abriu com sucesso antes neste navegador (lembrança por protocolo em `localStorage`, com tratamento de erro) ou quando a máquina tem agente ativo. Aparece só um aviso curto por 8 s ("Abrindo o <app>...") com o link discreto "Não abriu? Baixar aplicativo", que leva ao diálogo completo. O diálogo completo continua na primeira vez e em "Não abriu?". A abertura é detectada por perda de foco ou aba oculta, com prazo; se não abriu, a lembrança é esquecida e a próxima vez cai no diálogo. O nome do app mostrado vem do que a máquina informou (sem nome fixo no painel).
+- **Protocolo por máquina, sem literal:** o agente envia o `AppName` do marcador (`HKLM\SOFTWARE\Nextec\Agente` ou `nextec-marker.json`) como `app_name` no `/api/nextec/agent/sync` e o painel monta o link com o nome normalizado em minúsculas (o RustDesk registra o protocolo com o nome do app em minúsculas: `Client-Nextec-Connect` abre `client-nextec-connect://`). Sem nome informado, vale o protocolo global configurado em Dispositivos > Gerar cliente (patch 0020), que passa a ser só o fallback. Patch novo `0036-app-name-por-maquina.patch`, aditivo e retrocompatível (coluna nova; agente antigo e painel antigo continuam funcionando), com validação `[A-Za-z0-9-]{1,64}`, lista de protocolos proibidos (http, https, file, javascript, data...) e só máquina aprovada decide o protocolo. A resposta de `/my/connect-link` ganhou `scheme`, `scheme_source`, `app_name`, `agent_active`, `password_state` e `last_seen_at`; a lista de Senhas dos servidores mostra o app da máquina.
+- **Senha ainda não aplicada:** com agente ativo e regra ligada, mas "Aguardando a primeira troca", Conectar não abre em silêncio para cair no pedido de senha. Mostra "A senha automática ainda não foi aplicada nesta máquina (próxima verificação em ~N min). Você pode conectar e digitar a senha, ou aguardar." com [Conectar mesmo assim] e, para administrador, [Trocar agora]; os demais veem [Aguardar]. O aviso só aparece para quem receberia a senha do cofre.
+- **Agente:** `Agente-Senha-Nextec.ps1` envia `app_name` lido do marcador (sem nome fixo; nome fora de `[A-Za-z0-9-]{1,64}` não é enviado). O pacote embutido no `Ativar-Nextec-<ID>.cmd` acompanha a árvore. **Depois do merge o rdgen precisa ressincronizar `Agente-Senha-Nextec.ps1`.**
+- **Testes:** `connect-open.test.mjs` (decisão, esquema por nome, lembrança, detecção, aviso), `connect-abre-direto.spec.mjs` (montagem jsdom de Senhas dos servidores e Acesso rápido), `test_app_name.ps1` (Windows PowerShell 5.1) e testes Go com `-race` do patch 0036.
+
 ## 2.11.19
 
 Correção urgente do `Ativar-Nextec-<ID>.cmd` do 2.11.18. Vale para os arquivos gerados daqui em diante: gere o arquivo de novo no painel.

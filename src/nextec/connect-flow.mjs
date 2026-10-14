@@ -2,7 +2,7 @@ const TICKET_MODES = new Set(['off', 'optional', 'required'])
 const REQUIRED_TICKET_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{1,29}$/
 
 /** Executa a preparação comum de conexão com dependências injetadas para testes. */
-export async function prepareConnection (id, { loadSettings, askTicket, saveNote, requestLink }) {
+export async function prepareConnection (id, { loadSettings, askTicket, saveNote, requestLink, reviewLink }) {
   const peerId = String(id).replace(/\s+/g, '')
   if (!peerId) throw new Error('ID do dispositivo vazio.')
 
@@ -34,5 +34,11 @@ export async function prepareConnection (id, { loadSettings, askTicket, saveNote
   if (result?.code !== 0 || typeof url !== 'string' || !url) {
     throw new Error(result?.msg || 'Não foi possível preparar a conexão. Verifique sua permissão e tente novamente.')
   }
-  return { id: peerId, url }
+  // Gancho opcional: o painel pode avisar do estado da máquina (senha ainda não aplicada) antes de abrir o app.
+  // Devolver false cancela sem abrir nada. O link autorizado continua sendo o do servidor, sem alteração.
+  if (typeof reviewLink === 'function') {
+    const proceed = await reviewLink(peerId, result.data)
+    if (proceed === false) return null
+  }
+  return { id: peerId, url, link: result.data }
 }

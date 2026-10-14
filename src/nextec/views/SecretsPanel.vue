@@ -154,6 +154,7 @@
                 <span>Agente {{ seenRecently(row) ? 'ativo' : 'sem contato' }}</span>
                 <span class="nx-muted nx-small"> · visto {{ ago(row.last_seen_at).toLowerCase() }}</span>
                 <div class="nx-muted nx-small nx-next-check">{{ nextCheckText(row) }}</div>
+                <div v-if="row.app_name" class="nx-muted nx-small nx-app-name">App {{ row.app_name }}</div>
               </template>
               <span v-else class="nx-muted"><span class="nx-dot is-off" aria-hidden="true"></span>Agente não cadastrado</span>
             </div>

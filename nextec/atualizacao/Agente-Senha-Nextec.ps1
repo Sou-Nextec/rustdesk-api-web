@@ -250,6 +250,34 @@ function Get-NextecPainelConfigurado {
   return $Padrao
 }
 
+# Nome do app instalado (AppName do marcador: valor AppName em HKLM\SOFTWARE\Nextec\Agente ou nextec-marker.json).
+# O painel monta o link de conexao desta maquina com ele (o RustDesk registra o protocolo com o nome do app em
+# minusculas). Nenhum nome e fixo aqui: sem marcador valido devolve '' e o painel usa o protocolo global.
+function Get-NextecAppName {
+  [CmdletBinding()]
+  param(
+    [string]$Root = (Join-Path $env:ProgramData 'Nextec\Acesso'),
+    [string]$RegistryKey = 'HKLM:\SOFTWARE\Nextec\Agente'
+  )
+  try {
+    $reg = Get-ItemProperty -LiteralPath $RegistryKey -ErrorAction Stop
+    $nome = ([string]$reg.AppName).Trim()
+    if ($nome -cmatch '^[A-Za-z0-9-]{1,64}$') { return $nome }
+  } catch { }
+  try {
+    if ([string]::IsNullOrWhiteSpace($Root)) { return '' }
+    $arquivo = Join-Path $Root 'nextec-marker.json'
+    if ((Test-Path -LiteralPath $arquivo -PathType Leaf) -and (Get-Item -LiteralPath $arquivo).Length -le 4096) {
+      $valor = [IO.File]::ReadAllText($arquivo, [Text.Encoding]::UTF8).TrimStart([char]0xFEFF) | ConvertFrom-Json
+      foreach ($campo in 'AppName', 'app_name', 'app') {
+        $nome = ([string]$valor.$campo).Trim()
+        if ($nome -cmatch '^[A-Za-z0-9-]{1,64}$') { return $nome }
+      }
+    }
+  } catch { }
+  return ''
+}
+
 function Escrever([string]$msg) {
   if (-not (Test-Path $PastaDados)) { New-Item -ItemType Directory -Path $PastaDados -Force | Out-Null }
   if ((Test-Path $Log) -and (Get-Item $Log).Length -gt 1MB) { Move-Item $Log "$Log.antigo" -Force }
@@ -478,7 +506,11 @@ function Confirm-NextecOperation([psobject]$Cfg, [psobject]$Operation, [string]$
 
 function Invoke-NextecPasswordCycle([psobject]$Cfg) {
   $token = Revelar $Cfg.token
-  $state = Chamar '/api/nextec/agent/sync' @{id=$Cfg.id;token=$token;capabilities=@('transaction_v1')}
+  $corpoSync = @{id=$Cfg.id;token=$token;capabilities=@('transaction_v1')}
+  # Aditivo: painel antigo ignora o campo; sem marcador, nada e enviado e o painel usa o protocolo global.
+  $nomeApp = Get-NextecAppName -Root $PastaDados
+  if ($nomeApp) { $corpoSync.app_name = $nomeApp }
+  $state = Chamar '/api/nextec/agent/sync' $corpoSync
   if ($state.pending_approval -and -not $state.managed) {
     # Inscricao global: a maquina ja esta no painel, mas ainda sem atribuicao. Nunca rotaciona.
     if ($Cfg.enrollment_state -ne 'pending_approval') {
