@@ -24,6 +24,13 @@ Assert (-not (Test-NextecSessaoAtiva -Processos @((P $null $null), (P '' '')))) 
 [void](Test-NextecSessaoAtiva)
 # o fluxo principal consulta antes de baixar e respeita -Forcar
 $source = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Instalar-Nextec.ps1'))
-Assert ($source -match 'if \(-not \$Forcar -and -not \$SoVerificar -and \$instalada\) \{') 'a guarda de sessao precisa ignorar -Forcar e a primeira instalacao'
-Assert ($source.IndexOf('Test-NextecSessaoAtiva -ExePath') -lt $source.IndexOf('# 3. baixar e conferir')) 'a guarda de sessao precisa vir antes do download'
+Assert ($source.Contains('$guardarSessao = (-not $Forcar -and -not $SoVerificar -and $instalada)')) 'a guarda de sessao precisa ignorar -Forcar e a primeira instalacao'
+$download = $source.IndexOf('# 3. baixar e conferir')
+$instalar = $source.IndexOf("Escrever 'Instalando...'")
+$primeira = $source.IndexOf('Test-NextecSessaoAtiva -ExePath $exeAtual')
+$segunda = $source.IndexOf('Test-NextecSessaoAtiva -ExePath $exeAtual', $primeira + 1)
+$msiexec = $source.IndexOf("System32\msiexec.exe')", $download)
+Assert ($primeira -gt 0 -and $primeira -lt $download) 'a guarda de sessao precisa vir antes do download'
+# revisao do #89: uma sessao que comeca durante o download tambem precisa segurar a instalacao
+Assert ($segunda -gt $download -and $segunda -lt $instalar -and $instalar -lt $msiexec) 'a guarda de sessao precisa ser repetida logo antes do msiexec'
 Write-Host 'Atualizador respeita sessao remota ativa: PASS'

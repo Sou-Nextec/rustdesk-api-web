@@ -18,7 +18,7 @@ sudo sh -c 'umask 077; openssl rand -base64 33 > /root/.nextec-backup-pass'
 sudo BACKUP_PASSFILE=/root/.nextec-backup-pass /opt/rustdesk-nextec/backup-cofre.sh /mnt/backup-nextec
 ```
 
-O script cifra com AES-256 (PBKDF2), grava `.sha256`, confere que o arquivo abre e mantém os 14 mais recentes. A senha vem de arquivo
+O script copia o banco pela API de backup do SQLite (`sqlite3 .backup` ou `python3`; sem nenhum dos dois ele para, porque copiar o arquivo e o `-wal` com `cp` pode gerar um backup corrompido), confere `PRAGMA integrity_check`, cifra com AES-256 (PBKDF2), grava `.sha256`, confere que o arquivo abre e mantém os 14 mais recentes. **Sem banco, ou sem a chave do cofre (arquivo ou `NEXTEC_VAULT_KEY` no `.env`), ele falha em vez de dizer ok.** A senha vem de arquivo
 com permissão 600, nunca da linha de comando. **Backup só na VPS não vale:** o destino precisa ser outro servidor ou nuvem
 (monte o destino ou copie o arquivo gerado com `rclone`/`scp`).
 

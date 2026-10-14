@@ -35,30 +35,62 @@ mkdir -p "$DESTINO"
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 stage="$tmp/nextec-backup"; mkdir -p "$stage"
 
-# banco consistente: sqlite3 .backup quando existe; senão copia o arquivo e os de WAL juntos
+# Banco consistente: sempre pela API de backup do SQLite (sqlite3 .backup ou python3 sqlite3.backup), que copia uma
+# fotografia coerente inclusive do que ainda está no WAL, com a API escrevendo ao mesmo tempo. Copiar o arquivo e o -wal
+# com cp pode pegar os dois em momentos diferentes e gerar um backup corrompido: por isso não há cópia "simples".
+sqlite_ferramenta() {
+  if command -v sqlite3 >/dev/null; then echo sqlite3
+  elif command -v python3 >/dev/null && python3 -c 'import sqlite3' 2>/dev/null; then echo python3
+  else echo ''; fi
+}
 copiar_banco() {
-  local origem="$1" nome; nome=$(basename "$origem")
-  if command -v sqlite3 >/dev/null; then
-    sqlite3 "$origem" ".backup '$stage/$nome'"
+  local origem="$1" destino="$stage/$(basename "$1")" ferramenta resultado
+  ferramenta=$(sqlite_ferramenta)
+  case "$ferramenta" in
+    sqlite3) sqlite3 -cmd '.timeout 30000' "$origem" ".backup '$destino'" ;;
+    python3) python3 - "$origem" "$destino" <<'PY'
+import sqlite3, sys
+src = sqlite3.connect(sys.argv[1], timeout=30)
+dst = sqlite3.connect(sys.argv[2])
+src.backup(dst)
+dst.close(); src.close()
+PY
+    ;;
+    *) falha "sem sqlite3 nem python3 para copiar o banco com consistência (apt install sqlite3). Nada foi gravado." ;;
+  esac
+  [ -s "$destino" ] || falha "a cópia do banco $(basename "$origem") saiu vazia."
+  if [ "$ferramenta" = sqlite3 ]; then
+    resultado=$(sqlite3 "$destino" 'PRAGMA integrity_check;' 2>&1 | head -1)
   else
-    cp -p "$origem" "$stage/$nome"
-    [ -f "$origem-wal" ] && cp -p "$origem-wal" "$stage/$nome-wal" || true
-    [ -f "$origem-shm" ] && cp -p "$origem-shm" "$stage/$nome-shm" || true
+    resultado=$(python3 -c 'import sqlite3,sys; print(sqlite3.connect(sys.argv[1]).execute("PRAGMA integrity_check").fetchone()[0])' "$destino" 2>&1 | head -1)
   fi
+  [ "$resultado" = ok ] || falha "a cópia do banco $(basename "$origem") não passou no integrity_check: $resultado"
+  bancos=$((bancos + 1))
 }
 
 for f in "$PASTA"/data/id_ed25519 "$PASTA"/data/id_ed25519.pub "$PASTA"/data/nextec-vault.key "$PASTA"/data/nextec-settings.json; do
   [ -f "$f" ] && cp -p "$f" "$stage/" || true
 done
+bancos=0
 for db in "$PASTA"/data/db_v2.sqlite3 "$PASTA"/data/*.sqlite3; do
-  [ -f "$db" ] && [ ! -f "$stage/$(basename "$db")" ] && copiar_banco "$db" || true
+  if [ -f "$db" ] && [ ! -f "$stage/$(basename "$db")" ]; then copiar_banco "$db"; fi
 done
+# sem banco o backup nao serve para restaurar o painel: falha em vez de dizer "ok"
+[ "$bancos" -gt 0 ] || falha "nenhum banco (*.sqlite3) em $PASTA/data: confira PASTA. Nada foi gravado."
+
 # arquivos de atualização publicados e configurações da API, se existirem
 for d in updates conf; do [ -d "$PASTA/data/$d" ] && cp -a "$PASTA/data/$d" "$stage/" || true; done
 [ -d "$PASTA/api" ] && cp -a "$PASTA/api" "$stage/api" || true
 cp -p "$PASTA"/.env "$stage/" 2>/dev/null || true
 
-[ -f "$stage/nextec-vault.key" ] || log "AVISO: data/nextec-vault.key não existe (a chave do cofre vem de NEXTEC_VAULT_KEY? então guarde essa variável)."
+# sem a chave do cofre as senhas do backup sao ilegiveis: so segue se ela vier pela variavel NEXTEC_VAULT_KEY no .env salvo
+if [ ! -f "$stage/nextec-vault.key" ]; then
+  if [ -f "$stage/.env" ] && grep -q '^NEXTEC_VAULT_KEY=.' "$stage/.env"; then
+    log "AVISO: sem data/nextec-vault.key; a chave do cofre vai no .env (NEXTEC_VAULT_KEY)."
+  else
+    falha "sem data/nextec-vault.key e sem NEXTEC_VAULT_KEY no .env: o backup não abriria as senhas do cofre. Nada foi gravado."
+  fi
+fi
 [ -n "$(ls -A "$stage")" ] || falha "nada para copiar."
 
 nome="nextec-backup-$(date +%F-%H%M).tar.gz.enc"

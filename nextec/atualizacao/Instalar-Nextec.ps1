@@ -530,14 +530,14 @@ try {
   if (-not $precisa) { Escrever 'Já está na versão publicada. Nada a fazer.'; return }
 
   # Não derruba um atendimento: com sessão remota ativa a atualização fica para a próxima verificação (diária).
-  # -Forcar ignora (uso manual do administrador).
-  if (-not $Forcar -and -not $SoVerificar -and $instalada) {
-    $exeAtual = ''
-    try { $exeAtual = [string](Get-NextecInstalledClient).ExePath } catch { $exeAtual = '' }
-    if (Test-NextecSessaoAtiva -ExePath $exeAtual) {
-      Escrever "Há uma sessão remota em andamento: a atualização para $($alvo.versao) fica para a próxima verificação."
-      return
-    }
+  # Confere antes de baixar (não gasta o download) e de novo logo antes do msiexec (uma sessão pode ter começado
+  # durante o download). -Forcar ignora (uso manual do administrador); a primeira instalação não tem o que derrubar.
+  $guardarSessao = (-not $Forcar -and -not $SoVerificar -and $instalada)
+  $exeAtual = ''
+  if ($guardarSessao) { try { $exeAtual = [string](Get-NextecInstalledClient).ExePath } catch { $exeAtual = '' } }
+  if ($guardarSessao -and (Test-NextecSessaoAtiva -ExePath $exeAtual)) {
+    Escrever "Há uma sessão remota em andamento: a atualização para $($alvo.versao) fica para a próxima verificação."
+    return
   }
 
   # 3. baixar e conferir
@@ -556,6 +556,11 @@ try {
   if ($SoVerificar) { Escrever 'Modo SoVerificar: nada foi instalado.'; Remove-Item $msi -Force -ErrorAction SilentlyContinue; return }
 
   # 4. instalar (MSI faz atualização por cima)
+  if ($guardarSessao -and (Test-NextecSessaoAtiva -ExePath $exeAtual)) {
+    Remove-Item $msi -Force -ErrorAction SilentlyContinue
+    Escrever "Uma sessão remota começou durante o download: a atualização para $($alvo.versao) fica para a próxima verificação."
+    return
+  }
   Escrever 'Instalando...'
   $logMsi = Join-Path $Pasta 'msi.log'
   $p = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\msiexec.exe') -ArgumentList @('/i', "`"$msi`"", '/qn', '/norestart', '/L*v', "`"$logMsi`"") -Wait -PassThru

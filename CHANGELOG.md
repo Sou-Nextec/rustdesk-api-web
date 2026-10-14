@@ -8,6 +8,7 @@ Atualização segura, diagnóstico de campo e backup do cofre (Fase 4).
 
 - **A atualização não derruba atendimento:** o atualizador (`Instalar-Nextec.ps1`) confere se há sessão remota em andamento (processo `--cm` do RustDesk) e, havendo, deixa a atualização para a próxima verificação diária. `-Forcar` (uso manual) e a primeira instalação ignoram a trava.
 - **Diagnóstico de campo (`Diagnostico-Agente-Nextec.ps1`):** relatório somente leitura, sem segredos, do serviço do RustDesk (e se ele é de fato RustDesk, não AnyDesk), marcador do instalador, arquivos e tarefas do agente, estado da inscrição, últimas linhas dos logs e conexão com o painel (HTTPS, relógio). Termina com a lista do que fazer. Uso: `powershell -ExecutionPolicy Bypass -File Diagnostico-Agente-Nextec.ps1` como administrador; grava um `.txt` para enviar ao suporte.
+- **Revisão do PR:** o atualizador confere a sessão remota de novo logo antes do `msiexec` (uma sessão pode começar durante o download); o backup falha sem banco ou sem a chave do cofre e copia o SQLite só pela API de backup, com `integrity_check` (cópia do arquivo e do WAL com `cp` foi removida).
 - **Backup cifrado do cofre (`nextec/deploy/backup-cofre.sh`, `BACKUP.md`):** `nextec-vault.key`, chave do servidor de ID, banco e configurações em um arquivo AES-256 com hash, conferido e com rotação (14). A senha vem de arquivo com permissão 600. Sem backup fora da VPS, perder a chave do cofre deixa todas as senhas ilegíveis.
 
 ## 2.12.0
