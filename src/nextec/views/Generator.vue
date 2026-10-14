@@ -26,6 +26,7 @@
                 <h3>Você escolhe</h3>
                 <ul>
                   <li><strong>Plataforma:</strong> Windows 64 ou Linux.</li>
+                  <li><strong>Cliente do painel:</strong> a máquina que instalar este arquivo aparece já nesse cliente, com a senha automática, sem atribuir nada.</li>
                   <li><strong>Nome dos arquivos e do aplicativo:</strong> <code>Nextec-Connect</code>, só letras, números e hífen. Para o app de suporte, use <code>Suporte-Nextec</code>.</li>
                 </ul>
               </div>
@@ -51,7 +52,7 @@
           <template v-else><el-skeleton :rows="3" animated /><p>Carregando o gerador…</p></template>
         </div>
         <div class="nx-frame-wrap">
-          <iframe ref="frame" :key="frameKey" src="/gerador/" title="Gerador de clientes Nextec"
+          <iframe ref="frame" :key="frameKey" :src="frameSrc" title="Gerador de clientes Nextec"
             class="nx-generator-frame" :class="{ 'is-pending': !frameReady }" :style="{ height: frameHeight + 'px' }" @load="syncTheme" />
         </div>
       </div>
@@ -79,6 +80,7 @@
 
 <script setup>
   import { onMounted, onBeforeUnmount, ref } from 'vue'
+  import { useRoute } from 'vue-router'
   import { ElMessage } from 'element-plus'
   import { connectScheme, connectSchemeSave } from '@/nextec/api'
   import { generatorHeight } from '@/nextec/generator-frame.mjs'
@@ -87,7 +89,12 @@
   const tab = ref('new')
   const guide = ref(typeof window !== 'undefined' && window.innerWidth >= 768 ? ['guide'] : [])
 
-  const open = () => { window.open('/gerador/', '_blank', 'noopener') }
+  // "Baixar instalador deste cliente" (tela Clientes) chega com ?cliente=<id>: o gerador já abre com o cliente escolhido.
+  const route = useRoute()
+  const clienteId = /^\d{1,10}$/.test(String(route.query.cliente || '')) ? String(route.query.cliente) : ''
+  const frameSrc = '/gerador/' + (clienteId ? '?cliente=' + clienteId : '')
+
+  const open = () => { window.open(frameSrc, '_blank', 'noopener') }
   const frame = ref(null)
   const frameKey = ref(0)
   const frameReady = ref(false)

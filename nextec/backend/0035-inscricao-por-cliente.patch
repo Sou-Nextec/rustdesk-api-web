@@ -1,0 +1,610 @@
+diff --git a/http/controller/api/nextec_genclient_test.go b/http/controller/api/nextec_genclient_test.go
+new file mode 100644
+index 0000000..724b8f7
+--- /dev/null
++++ b/http/controller/api/nextec_genclient_test.go
+@@ -0,0 +1,106 @@
++package api
++
++import (
++	"bytes"
++	"encoding/base64"
++	"encoding/json"
++	"net/http/httptest"
++	"os"
++	"strings"
++	"testing"
++
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++	"gorm.io/driver/sqlite"
++	"gorm.io/gorm"
++	"gorm.io/gorm/logger"
++)
++
++// Rotas internas do gerador para o instalador por cliente: credencial nx2 e lista de clientes.
++func TestGenClientKeyAndList(t *testing.T) {
++	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := db.AutoMigrate(&model.Peer{}, &model.DeviceGroup{}, &model.NextecSecretPolicy{}, &model.NextecDeviceSecret{}, &model.NextecSecretAudit{}, &model.NextecAgentBootstrap{}, &model.NextecEnrollBlock{}); err != nil {
++		t.Fatal(err)
++	}
++	sqlDB, _ := db.DB()
++	sqlDB.SetMaxOpenConns(1)
++	oldDB, oldService := service.DB, service.AllService
++	service.DB, service.AllService = db, &service.Service{}
++	t.Setenv("NEXTEC_VAULT_KEY", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x54}, 32)))
++	wd, _ := os.Getwd()
++	if err := os.Chdir(t.TempDir()); err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { _ = os.Chdir(wd); service.DB, service.AllService = oldDB, oldService; sqlDB.Close() })
++	if err := db.Create(&model.DeviceGroup{IdModel: model.IdModel{Id: 7}, Name: "Cliente A"}).Error; err != nil {
++		t.Fatal(err)
++	}
++	if err := db.Create(&model.DeviceGroup{IdModel: model.IdModel{Id: 3}, Name: "Acme"}).Error; err != nil {
++		t.Fatal(err)
++	}
++
++	const sec = "segredo-compartilhado-de-teste"
++	t.Setenv(genSecretEnv, sec)
++	r := gin.New()
++	ag := &NextecAgent{}
++	r.GET("/gen", ag.GenEnrollKey)
++	r.GET("/clients", ag.GenClients)
++	call := func(path string, headers map[string]string) (int, map[string]interface{}) {
++		req := httptest.NewRequest("GET", path, nil)
++		req.RemoteAddr = "172.20.0.9:1234"
++		for k, v := range headers {
++			req.Header.Set(k, v)
++		}
++		w := httptest.NewRecorder()
++		r.ServeHTTP(w, req)
++		out := map[string]interface{}{}
++		_ = json.Unmarshal(w.Body.Bytes(), &out)
++		return w.Code, out
++	}
++	good := map[string]string{"X-Nextec-Gen-Secret": sec}
++
++	// credencial do cliente
++	code, out := call("/gen?group=7", good)
++	key, _ := out["enroll_key"].(string)
++	want, _, _ := service.NextecClientEnrollKey(7)
++	if code != 200 || key == "" || key != want || !strings.HasPrefix(key, "nx2.7.") || out["client_name"] != "Cliente A" {
++		t.Fatalf("credencial por cliente: %d %v", code, out)
++	}
++	// global continua igual sem o parametro
++	code, out = call("/gen", good)
++	if k, _ := out["enroll_key"].(string); code != 200 || !strings.HasPrefix(k, "nx1.") {
++		t.Fatalf("global: %d %v", code, out)
++	}
++	// cliente inexistente, parametro invalido
++	if code, out = call("/gen?group=999", good); code != 404 || out["error"] != "client_not_found" || out["enroll_key"] != nil {
++		t.Fatalf("cliente inexistente: %d %v", code, out)
++	}
++	for _, bad := range []string{"0", "abc", "-1", "7;drop"} {
++		if code, _ = call("/gen?group="+bad, good); code != 400 {
++			t.Fatalf("group=%s: %d", bad, code)
++		}
++	}
++	// as mesmas travas do segredo valem para os dois caminhos e para a lista
++	for _, path := range []string{"/gen?group=7", "/clients"} {
++		if code, out = call(path, nil); code != 401 || out["enroll_key"] != nil || out["clients"] != nil {
++			t.Fatalf("%s sem segredo: %d %v", path, code, out)
++		}
++		if code, out = call(path, map[string]string{"X-Nextec-Gen-Secret": sec, "CF-Ray": "abc"}); code != 403 {
++			t.Fatalf("%s pelo tunel: %d %v", path, code, out)
++		}
++	}
++	// lista de clientes ordenada por nome
++	code, out = call("/clients", good)
++	list, _ := out["clients"].([]interface{})
++	if code != 200 || len(list) != 2 {
++		t.Fatalf("lista: %d %v", code, out)
++	}
++	first, _ := list[0].(map[string]interface{})
++	if first["name"] != "Acme" || first["id"].(float64) != 3 {
++		t.Fatalf("ordem da lista: %v", list)
++	}
++}
+diff --git a/http/controller/api/nextec_genkey.go b/http/controller/api/nextec_genkey.go
+index 06d1f3e..7ab5793 100644
+--- a/http/controller/api/nextec_genkey.go
++++ b/http/controller/api/nextec_genkey.go
+@@ -3,8 +3,11 @@ package api
+ import (
+ 	"crypto/sha256"
+ 	"crypto/subtle"
++	"errors"
+ 	"net/http"
+ 	"os"
++	"strconv"
++	"strings"
+ 
+ 	"github.com/gin-gonic/gin"
+ 	"github.com/lejianwen/rustdesk-api/v2/service"
+@@ -12,31 +15,66 @@ import (
+ 
+ const genSecretEnv = "NX_RDGEN_SHARED_SECRET"
+ 
+-// GenEnrollKey GET /api/nextec/gen/enroll-key
+-// Uso interno: o gerador (rdgen, mesma stack) busca a credencial de inscrição vigente a cada build.
+-// Exige o segredo compartilhado no cabeçalho X-Nextec-Gen-Secret e recusa tráfego vindo do túnel
+-// (CF-Connecting-IP ou CF-Ray), então a rota não funciona pela internet. A chave nunca vai para log.
+-func (a *NextecAgent) GenEnrollKey(c *gin.Context) {
++// genAuthorized aplica as travas das rotas internas do gerador: segredo configurado, tráfego fora do túnel
++// (CF-Connecting-IP / CF-Ray), limite de erros por IP e segredo igual ao esperado em tempo constante.
++// Quando recusa, já respondeu ao cliente.
++func genAuthorized(c *gin.Context) bool {
+ 	c.Header("Cache-Control", "no-store")
+ 	want := os.Getenv(genSecretEnv)
+ 	if want == "" {
+ 		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "gen_secret_not_configured"})
+-		return
++		return false
+ 	}
+ 	if c.GetHeader("CF-Connecting-IP") != "" || c.GetHeader("CF-Ray") != "" {
+ 		c.JSON(http.StatusForbidden, gin.H{"error": "internal_only"})
+-		return
++		return false
+ 	}
+ 	fk := "gen-key|" + c.ClientIP()
+ 	if !service.NextecFailCheck(fk) {
+ 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "too_many_failures"})
+-		return
++		return false
+ 	}
+ 	got := sha256.Sum256([]byte(c.GetHeader("X-Nextec-Gen-Secret")))
+ 	exp := sha256.Sum256([]byte(want))
+ 	if subtle.ConstantTimeCompare(got[:], exp[:]) != 1 {
+ 		service.NextecFailAdd(fk)
+ 		c.JSON(http.StatusUnauthorized, gin.H{"error": "gen_secret_invalid"})
++		return false
++	}
++	return true
++}
++
++// GenEnrollKey GET /api/nextec/gen/enroll-key[?group=<id do cliente>]
++// Uso interno: o gerador (rdgen, mesma stack) busca a credencial de inscrição a cada build.
++// Sem `group`: a credencial global (a máquina entra pendente). Com `group`: a credencial do cliente (a máquina entra
++// aprovada nesse cliente). Exige o segredo compartilhado no cabeçalho X-Nextec-Gen-Secret e recusa tráfego vindo do
++// túnel, então a rota não funciona pela internet. A chave nunca vai para log.
++func (a *NextecAgent) GenEnrollKey(c *gin.Context) {
++	if !genAuthorized(c) {
++		return
++	}
++	// "group" presente mas ilegivel (ex.: ponto e virgula, que o Go descarta) nunca cai na credencial global em silencio.
++	if strings.Contains(c.Request.URL.RawQuery, "group") && c.Query("group") == "" {
++		c.JSON(http.StatusBadRequest, gin.H{"error": "bad_request"})
++		return
++	}
++	if raw := c.Query("group"); raw != "" {
++		id, err := strconv.ParseUint(raw, 10, 32)
++		if err != nil || id == 0 {
++			c.JSON(http.StatusBadRequest, gin.H{"error": "bad_request"})
++			return
++		}
++		key, name, err := service.NextecClientEnrollKey(uint(id))
++		if errors.Is(err, service.ErrNextecNoGroup) {
++			c.JSON(http.StatusNotFound, gin.H{"error": "client_not_found"})
++			return
++		}
++		if err != nil || key == "" {
++			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
++			return
++		}
++		epoch, _ := service.NextecEnrollEpoch()
++		c.JSON(http.StatusOK, gin.H{"enroll_key": key, "epoch": epoch, "client_id": id, "client_name": name})
+ 		return
+ 	}
+ 	key, epoch, _, err := service.NextecEnrollKeyInfo()
+@@ -46,3 +84,12 @@ func (a *NextecAgent) GenEnrollKey(c *gin.Context) {
+ 	}
+ 	c.JSON(http.StatusOK, gin.H{"enroll_key": key, "epoch": epoch})
+ }
++
++// GenClients GET /api/nextec/gen/clients
++// Uso interno: lista de clientes (id e nome) para o seletor "Cliente" do gerador. Mesmas travas do enroll-key.
++func (a *NextecAgent) GenClients(c *gin.Context) {
++	if !genAuthorized(c) {
++		return
++	}
++	c.JSON(http.StatusOK, gin.H{"clients": service.NextecGenClients()})
++}
+diff --git a/http/router/api.go b/http/router/api.go
+index 664d150..1d57c9d 100644
+--- a/http/router/api.go
++++ b/http/router/api.go
+@@ -44,6 +44,7 @@ func ApiInit(g *gin.Engine) {
+ 		frg.POST("/nextec/agent/self-enroll", ag.SelfEnroll)
+ 		// Nextec: o gerador (rdgen, rede interna da stack) busca a credencial de inscrição vigente
+ 		frg.GET("/nextec/gen/enroll-key", ag.GenEnrollKey)
++		frg.GET("/nextec/gen/clients", ag.GenClients)
+ 		frg.POST("/nextec/agent/sync", ag.Sync)
+ 		frg.POST("/nextec/agent/password", ag.Password)
+ 		frg.POST("/nextec/agent/confirm", ag.Confirm)
+diff --git a/service/nextec_client_enroll.go b/service/nextec_client_enroll.go
+new file mode 100644
+index 0000000..b15254e
+--- /dev/null
++++ b/service/nextec_client_enroll.go
+@@ -0,0 +1,133 @@
++package service
++
++import (
++	"crypto/hmac"
++	"crypto/sha256"
++	"crypto/subtle"
++	"encoding/hex"
++	"strconv"
++	"strings"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++)
++
++// Credencial de inscrição por cliente (Nextec): nx2.<cliente>.<época>.<HMAC-SHA256(chave do cofre, "enroll2:"+cliente+":"+época)>.
++//
++// Usa a MESMA época da credencial global: girar a chave de inscrição invalida a global e todas as de cliente de uma vez.
++// A máquina que se inscreve com ela entra APROVADA no cliente da credencial e, quando o cliente tem regra de senha
++// (ou nunca teve nenhuma), já com a senha automática ligada. Não há atribuição manual: instalou, apareceu, está pronta.
++//
++// Segurança: a credencial só aprova máquinas que já enviaram sysinfo e heartbeat ao servidor (mesmas travas da global),
++// nunca move máquina que já pertence a outro cliente (nesse caso a máquina fica pendente para o admin decidir),
++// respeita o bloqueio por id + uuid e os limites de inscrição por hora. Vazou? Gire a chave no painel.
++
++const nextecClientEnrollPrefix = "nx2"
++
++func nextecClientEnrollMac(group uint, epoch int) (string, error) {
++	k, err := vaultKey()
++	if err != nil {
++		return "", err
++	}
++	m := hmac.New(sha256.New, k)
++	m.Write([]byte("enroll2:" + strconv.FormatUint(uint64(group), 10) + ":" + strconv.Itoa(epoch)))
++	return hex.EncodeToString(m.Sum(nil)), nil
++}
++
++func nextecClientEnrollBuild(group uint, epoch int) (string, error) {
++	mac, err := nextecClientEnrollMac(group, epoch)
++	if err != nil {
++		return "", err
++	}
++	return nextecClientEnrollPrefix + "." + strconv.FormatUint(uint64(group), 10) + "." + strconv.Itoa(epoch) + "." + mac, nil
++}
++
++// NextecClientEnrollKey devolve a credencial por cliente vigente e o nome do cliente. O cliente precisa existir.
++func NextecClientEnrollKey(groupID uint) (key, name string, err error) {
++	if groupID == 0 {
++		return "", "", ErrNextecNoGroup
++	}
++	var g model.DeviceGroup
++	if e := DB.First(&g, groupID).Error; e != nil || g.Id == 0 {
++		return "", "", ErrNextecNoGroup
++	}
++	epoch, _ := nextecEnrollEpochs()
++	key, err = nextecClientEnrollBuild(groupID, epoch)
++	return key, g.Name, err
++}
++
++// nextecClientEnrollKeyParse valida em tempo constante e devolve cliente e época.
++func nextecClientEnrollKeyParse(key string) (group uint, epoch int, ok bool) {
++	cur, min := nextecEnrollEpochs()
++	parts := strings.Split(key, ".")
++	shapeOK := len(key) <= nextecEnrollKeyMaxBytes && len(parts) == 4 && parts[0] == nextecClientEnrollPrefix
++	var g uint64
++	var e int
++	if shapeOK {
++		gg, err1 := strconv.ParseUint(parts[1], 10, 32)
++		ee, err2 := strconv.Atoi(parts[2])
++		if err1 != nil || err2 != nil || gg == 0 || ee <= 0 || ee > nextecEnrollMaxEpoch ||
++			strconv.FormatUint(gg, 10) != parts[1] || strconv.Itoa(ee) != parts[2] {
++			shapeOK = false
++		} else {
++			g, e = gg, ee
++		}
++	}
++	probeGroup, probeEpoch := uint(g), e
++	if !shapeOK {
++		probeGroup, probeEpoch = 1, cur
++	}
++	want, err := nextecClientEnrollBuild(probeGroup, probeEpoch)
++	if err != nil {
++		return 0, 0, false
++	}
++	match := subtle.ConstantTimeCompare([]byte(key), []byte(want)) == 1
++	if !shapeOK || !match || e < min || e > cur {
++		return 0, 0, false
++	}
++	return uint(g), e, true
++}
++
++// nextecClientAutoAssign aprova a máquina pendente no cliente da credencial. Qualquer recusa deixa a máquina pendente
++// (nunca falha a inscrição): máquina de outro cliente, cliente apagado, identidade divergente.
++func nextecClientAutoAssign(ip, peerID, uuid string, group uint) string {
++	ref := strconv.FormatUint(uint64(group), 10)
++	var pol model.NextecSecretPolicy
++	have := DB.Where("kind = ? AND ref = ?", "group", ref).First(&pol).Error == nil
++	opt := NextecAssignOptions{PeerID: peerID, ClientID: group, Uuid: uuid, IP: ip, Username: "inscricao-por-cliente"}
++	switch {
++	case have && pol.Enabled:
++		opt.Rule = "group"
++	case !have:
++		// Cliente que nunca teve regra de senha: liga na primeira máquina (como "Atribuir" faz no painel).
++		opt.Rule, opt.EnableGroupRule = "group", true
++	default:
++		// O admin desligou a regra de propósito: a máquina entra aprovada e sem senha automática.
++		opt.Rule = "none"
++	}
++	if _, err := NextecEnrollAssign(opt); err != nil {
++		if Logger != nil {
++			Logger.Warn("nextec: inscricao por cliente ficou pendente: ", err)
++		}
++		return NextecStatePending
++	}
++	return NextecStateAssigned
++}
++
++// NextecEnrollEpoch devolve a época vigente (a mesma da credencial global).
++func NextecEnrollEpoch() (int, int) { return nextecEnrollEpochs() }
++
++type NextecGenClient struct {
++	ID   uint   `json:"id"`
++	Name string `json:"name"`
++}
++
++// NextecGenClients lista os clientes (grupos de dispositivos) por nome, no máximo 1000.
++func NextecGenClients() []NextecGenClient {
++	var rows []*model.DeviceGroup
++	DB.Order("name asc").Limit(1000).Find(&rows)
++	out := make([]NextecGenClient, 0, len(rows))
++	for _, r := range rows {
++		out = append(out, NextecGenClient{ID: r.Id, Name: r.Name})
++	}
++	return out
++}
+diff --git a/service/nextec_client_enroll_test.go b/service/nextec_client_enroll_test.go
+new file mode 100644
+index 0000000..604d658
+--- /dev/null
++++ b/service/nextec_client_enroll_test.go
+@@ -0,0 +1,199 @@
++package service
++
++import (
++	"errors"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++)
++
++// Credencial por cliente (nx2): instalou, apareceu aprovada no cliente, com a senha automática ligada.
++
++func clientKey(t *testing.T, group uint) string {
++	t.Helper()
++	key, _, err := NextecClientEnrollKey(group)
++	if err != nil {
++		t.Fatal(err)
++	}
++	return key
++}
++
++func TestClientEnrollApprovesAndEnablesRuleOnFirstMachine(t *testing.T) {
++	db := enrollSetup(t)
++	tok := enrollToken()
++	res, err := NextecSelfEnroll("10.50.0.1", clientKey(t, 7), enrollPeer, enrollUUID, tok)
++	if err != nil || res.State != NextecStateAssigned || res.Token != tok {
++		t.Fatalf("inscricao por cliente: %#v %v", res, err)
++	}
++	d := deviceRow(t, db, enrollPeer)
++	if d.AwaitingApproval || d.EnrolledVia != "self" || d.Uuid != enrollUUID || !d.ForceRotate {
++		t.Fatalf("estado da maquina: %#v", d)
++	}
++	if peerGroupOf(t, db) != 7 {
++		t.Fatal("nao entrou no cliente da credencial")
++	}
++	if gp := groupPolicy(db, "7"); gp == nil || !gp.Enabled {
++		t.Fatalf("regra do cliente nao foi ligada: %#v", gp)
++	}
++	if auditCount(db, "self_enroll") != 1 || auditCount(db, "enroll_assign") != 1 {
++		t.Fatal("auditoria incompleta")
++	}
++}
++
++func TestClientEnrollIsIdempotentAndKeepsToken(t *testing.T) {
++	db := enrollSetup(t)
++	key, tok := clientKey(t, 7), enrollToken()
++	if _, err := NextecSelfEnroll("10.50.0.2", key, enrollPeer, enrollUUID, tok); err != nil {
++		t.Fatal(err)
++	}
++	res, err := NextecSelfEnroll("10.50.0.2", key, enrollPeer, enrollUUID, tok)
++	if err != nil || res.State != NextecStateAssigned || res.Token != tok {
++		t.Fatalf("repeticao: %#v %v", res, err)
++	}
++	if auditCount(db, "self_enroll") != 1 || auditCount(db, "enroll_assign") != 1 || auditCount(db, "client_rule_enable") != 1 {
++		t.Fatal("repetir enrolou ou atribuiu de novo")
++	}
++}
++
++func TestClientEnrollKeepsExistingEnabledRuleInterval(t *testing.T) {
++	db := enrollSetup(t)
++	if err := db.Create(&model.NextecSecretPolicy{Kind: "group", Ref: "7", Enabled: true, IntervalMinutes: 60}).Error; err != nil {
++		t.Fatal(err)
++	}
++	res, err := NextecSelfEnroll("10.50.0.3", clientKey(t, 7), enrollPeer, enrollUUID, enrollToken())
++	if err != nil || res.State != NextecStateAssigned {
++		t.Fatalf("%#v %v", res, err)
++	}
++	if gp := groupPolicy(db, "7"); gp == nil || !gp.Enabled || gp.IntervalMinutes != 60 {
++		t.Fatalf("regra do cliente alterada: %#v", gp)
++	}
++	if auditCount(db, "client_rule_enable") != 0 {
++		t.Fatal("religou regra que ja estava ligada")
++	}
++}
++
++func TestClientEnrollRespectsRuleTurnedOffByAdmin(t *testing.T) {
++	db := enrollSetup(t)
++	if err := db.Create(&model.NextecSecretPolicy{Kind: "group", Ref: "7", Enabled: true, IntervalMinutes: 60}).Error; err != nil {
++		t.Fatal(err)
++	}
++	if err := db.Model(&model.NextecSecretPolicy{}).Where("kind = ? AND ref = ?", "group", "7").Update("enabled", false).Error; err != nil {
++		t.Fatal(err)
++	}
++	res, err := NextecSelfEnroll("10.50.0.4", clientKey(t, 7), enrollPeer, enrollUUID, enrollToken())
++	if err != nil || res.State != NextecStateAssigned {
++		t.Fatalf("%#v %v", res, err)
++	}
++	if gp := groupPolicy(db, "7"); gp == nil || gp.Enabled {
++		t.Fatalf("a inscricao religou a regra que o admin desligou: %#v", gp)
++	}
++	d := deviceRow(t, db, enrollPeer)
++	if d.AwaitingApproval || d.ForceRotate {
++		t.Fatalf("maquina sem regra nao deve armar troca de senha: %#v", d)
++	}
++}
++
++func TestClientEnrollNeverMovesMachineOfAnotherClient(t *testing.T) {
++	db := enrollSetup(t)
++	if err := db.Model(&model.Peer{}).Where("id = ?", enrollPeer).Update("group_id", 8).Error; err != nil {
++		t.Fatal(err)
++	}
++	res, err := NextecSelfEnroll("10.50.0.5", clientKey(t, 7), enrollPeer, enrollUUID, enrollToken())
++	if err != nil || res.State != NextecStatePending {
++		t.Fatalf("maquina de outro cliente deve ficar pendente: %#v %v", res, err)
++	}
++	if peerGroupOf(t, db) != 8 {
++		t.Fatal("moveu a maquina de cliente sem pedido do admin")
++	}
++	if !deviceRow(t, db, enrollPeer).AwaitingApproval {
++		t.Fatal("aprovou maquina de outro cliente")
++	}
++}
++
++func TestClientEnrollBadKeys(t *testing.T) {
++	enrollSetup(t)
++	good := clientKey(t, 7)
++	parts := strings.Split(good, ".")
++	cases := map[string]string{
++		"mac alterado":       strings.Join([]string{parts[0], parts[1], parts[2], strings.Repeat("0", 64)}, "."),
++		"outro cliente":      strings.Join([]string{parts[0], "8", parts[2], parts[3]}, "."),
++		"cliente inexistente": clientKey(t, 7)[:0] + "nx2.99.1." + strings.Repeat("a", 64),
++		"epoca futura":       strings.Join([]string{parts[0], parts[1], "9", parts[3]}, "."),
++		"formato":            "nx2.7.1",
++		"zeros":              "nx2.0.1." + strings.Repeat("a", 64),
++		"global no lugar":    "nx2." + strings.TrimPrefix(enrollKeyOf(t), "nx1."),
++	}
++	for name, key := range cases {
++		_, err := NextecSelfEnroll("10.50.1.1", key, enrollPeer, enrollUUID, enrollToken())
++		if !errors.Is(err, ErrNextecEnrollKeyInvalid) {
++			t.Fatalf("%s: esperava chave invalida, veio %v", name, err)
++		}
++	}
++}
++
++func enrollKeyOf(t *testing.T) string {
++	t.Helper()
++	k, _, _, err := NextecEnrollKeyInfo()
++	if err != nil {
++		t.Fatal(err)
++	}
++	return k
++}
++
++func TestClientEnrollRotationRevokesClientKeys(t *testing.T) {
++	enrollSetup(t)
++	old := clientKey(t, 7)
++	if _, _, _, err := NextecEnrollKeyRotate(); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := NextecSelfEnroll("10.50.2.1", old, enrollPeer, enrollUUID, enrollToken()); !errors.Is(err, ErrNextecEnrollKeyInvalid) {
++		t.Fatalf("credencial de cliente anterior a rotacao ainda vale: %v", err)
++	}
++	res, err := NextecSelfEnroll("10.50.2.1", clientKey(t, 7), enrollPeer, enrollUUID, enrollToken())
++	if err != nil || res.State != NextecStateAssigned {
++		t.Fatalf("credencial nova: %#v %v", res, err)
++	}
++}
++
++func TestClientEnrollGlobalKeyStillEntersPending(t *testing.T) {
++	db := enrollSetup(t)
++	res, err := NextecSelfEnroll("10.50.3.1", enrollKeyOf(t), enrollPeer, enrollUUID, enrollToken())
++	if err != nil || res.State != NextecStatePending {
++		t.Fatalf("global: %#v %v", res, err)
++	}
++	if peerGroupOf(t, db) != 0 || !deviceRow(t, db, enrollPeer).AwaitingApproval {
++		t.Fatal("a credencial global nao pode aprovar sozinha")
++	}
++}
++
++func TestClientEnrollStillNeedsHeartbeatAndHonorsBlock(t *testing.T) {
++	db := enrollSetup(t)
++	if err := db.Model(&model.Peer{}).Where("id = ?", enrollPeer).Update("last_online_time", time.Now().Unix()-3600).Error; err != nil {
++		t.Fatal(err)
++	}
++	if _, err := NextecSelfEnroll("10.50.4.1", clientKey(t, 7), enrollPeer, enrollUUID, enrollToken()); !errors.Is(err, ErrNextecPeerNotRegistered) {
++		t.Fatalf("sem heartbeat recente: %v", err)
++	}
++	if err := db.Model(&model.Peer{}).Where("id = ?", enrollPeer).Update("last_online_time", time.Now().Unix()).Error; err != nil {
++		t.Fatal(err)
++	}
++	if err := db.Create(&model.NextecEnrollBlock{PeerId: enrollPeer, Uuid: enrollUUID, BlockedAt: time.Now().Unix()}).Error; err != nil {
++		t.Fatal(err)
++	}
++	if _, err := NextecSelfEnroll("10.50.4.1", clientKey(t, 7), enrollPeer, enrollUUID, enrollToken()); !errors.Is(err, ErrNextecEnrollBlocked) {
++		t.Fatalf("par bloqueado: %v", err)
++	}
++}
++
++func TestClientEnrollKeyForMissingClient(t *testing.T) {
++	enrollSetup(t)
++	if _, _, err := NextecClientEnrollKey(999); !errors.Is(err, ErrNextecNoGroup) {
++		t.Fatalf("cliente inexistente: %v", err)
++	}
++	clients := NextecGenClients()
++	if len(clients) != 2 || clients[0].Name != "Cliente A" || clients[1].ID != 8 {
++		t.Fatalf("lista de clientes: %#v", clients)
++	}
++}
+diff --git a/service/nextec_enroll.go b/service/nextec_enroll.go
+index 9744907..4dcf8a4 100644
+--- a/service/nextec_enroll.go
++++ b/service/nextec_enroll.go
+@@ -177,7 +177,21 @@ func NextecSelfEnroll(ip, enrollKey, peerID, uuid, proposedToken string) (*Nexte
+ 		!nextecEnrollTokenPattern.MatchString(proposedToken) || enrollKey == "" {
+ 		return nil, ErrNextecEnrollBadRequest
+ 	}
+-	epoch, ok := nextecEnrollKeyEpoch(enrollKey)
++	var clientGroup uint
++	var epoch int
++	var ok bool
++	if strings.HasPrefix(enrollKey, nextecClientEnrollPrefix+".") {
++		// Credencial por cliente: o cliente precisa existir (apagado = credencial morta).
++		clientGroup, epoch, ok = nextecClientEnrollKeyParse(enrollKey)
++		if ok {
++			var g model.DeviceGroup
++			if DB.First(&g, clientGroup).Error != nil || g.Id == 0 {
++				ok = false
++			}
++		}
++	} else {
++		epoch, ok = nextecEnrollKeyEpoch(enrollKey)
++	}
+ 	if !ok {
+ 		nextecFailAdd(ip)
+ 		return nil, ErrNextecEnrollKeyInvalid
+@@ -298,6 +312,10 @@ func NextecSelfEnroll(ip, enrollKey, peerID, uuid, proposedToken string) (*Nexte
+ 		if err != nil {
+ 			return nil, err
+ 		}
++		// Credencial por cliente: aprova no cliente na mesma chamada (também numa repetição que ainda estava pendente).
++		if clientGroup != 0 && result != nil && result.State == NextecStatePending {
++			result.State = nextecClientAutoAssign(ip, peerID, uuid, clientGroup)
++		}
+ 		return result, nil
+ 	}
+ 	if lastErr != nil {
