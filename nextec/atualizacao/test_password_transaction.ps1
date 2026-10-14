@@ -43,6 +43,8 @@ function Reset-Case {
 Reset-Case
 Invoke-NextecPasswordCycle $cfg
 Assert ($calls[0].body.capabilities -contains 'transaction_v1') 'Capability not negotiated'
+# Achado P2 (#94): o agente informa o intervalo real (60 s) para o painel calcular a janela de ativo.
+Assert ([int]$calls[0].body.interval_seconds -eq 60) 'Sync does not report interval_seconds = 60'
 Assert ($applied -eq 1 -and $generated -eq 1) 'New operation not applied once'
 Assert ($calls[-1].body.operation_id -eq 'op-1' -and $calls[-1].body.pending_version -eq 2) 'Confirmation does not identify operation'
 Assert (-not $cfg.applied_operation_id) 'Confirmed journal not cleared'

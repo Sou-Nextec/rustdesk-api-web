@@ -1,0 +1,850 @@
+Limite de consultas do agente por maquina e janela de "ativo" pelo intervalo real do agente
+
+Nextec 0036: 30 chamadas autenticadas por minuto por maquina (429 com Retry-After, nunca conta como falha do IP).
+O agente informa interval_seconds no /agent/sync (aditivo; sem o campo vale 5 min). Coluna aditiva
+sync_interval_seconds; agent_state usa a janela de 3 intervalos reais (minimo 180 s, maximo 900 s) e a lista do
+cofre devolve active_window_seconds. Fonte unica: o painel so exibe agent_state.
+
+diff --git a/http/controller/api/nextec_agent.go b/http/controller/api/nextec_agent.go
+index 245455f..56b16cc 100644
+diff --git a/http/controller/api/nextec_agent.go b/http/controller/api/nextec_agent.go
+index 245455f..56b16cc 100644
+--- a/http/controller/api/nextec_agent.go
++++ b/http/controller/api/nextec_agent.go
+@@ -3,6 +3,7 @@ package api
+ import (
+ 	"errors"
+ 	"net/http"
++	"strconv"
+ 
+ 	"github.com/gin-gonic/gin"
+ 	"github.com/lejianwen/rustdesk-api/v2/service"
+@@ -24,6 +25,8 @@ type nextecAgentForm struct {
+ 	// Probe: só confere se o token ainda vale (reinstalação). Não conta como consulta: não grava last_sync_at nem
+ 	// last_seen_at, não limpa last_error e não entrega operação.
+ 	Probe bool `json:"probe"`
++	// IntervalSeconds: intervalo real de consulta do agente (opcional; sem ele vale 5 min). Define a janela de "ativo".
++	IntervalSeconds int `json:"interval_seconds"`
+ }
+ 
+ func agentIP(c *gin.Context) string {
+@@ -37,6 +40,9 @@ func agentFail(c *gin.Context, err error) {
+ 	switch {
+ 	case errors.Is(err, service.ErrNextecTooManyFails):
+ 		c.JSON(http.StatusTooManyRequests, gin.H{"error": "too many failures"})
++	case errors.Is(err, service.ErrNextecRateLimited):
++		c.Header("Retry-After", strconv.Itoa(service.NextecRetryAfterSeconds(err)))
++		c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate limited"})
+ 	case errors.Is(err, service.ErrNextecAlreadyEnroll):
+ 		c.JSON(http.StatusConflict, gin.H{"error": "already enrolled"})
+ 	case errors.Is(err, service.ErrNextecPendingApproval):
+@@ -85,7 +91,8 @@ func (a *NextecAgent) Sync(c *gin.Context) {
+ 		c.JSON(http.StatusOK, p)
+ 		return
+ 	}
+-	s, err := service.NextecAgentSyncReport(agentIP(c), f.Id, f.Token, f.Capabilities, f.LastError)
++	s, err := service.NextecAgentSyncWith(agentIP(c), f.Id, f.Token, f.Capabilities,
++		service.NextecAgentReport{LastError: f.LastError, IntervalSeconds: f.IntervalSeconds})
+ 	if err != nil {
+ 		agentFail(c, err)
+ 		return
+diff --git a/http/controller/api/nextec_agent_interval_test.go b/http/controller/api/nextec_agent_interval_test.go
+new file mode 100644
+index 0000000..b78a65f
+--- /dev/null
++++ b/http/controller/api/nextec_agent_interval_test.go
+@@ -0,0 +1,72 @@
++package api
++
++import (
++	"bytes"
++	"crypto/sha256"
++	"encoding/base64"
++	"encoding/hex"
++	"encoding/json"
++	"net/http/httptest"
++	"os"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++	"gorm.io/driver/sqlite"
++	"gorm.io/gorm"
++	"gorm.io/gorm/logger"
++)
++
++// O sync aceita interval_seconds de forma aditiva: grava o intervalo real; sem o campo volta a 0 (legado, 5 min).
++func TestAgentSyncStoresIntervalSeconds(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := db.AutoMigrate(&model.Peer{}, &model.DeviceGroup{}, &model.NextecSecretPolicy{}, &model.NextecDeviceSecret{}, &model.NextecSecretAudit{}, &model.NextecAgentBootstrap{}, &model.NextecEnrollBlock{}); err != nil {
++		t.Fatal(err)
++	}
++	sqlDB, _ := db.DB()
++	sqlDB.SetMaxOpenConns(1)
++	oldDB, oldService := service.DB, service.AllService
++	service.DB, service.AllService = db, &service.Service{}
++	t.Setenv("NEXTEC_VAULT_KEY", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x54}, 32)))
++	wd, _ := os.Getwd()
++	if err := os.Chdir(t.TempDir()); err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { _ = os.Chdir(wd); service.DB, service.AllService = oldDB, oldService; sqlDB.Close() })
++
++	token := "token-http-interval"
++	sum := sha256.Sum256([]byte(token))
++	if err := db.Create(&model.NextecDeviceSecret{PeerId: "929292929", TokenHash: hex.EncodeToString(sum[:]), LastSeenAt: time.Now().Unix(), EnrolledVia: "legacy"}).Error; err != nil {
++		t.Fatal(err)
++	}
++	r := gin.New()
++	r.POST("/sync", (&NextecAgent{}).Sync)
++	call := func(body map[string]interface{}) int {
++		raw, _ := json.Marshal(body)
++		req := httptest.NewRequest("POST", "/sync", strings.NewReader(string(raw)))
++		req.Header.Set("Content-Type", "application/json")
++		w := httptest.NewRecorder()
++		r.ServeHTTP(w, req)
++		return w.Code
++	}
++	stored := func() int64 {
++		d := &model.NextecDeviceSecret{}
++		db.Where("peer_id = ?", "929292929").First(d)
++		return d.SyncIntervalSeconds
++	}
++	base := map[string]interface{}{"id": "929292929", "token": token, "capabilities": []string{"transaction_v1"}}
++	with := map[string]interface{}{"id": "929292929", "token": token, "capabilities": []string{"transaction_v1"}, "interval_seconds": 60}
++	if code := call(with); code != 200 || stored() != 60 {
++		t.Fatalf("sync com interval_seconds: %d %d", code, stored())
++	}
++	if code := call(base); code != 200 || stored() != 0 {
++		t.Fatalf("sync sem interval_seconds: %d %d", code, stored())
++	}
++}
+diff --git a/http/controller/api/nextec_agent_ratelimit_test.go b/http/controller/api/nextec_agent_ratelimit_test.go
+new file mode 100644
+index 0000000..e8145a1
+--- /dev/null
++++ b/http/controller/api/nextec_agent_ratelimit_test.go
+@@ -0,0 +1,34 @@
++package api
++
++import (
++	"net/http"
++	"net/http/httptest"
++	"testing"
++
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++)
++
++// O 429 do limite por máquina traz Retry-After e é distinguível do bloqueio por falhas do IP.
++func TestAgentFailMapsRateLimitToRetryAfter(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	recorder := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(recorder)
++	agentFail(c, service.NextecRateLimitedErrorForTest(17))
++	if recorder.Code != http.StatusTooManyRequests {
++		t.Fatalf("status %d", recorder.Code)
++	}
++	if got := recorder.Header().Get("Retry-After"); got != "17" {
++		t.Fatalf("Retry-After %q", got)
++	}
++	if body := recorder.Body.String(); body != `{"error":"rate limited"}` {
++		t.Fatalf("corpo %s", body)
++	}
++
++	recorder = httptest.NewRecorder()
++	c, _ = gin.CreateTestContext(recorder)
++	agentFail(c, service.ErrNextecTooManyFails)
++	if recorder.Code != http.StatusTooManyRequests || recorder.Header().Get("Retry-After") != "" || recorder.Body.String() != `{"error":"too many failures"}` {
++		t.Fatalf("bloqueio por falhas mudou: %d %q", recorder.Code, recorder.Body.String())
++	}
++}
+diff --git a/model/nextec_secret.go b/model/nextec_secret.go
+index 454be56..4ba4326 100644
+--- a/model/nextec_secret.go
++++ b/model/nextec_secret.go
+@@ -34,6 +34,9 @@ type NextecDeviceSecret struct {
+ 	// Vazio quando a última rodada não falhou; a troca confirmada também limpa.
+ 	LastError   string `gorm:"not null;default:''" json:"last_error"`
+ 	LastErrorAt int64  `gorm:"not null;default:0" json:"last_error_at"`
++	// SyncIntervalSeconds é o intervalo REAL de consulta informado pelo agente no sync (interval_seconds). 0 = agente
++	// que não informa (versão anterior, ritmo de 5 minutos). Define a janela de "ativo" (3 intervalos, 180 a 900 s).
++	SyncIntervalSeconds int64 `gorm:"not null;default:0" json:"sync_interval_seconds"`
+ 	// Inscrição global: false por padrão, então as linhas anteriores continuam aprovadas.
+ 	AwaitingApproval bool   `gorm:"not null;default:false;index" json:"awaiting_approval"`
+ 	EnrolledVia      string `gorm:"not null;default:''" json:"enrolled_via"` // self | bootstrap | legacy ("" = linha anterior, tratada como legacy)
+diff --git a/service/nextec_agent_interval_test.go b/service/nextec_agent_interval_test.go
+new file mode 100644
+index 0000000..7b26d25
+--- /dev/null
++++ b/service/nextec_agent_interval_test.go
+@@ -0,0 +1,90 @@
++package service
++
++import (
++	"testing"
++	"time"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++)
++
++func TestAgentActiveWindowFollowsTheRealInterval(t *testing.T) {
++	cases := []struct {
++		interval, want int64
++	}{
++		{0, 900},    // agente que não informa: 5 min x 3
++		{300, 900},  // legado explícito
++		{60, 180},   // agente novo de 1 minuto
++		{120, 360},  // 2 minutos
++		{30, 180},   // mínimo
++		{3600, 900}, // máximo
++	}
++	for _, c := range cases {
++		if got := NextecAgentActiveWindowSeconds(c.interval); got != c.want {
++			t.Errorf("janela(%d) = %d, esperado %d", c.interval, got, c.want)
++		}
++	}
++	for raw, want := range map[int]int64{0: 0, -5: 0, 10: 30, 60: 60, 99999: 3600} {
++		if got := NextecAgentIntervalSeconds(raw); got != want {
++			t.Errorf("intervalo(%d) = %d, esperado %d", raw, got, want)
++		}
++	}
++}
++
++// Agente novo (60 s) e legado (sem interval_seconds): o servidor decide com o intervalo real de cada um, e a lista
++// devolve agent_state e active_window_seconds para a tela só exibir. 240 s sem consulta: novo parado, legado ativo.
++func TestAgentStateUsesIntervalReportedInSync(t *testing.T) {
++	db, token := stateEnrolled(t)
++	if _, err := NextecAgentSyncWith(stateSyncIP, enrollPeer, token, stateCaps, NextecAgentReport{IntervalSeconds: 60}); err != nil {
++		t.Fatal(err)
++	}
++	d := stateDevice(t)
++	if d.AgentState != NextecAgentStateActive || d.SyncIntervalSeconds != 60 || d.ActiveWindowSeconds != 180 {
++		t.Fatalf("agente de 60 s: %#v", d)
++	}
++	now := time.Now().Unix()
++	setLastSync(t, db, now-150)
++	if got := stateDevice(t).AgentState; got != NextecAgentStateActive {
++		t.Fatalf("60 s, 150 s atrás: %s", got)
++	}
++	setLastSync(t, db, now-240)
++	if got := stateDevice(t).AgentState; got != NextecAgentStateStalled {
++		t.Fatalf("60 s, 240 s atrás tem de ser parado: %s", got)
++	}
++
++	// agente legado: sync sem interval_seconds volta a janela para 900 s
++	if _, err := NextecAgentSyncStateWithCapabilities(stateSyncIP, enrollPeer, token, stateCaps); err != nil {
++		t.Fatal(err)
++	}
++	d = stateDevice(t)
++	if d.SyncIntervalSeconds != 0 || d.ActiveWindowSeconds != 900 {
++		t.Fatalf("legado: %#v", d)
++	}
++	setLastSync(t, db, now-240)
++	if got := stateDevice(t).AgentState; got != NextecAgentStateActive {
++		t.Fatalf("legado, 240 s atrás tem de ser ativo: %s", got)
++	}
++	setLastSync(t, db, now-901)
++	if got := stateDevice(t).AgentState; got != NextecAgentStateStalled {
++		t.Fatalf("legado, 901 s atrás: %s", got)
++	}
++}
++
++func TestAgentIntervalColumnIsAdditive(t *testing.T) {
++	db := enrollSetup(t)
++	if err := db.Migrator().DropColumn(&model.NextecDeviceSecret{}, "sync_interval_seconds"); err != nil {
++		t.Fatal(err)
++	}
++	if err := db.Exec("INSERT INTO nextec_device_secrets (peer_id, token_hash, last_sync_at) VALUES (?, ?, ?)", "legacy-iv", "hash", time.Now().Unix()-240).Error; err != nil {
++		t.Fatal(err)
++	}
++	if err := db.AutoMigrate(&model.NextecDeviceSecret{}); err != nil {
++		t.Fatal(err)
++	}
++	var row model.NextecDeviceSecret
++	if err := db.Where("peer_id = ?", "legacy-iv").First(&row).Error; err != nil {
++		t.Fatal(err)
++	}
++	if row.SyncIntervalSeconds != 0 || NextecAgentStateAt(&row, time.Now().Unix()) != NextecAgentStateActive {
++		t.Fatalf("linha antiga: %#v", row)
++	}
++}
+diff --git a/service/nextec_agent_ratelimit.go b/service/nextec_agent_ratelimit.go
+new file mode 100644
+index 0000000..9fdeb59
+--- /dev/null
++++ b/service/nextec_agent_ratelimit.go
+@@ -0,0 +1,126 @@
++package service
++
++import (
++	"errors"
++	"strconv"
++	"sync"
++	"time"
++)
++
++// Limite de consultas do agente por máquina (Nextec).
++//
++// O agente consulta o painel uma vez por minuto (sync) e, só quando há troca, mais duas chamadas (password e confirm),
++// com repetições curtas na mesma execução. O limite abaixo é uma rede de segurança contra agente em laço (clone de VM com
++// o mesmo ID e token, script quebrado), não parte do fluxo normal: 30 chamadas por minuto por máquina, mais de 10 vezes
++// o pior caso legítimo.
++//
++// Diferente do contador de falhas por IP (nextecFailCheck), que só conta autenticações inválidas, este limite vale para
++// chamadas JÁ autenticadas e nunca soma ao contador de falhas: uma máquina legítima nunca aciona o anti-lixo do IP por
++// consultar com frequência, e uma máquina em laço não bloqueia as outras que compartilham o mesmo IP (NAT do cliente).
++const (
++	nextecAgentRateWindow = time.Minute
++	nextecAgentRateLimit  = 30
++	nextecAgentRateSweep  = 5 * time.Minute
++	nextecAgentRateLogGap = time.Minute
++)
++
++// ErrNextecRateLimited: limite de consultas da máquina atingido. Devolve 429 com Retry-After; não é falha de autenticação.
++var ErrNextecRateLimited = errors.New("agent rate limited")
++
++type nextecRateLimitedError struct{ retryAfter time.Duration }
++
++func (e *nextecRateLimitedError) Error() string { return ErrNextecRateLimited.Error() }
++
++func (e *nextecRateLimitedError) Is(target error) bool { return target == ErrNextecRateLimited }
++
++// NextecRetryAfterSeconds devolve em quantos segundos o agente pode tentar de novo (mínimo 1).
++func NextecRetryAfterSeconds(err error) int {
++	var limited *nextecRateLimitedError
++	if errors.As(err, &limited) {
++		seconds := int((limited.retryAfter + time.Second - 1) / time.Second)
++		if seconds < 1 {
++			seconds = 1
++		}
++		return seconds
++	}
++	return 1
++}
++
++var (
++	nextecRateMu        sync.Mutex
++	nextecRateEnabled   = true // só os testes de outras áreas do pacote desligam (init em nextec_agent_ratelimit_test.go)
++	nextecRateHits      = map[string][]time.Time{}
++	nextecRateDropped   = map[string]int{}
++	nextecRateLastLog   = map[string]time.Time{}
++	nextecRateLastSweep time.Time
++	nextecRateNow       = time.Now
++	// nextecRateLog é substituível nos testes; no servidor vai para o log da API, no máximo uma linha por minuto por máquina.
++	nextecRateLog = func(peerID string, dropped int) {
++		if Logger != nil {
++			Logger.Warn("nextec agent rate limited: peer=" + peerID + " dropped=" + strconv.Itoa(dropped) + " in the last minute")
++		}
++	}
++)
++
++// nextecRateAllow registra uma chamada autenticada da máquina e diz se ela passa. A janela é deslizante.
++func nextecRateAllow(peerID string) (bool, time.Duration) {
++	nextecRateMu.Lock()
++	if !nextecRateEnabled {
++		nextecRateMu.Unlock()
++		return true, 0
++	}
++	now := nextecRateNow()
++	nextecRateSweepLocked(now)
++	cutoff := now.Add(-nextecAgentRateWindow)
++	hits := nextecRateHits[peerID]
++	kept := hits[:0]
++	for _, t := range hits {
++		if t.After(cutoff) {
++			kept = append(kept, t)
++		}
++	}
++	if len(kept) >= nextecAgentRateLimit {
++		nextecRateHits[peerID] = kept
++		wait := kept[0].Add(nextecAgentRateWindow).Sub(now)
++		nextecRateDropped[peerID]++
++		emit := now.Sub(nextecRateLastLog[peerID]) >= nextecAgentRateLogGap
++		dropped := nextecRateDropped[peerID]
++		if emit {
++			nextecRateLastLog[peerID] = now
++			nextecRateDropped[peerID] = 0
++		}
++		nextecRateMu.Unlock()
++		if emit {
++			nextecRateLog(peerID, dropped)
++		}
++		return false, wait
++	}
++	nextecRateHits[peerID] = append(kept, now)
++	nextecRateMu.Unlock()
++	return true, 0
++}
++
++// nextecRateSweepLocked descarta máquinas sem chamadas recentes, para o mapa não crescer com o tempo.
++func nextecRateSweepLocked(now time.Time) {
++	if now.Sub(nextecRateLastSweep) < nextecAgentRateSweep {
++		return
++	}
++	nextecRateLastSweep = now
++	cutoff := now.Add(-nextecAgentRateWindow)
++	for peerID, hits := range nextecRateHits {
++		if len(hits) == 0 || !hits[len(hits)-1].After(cutoff) {
++			delete(nextecRateHits, peerID)
++			delete(nextecRateDropped, peerID)
++		}
++	}
++	for peerID, at := range nextecRateLastLog {
++		if now.Sub(at) > nextecAgentRateSweep {
++			delete(nextecRateLastLog, peerID)
++		}
++	}
++}
++
++// NextecRateLimitedErrorForTest monta o erro de limite com um Retry-After conhecido (usado pelos testes do controlador).
++func NextecRateLimitedErrorForTest(seconds int) error {
++	return &nextecRateLimitedError{retryAfter: time.Duration(seconds) * time.Second}
++}
+diff --git a/service/nextec_agent_ratelimit_test.go b/service/nextec_agent_ratelimit_test.go
+new file mode 100644
+index 0000000..1f6cc59
+--- /dev/null
++++ b/service/nextec_agent_ratelimit_test.go
+@@ -0,0 +1,262 @@
++package service
++
++import (
++	"errors"
++	"strconv"
++	"sync"
++	"sync/atomic"
++	"testing"
++	"time"
++)
++
++// Os testes antigos do pacote reutilizam o mesmo ID de máquina em dezenas de chamadas dentro do mesmo minuto; o limite
++// fica desligado para eles e os testes deste arquivo o ligam explicitamente (newFakeRateClock).
++func init() { nextecRateEnabled = false }
++
++// fakeRateClock substitui o relógio e o log do limitador e restaura tudo ao fim do teste.
++type fakeRateClock struct {
++	mu   sync.Mutex
++	now  time.Time
++	logs []int
++}
++
++func (c *fakeRateClock) Now() time.Time {
++	c.mu.Lock()
++	defer c.mu.Unlock()
++	return c.now
++}
++
++func (c *fakeRateClock) Advance(d time.Duration) {
++	c.mu.Lock()
++	c.now = c.now.Add(d)
++	c.mu.Unlock()
++}
++
++func (c *fakeRateClock) Logs() []int {
++	c.mu.Lock()
++	defer c.mu.Unlock()
++	return append([]int(nil), c.logs...)
++}
++
++func newFakeRateClock(t *testing.T) *fakeRateClock {
++	t.Helper()
++	clock := &fakeRateClock{now: time.Unix(1_800_000_000, 0)}
++	oldNow, oldLog := nextecRateNow, nextecRateLog
++	nextecRateMu.Lock()
++	nextecRateEnabled = true
++	nextecRateHits = map[string][]time.Time{}
++	nextecRateDropped = map[string]int{}
++	nextecRateLastLog = map[string]time.Time{}
++	nextecRateLastSweep = time.Time{}
++	nextecRateMu.Unlock()
++	nextecRateNow = clock.Now
++	nextecRateLog = func(peerID string, dropped int) {
++		clock.mu.Lock()
++		clock.logs = append(clock.logs, dropped)
++		clock.mu.Unlock()
++	}
++	nextecFailMu.Lock()
++	nextecFailures = map[string][]int64{}
++	nextecFailMu.Unlock()
++	t.Cleanup(func() {
++		nextecRateMu.Lock()
++		nextecRateEnabled = false
++		nextecRateMu.Unlock()
++		nextecRateNow, nextecRateLog = oldNow, oldLog
++	})
++	return clock
++}
++
++func ipFailures(ip string) int {
++	nextecFailMu.Lock()
++	defer nextecFailMu.Unlock()
++	return len(nextecFailures[ip])
++}
++
++// O ritmo do agente (uma consulta por minuto, durante horas) nunca é limitado e nunca soma ao contador de falhas do IP.
++func TestAgentOneSyncPerMinuteIsNeverLimitedNorCountedAsFailure(t *testing.T) {
++	clock := newFakeRateClock(t)
++	_, peerID, token := transactionTestDB(t, 1, 1, true)
++	ip := "rate-cadence-ip"
++	for i := 0; i < 240; i++ { // 4 horas
++		if _, err := NextecAgentSyncStateWithCapabilities(ip, peerID, token, []string{"transaction_v1"}); err != nil {
++			t.Fatalf("consulta %d bloqueada: %v", i, err)
++		}
++		clock.Advance(time.Minute)
++	}
++	if ipFailures(ip) != 0 || !nextecFailCheck(ip) {
++		t.Fatalf("consultas válidas acionaram o anti-lixo do IP: falhas=%d", ipFailures(ip))
++	}
++	if len(clock.Logs()) != 0 {
++		t.Fatalf("o ritmo normal gerou log de limite: %v", clock.Logs())
++	}
++}
++
++// Uma troca completa com repetições (sync, password x3, confirm x3, sync) cabe com folga na janela de um minuto.
++func TestAgentFullTransactionWithRetriesFitsTheLimit(t *testing.T) {
++	newFakeRateClock(t)
++	for i := 0; i < 12; i++ {
++		if ok, _ := nextecRateAllow("transaction-peer"); !ok {
++			t.Fatalf("chamada %d da transação foi limitada", i)
++		}
++	}
++}
++
++// Agente em laço: só a própria máquina leva 429, o IP não acumula falhas e as outras máquinas seguem normais.
++func TestAgentLoopIsLimitedPerMachineWithoutTouchingIPFailures(t *testing.T) {
++	clock := newFakeRateClock(t)
++	_, peerID, token := transactionTestDB(t, 1, 1, true)
++	ip := "rate-loop-ip"
++	allowed := 0
++	var limited error
++	for i := 0; i < nextecAgentRateLimit+20; i++ {
++		_, err := NextecAgentSyncStateWithCapabilities(ip, peerID, token, []string{"transaction_v1"})
++		if err == nil {
++			allowed++
++			continue
++		}
++		limited = err
++	}
++	if allowed != nextecAgentRateLimit {
++		t.Fatalf("passaram %d chamadas, esperado %d", allowed, nextecAgentRateLimit)
++	}
++	if !errors.Is(limited, ErrNextecRateLimited) || errors.Is(limited, ErrNextecTooManyFails) || errors.Is(limited, ErrNextecBadAgentAuth) {
++		t.Fatalf("erro de limite inesperado: %v", limited)
++	}
++	if seconds := NextecRetryAfterSeconds(limited); seconds < 1 || seconds > 60 {
++		t.Fatalf("Retry-After fora da janela: %d", seconds)
++	}
++	if ipFailures(ip) != 0 || !nextecFailCheck(ip) {
++		t.Fatalf("429 de máquina contou como falha do IP: falhas=%d", ipFailures(ip))
++	}
++	if ok, _ := nextecRateAllow("outra-maquina-no-mesmo-ip"); !ok {
++		t.Fatal("máquina em laço bloqueou outra máquina")
++	}
++	clock.Advance(nextecAgentRateWindow + time.Second)
++	if _, err := NextecAgentSyncStateWithCapabilities(ip, peerID, token, []string{"transaction_v1"}); err != nil {
++		t.Fatalf("a máquina não voltou ao normal depois da janela: %v", err)
++	}
++}
++
++// Credencial inválida continua sendo falha do IP e nunca ocupa a janela de uma máquina legítima.
++func TestAgentInvalidTokenStillCountsAsIPFailureAndNeverConsumesMachineWindow(t *testing.T) {
++	newFakeRateClock(t)
++	_, peerID, _ := transactionTestDB(t, 1, 1, true)
++	ip := "rate-bad-token-ip"
++	for i := 0; i < nextecFailureLimit; i++ {
++		if _, err := NextecAgentSyncStateWithCapabilities(ip, peerID, "token-errado", []string{"transaction_v1"}); !errors.Is(err, ErrNextecBadAgentAuth) {
++			t.Fatalf("tentativa %d: %v", i, err)
++		}
++	}
++	if _, err := NextecAgentSyncStateWithCapabilities(ip, peerID, "token-errado", []string{"transaction_v1"}); !errors.Is(err, ErrNextecTooManyFails) {
++		t.Fatalf("o anti-lixo do IP deixou de valer: %v", err)
++	}
++	nextecRateMu.Lock()
++	hits := len(nextecRateHits[peerID])
++	nextecRateMu.Unlock()
++	if hits != 0 {
++		t.Fatalf("tentativas inválidas ocuparam a janela da máquina: %d", hits)
++	}
++}
++
++// O log do limite não inunda: no máximo uma linha por minuto por máquina, com a contagem acumulada.
++func TestAgentRateLimitLogIsThrottled(t *testing.T) {
++	clock := newFakeRateClock(t)
++	for i := 0; i < nextecAgentRateLimit; i++ {
++		nextecRateAllow("laco")
++	}
++	for i := 0; i < 500; i++ {
++		if ok, _ := nextecRateAllow("laco"); ok {
++			t.Fatal("chamada acima do limite foi aceita")
++		}
++	}
++	if logs := clock.Logs(); len(logs) != 1 || logs[0] != 1 {
++		t.Fatalf("500 recusas no mesmo minuto geraram %v", logs)
++	}
++	// um minuto depois a janela esvaziou; enche de novo e a próxima recusa gera uma única linha nova
++	clock.Advance(nextecAgentRateLogGap + time.Second)
++	for i := 0; i < nextecAgentRateLimit; i++ {
++		nextecRateAllow("laco")
++	}
++	nextecRateAllow("laco")
++	nextecRateAllow("laco")
++	if logs := clock.Logs(); len(logs) != 2 {
++		t.Fatalf("esperava uma nova linha depois de um minuto: %v", logs)
++	}
++}
++
++// O mapa de janelas não cresce para sempre.
++func TestAgentRateLimitSweepsIdleMachines(t *testing.T) {
++	clock := newFakeRateClock(t)
++	for i := 0; i < 50; i++ {
++		nextecRateAllow("maquina-" + strconv.Itoa(i))
++	}
++	clock.Advance(nextecAgentRateSweep + nextecAgentRateWindow + time.Second)
++	nextecRateAllow("ativa")
++	nextecRateMu.Lock()
++	size := len(nextecRateHits)
++	nextecRateMu.Unlock()
++	if size != 1 {
++		t.Fatalf("máquinas ociosas não foram descartadas: %d", size)
++	}
++}
++
++// Acesso concorrente (rodar com -race): nunca passa mais que o limite por máquina.
++func TestAgentRateLimitConcurrent(t *testing.T) {
++	newFakeRateClock(t)
++	const peers, workers, calls = 8, 16, 50
++	var allowed [peers]int64
++	var wg sync.WaitGroup
++	for w := 0; w < workers; w++ {
++		wg.Add(1)
++		go func(w int) {
++			defer wg.Done()
++			for i := 0; i < calls; i++ {
++				p := (w + i) % peers
++				if ok, _ := nextecRateAllow("peer-" + strconv.Itoa(p)); ok {
++					atomic.AddInt64(&allowed[p], 1)
++				}
++			}
++		}(w)
++	}
++	wg.Wait()
++	for p := 0; p < peers; p++ {
++		if got := atomic.LoadInt64(&allowed[p]); got > nextecAgentRateLimit {
++			t.Fatalf("máquina %d passou %d chamadas (limite %d)", p, got, nextecAgentRateLimit)
++		}
++	}
++}
++
++// "Trocar agora": a primeira consulta depois do pedido (até 1 minuto) já recebe a operação de troca.
++func TestAgentRotateNowIsServedByTheNextOneMinuteSync(t *testing.T) {
++	clock := newFakeRateClock(t)
++	db, peerID, token := transactionTestDB(t, 1, 1, true)
++	ip := "rate-rotate-now-ip"
++	far := time.Now().Add(6 * time.Hour).Unix()
++	if err := db.Exec("UPDATE nextec_device_secrets SET next_rotation_at = ? WHERE peer_id = ?", far, peerID).Error; err != nil {
++		t.Fatal(err)
++	}
++	idle, err := NextecAgentSyncStateWithCapabilities(ip, peerID, token, []string{"transaction_v1"})
++	if err != nil || idle.Rotate || idle.Operation != nil {
++		t.Fatalf("antes do pedido não pode haver troca: %#v err=%v", idle, err)
++	}
++	if err := NextecSecretRotateNow(peerID); err != nil {
++		t.Fatal(err)
++	}
++	clock.Advance(time.Minute)
++	state, err := NextecAgentSyncStateWithCapabilities(ip, peerID, token, []string{"transaction_v1"})
++	if err != nil || !state.Rotate || state.Operation == nil || state.Operation.PendingVersion != 2 {
++		t.Fatalf("a consulta seguinte ao pedido não recebeu a troca: %#v err=%v", state, err)
++	}
++	if err := NextecAgentProposeTransaction(ip, peerID, token, state.Operation.OperationID, 2, "RotateNowPassword123456"); err != nil {
++		t.Fatal(err)
++	}
++	if err := NextecAgentConfirmTransaction(ip, peerID, token, state.Operation.OperationID, 2); err != nil {
++		t.Fatal(err)
++	}
++	clock.Advance(time.Minute)
++	after, err := NextecAgentSyncStateWithCapabilities(ip, peerID, token, []string{"transaction_v1"})
++	if err != nil || after.Rotate || after.Operation != nil {
++		t.Fatalf("depois de confirmar não pode haver nova troca: %#v err=%v", after, err)
++	}
++}
+diff --git a/service/nextec_agent_state.go b/service/nextec_agent_state.go
+index a95e329..4ace6ec 100644
+--- a/service/nextec_agent_state.go
++++ b/service/nextec_agent_state.go
+@@ -9,11 +9,17 @@ import (
+ )
+ 
+ // Estado do agente derivado de CONTATO REAL (consulta /agent/sync autenticada), nunca do cadastro.
+-// O agente consulta o painel a cada NextecAgentSyncCycle; passados NextecAgentActiveCycles ciclos sem consulta
+-// ele é tratado como parado. Quem decide é só o servidor: o painel web repete a regra apenas para o relógio da tela.
++// O agente informa no sync o intervalo REAL de consulta (interval_seconds); passados NextecAgentActiveCycles intervalos
++// sem consulta ele é tratado como parado. Agente que não informa (versão anterior) vale NextecAgentSyncCycle (5 min).
++// A janela fica entre NextecAgentMinActiveWindow e NextecAgentMaxActiveWindow. FONTE ÚNICA: o painel web só exibe o
++// agent_state calculado aqui, nunca recalcula a janela.
+ const (
+-	NextecAgentSyncCycle    = 5 * time.Minute
+-	NextecAgentActiveCycles = 3
++	NextecAgentSyncCycle       = 5 * time.Minute
++	NextecAgentActiveCycles    = 3
++	NextecAgentMinActiveWindow = 180 // segundos
++	NextecAgentMaxActiveWindow = 900 // segundos
++	nextecAgentMinInterval     = 30
++	nextecAgentMaxInterval     = 3600
+ 
+ 	NextecAgentStateActive          = "ativo"
+ 	NextecAgentStateStalled         = "parado"
+@@ -36,16 +42,46 @@ func NextecAgentErrorCode(raw string) string {
+ 	return raw
+ }
+ 
+-// NextecAgentStaleAfterSeconds é a janela (em segundos) em que uma consulta ainda conta como "ativo".
++// NextecAgentIntervalSeconds normaliza o interval_seconds enviado pelo agente: 0 (ou negativo) = não informado;
++// fora de 30..3600 s é limitado a esses extremos.
++func NextecAgentIntervalSeconds(raw int) int64 {
++	switch {
++	case raw <= 0:
++		return 0
++	case raw < nextecAgentMinInterval:
++		return nextecAgentMinInterval
++	case raw > nextecAgentMaxInterval:
++		return nextecAgentMaxInterval
++	}
++	return int64(raw)
++}
++
++// NextecAgentActiveWindowSeconds é a janela (em segundos) em que a última consulta ainda conta como "ativo":
++// 3 intervalos do agente (sem intervalo informado, 5 min), limitada a 180..900 s.
++func NextecAgentActiveWindowSeconds(interval int64) int64 {
++	if interval <= 0 {
++		interval = int64(NextecAgentSyncCycle / time.Second)
++	}
++	w := interval * NextecAgentActiveCycles
++	if w < NextecAgentMinActiveWindow {
++		w = NextecAgentMinActiveWindow
++	}
++	if w > NextecAgentMaxActiveWindow {
++		w = NextecAgentMaxActiveWindow
++	}
++	return w
++}
++
++// NextecAgentStaleAfterSeconds é a janela do agente que não informa intervalo (versão anterior): 900 s.
+ func NextecAgentStaleAfterSeconds() int64 {
+-	return int64(NextecAgentSyncCycle/time.Second) * NextecAgentActiveCycles
++	return NextecAgentActiveWindowSeconds(0)
+ }
+ 
+ // NextecAgentStateAt classifica a linha do cofre no instante `now` (segundos).
+ //   - sem_agente: sem linha ou sem token (nunca cadastrou, ou o admin removeu);
+ //   - pendente_aprovacao: inscrita sozinha, aguardando o admin atribuir a um cliente;
+-//   - ativo: consulta real (last_sync_at) há menos de 3 ciclos;
+-//   - parado: cadastrado, mas sem consulta há mais de 3 ciclos ou sem nenhuma consulta depois do cadastro.
++//   - ativo: consulta real (last_sync_at) dentro da janela (3 intervalos do agente, 180 a 900 s);
++//   - parado: cadastrado, mas sem consulta dentro da janela ou sem nenhuma consulta depois do cadastro.
+ func NextecAgentStateAt(d *model.NextecDeviceSecret, now int64) string {
+ 	if d == nil || d.TokenHash == "" {
+ 		return NextecAgentStateNone
+@@ -53,7 +89,7 @@ func NextecAgentStateAt(d *model.NextecDeviceSecret, now int64) string {
+ 	if d.AwaitingApproval {
+ 		return NextecAgentStatePendingApproval
+ 	}
+-	if d.LastSyncAt > 0 && now-d.LastSyncAt < NextecAgentStaleAfterSeconds() {
++	if d.LastSyncAt > 0 && now-d.LastSyncAt < NextecAgentActiveWindowSeconds(d.SyncIntervalSeconds) {
+ 		return NextecAgentStateActive
+ 	}
+ 	return NextecAgentStateStalled
+diff --git a/service/nextec_secret.go b/service/nextec_secret.go
+index fcd3e47..7e89434 100644
+--- a/service/nextec_secret.go
++++ b/service/nextec_secret.go
+@@ -294,6 +294,10 @@ func agentAuth(ip, peerID, token string) (*model.NextecDeviceSecret, error) {
+ 		nextecFailAdd(ip)
+ 		return nil, ErrNextecBadAgentAuth
+ 	}
++	// Máquina autenticada em laço: 429 só para ela, sem contar como falha do IP (ver nextec_agent_ratelimit.go).
++	if ok, wait := nextecRateAllow(peerID); !ok {
++		return nil, &nextecRateLimitedError{retryAfter: wait}
++	}
+ 	// A identidade gravada na inscrição tem de ser a do Peer atual: máquina trocada não recebe operação nem senha.
+ 	if !nextecDeviceIdentityOK(d) {
+ 		nextecIdentityAudit("agent_identity_conflict", peerID, ip, nextecIdentityDetail, 0, "")
+@@ -368,6 +372,17 @@ func NextecAgentSyncStateWithCapabilities(ip, peerID, token string, capabilities
+ 
+ // NextecAgentSyncReport é o sync com o código de erro da última tentativa do agente (lastError vazio limpa o erro).
+ func NextecAgentSyncReport(ip, peerID, token string, capabilities []string, lastError string) (*NextecAgentSync, error) {
++	return NextecAgentSyncWith(ip, peerID, token, capabilities, NextecAgentReport{LastError: lastError})
++}
++
++// NextecAgentReport reúne o que o agente informa no sync, além de id, token e capacidades (todos opcionais).
++type NextecAgentReport struct {
++	LastError       string // código estável da última tentativa ("" limpa)
++	IntervalSeconds int    // intervalo real de consulta do agente (0 = não informado: 5 min)
++}
++
++// NextecAgentSyncWith é o sync completo: grava o contato real, o último erro e o intervalo informado numa só escrita.
++func NextecAgentSyncWith(ip, peerID, token string, capabilities []string, report NextecAgentReport) (*NextecAgentSync, error) {
+ 	d, err := agentAuth(ip, peerID, token)
+ 	if err != nil {
+ 		return nil, err
+@@ -375,7 +390,7 @@ func NextecAgentSyncReport(ip, peerID, token string, capabilities []string, last
+ 	now := time.Now().Unix()
+ 	seen := DB.Model(&model.NextecDeviceSecret{}).
+ 		Where("id = ? AND peer_id = ? AND token_hash = ?", d.Id, peerID, d.TokenHash).
+-		Updates(nextecSyncSeen(now, lastError))
++		Updates(nextecSyncSeen(now, report))
+ 	if seen.Error != nil {
+ 		return nil, seen.Error
+ 	}
+@@ -410,9 +425,10 @@ func NextecAgentSyncReport(ip, peerID, token string, capabilities []string, last
+ 	return nextecAgentSyncTransaction(d.Id, peerID, d.TokenHash, enabled, interval)
+ }
+ 
+-func nextecSyncSeen(now int64, lastError string) map[string]interface{} {
+-	seen := map[string]interface{}{"last_seen_at": now, "last_sync_at": now, "last_error": "", "last_error_at": 0}
+-	if code := NextecAgentErrorCode(lastError); code != "" {
++func nextecSyncSeen(now int64, report NextecAgentReport) map[string]interface{} {
++	seen := map[string]interface{}{"last_seen_at": now, "last_sync_at": now, "last_error": "", "last_error_at": 0,
++		"sync_interval_seconds": NextecAgentIntervalSeconds(report.IntervalSeconds)}
++	if code := NextecAgentErrorCode(report.LastError); code != "" {
+ 		seen["last_error"], seen["last_error_at"] = code, now
+ 	}
+ 	return seen
+@@ -717,12 +733,15 @@ type NextecSecretDevice struct {
+ 	LastSeenAt     int64  `json:"last_seen_at"`
+ 	LastSyncAt     int64  `json:"last_sync_at"`
+ 	// AgentState: ativo | parado | pendente_aprovacao | sem_agente, calculado do último /agent/sync real.
+-	AgentState  string `json:"agent_state"`
+-	LastError   string `json:"last_error,omitempty"`
+-	LastErrorAt int64  `json:"last_error_at,omitempty"`
+-	ForceRotate bool   `json:"force_rotate"`
++	AgentState string `json:"agent_state"`
++	// Janela de "ativo" desta máquina (3 intervalos reais do agente, 180 a 900 s), para a tela só exibir.
++	ActiveWindowSeconds int64  `json:"active_window_seconds,omitempty"`
++	SyncIntervalSeconds int64  `json:"sync_interval_seconds,omitempty"`
++	LastError           string `json:"last_error,omitempty"`
++	LastErrorAt         int64  `json:"last_error_at,omitempty"`
++	ForceRotate         bool   `json:"force_rotate"`
+ 	// Inscrição global
+-	State       string `json:"state,omitempty"` // pending | assigned (vazio: máquina sem agente)
++	State       string `json:"state,omitempty"`     // pending | assigned (vazio: máquina sem agente)
+ 	StaleKey    bool   `json:"stale_key,omitempty"` // pendente inscrita com credencial já girada
+ 	Uuid        string `json:"uuid,omitempty"`      // só de pendentes: identidade gravada na inscrição
+ 	EnrolledVia string `json:"enrolled_via,omitempty"`
+@@ -806,6 +825,8 @@ func NextecSecretDevices() []*NextecSecretDevice {
+ 			dv.Version, dv.ActiveAt, dv.NextRotationAt = s.Version, s.ActiveAt, s.NextRotationAt
+ 			dv.LastSeenAt, dv.LastSyncAt, dv.ForceRotate = s.LastSeenAt, s.LastSyncAt, s.ForceRotate
+ 			dv.AgentState = NextecAgentStateAt(s, time.Now().Unix())
++			dv.ActiveWindowSeconds = NextecAgentActiveWindowSeconds(s.SyncIntervalSeconds)
++			dv.SyncIntervalSeconds = s.SyncIntervalSeconds
+ 			dv.LastError, dv.LastErrorAt = s.LastError, s.LastErrorAt
+ 		}
+ 		out = append(out, dv)

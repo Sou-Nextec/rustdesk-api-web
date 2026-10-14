@@ -470,9 +470,18 @@ function Get-NxLogLines {
     return @($text -split '\r?\n' | Where-Object { $_ })
   } catch { return @() }
 }
+function Get-NxFileHash {
+  param([string]$Path)
+  try {
+    $sha = [Security.Cryptography.SHA256]::Create()
+    try { return [BitConverter]::ToString($sha.ComputeHash([IO.File]::ReadAllBytes($Path))) } finally { $sha.Dispose() }
+  } catch { return '' }
+}
 function Wait-NxEnrollment {
   # Espera o coordenador (tarefa SYSTEM) cadastrar. Devolve activated, pending ou o codigo de falha do log.
-  param([string]$Root, [int]$LogLines0, [int]$Seconds, [scriptblock]$Sleep)
+  # -PreviousConfigHash (havia credencial antes): a credencial antiga fica no lugar ate o painel aceitar a nova, entao
+  # "agente-senha.json sem pendencia" so prova cadastro novo se o arquivo MUDOU (uma recusa 409 deixaria o antigo ali).
+  param([string]$Root, [int]$LogLines0, [int]$Seconds, [scriptblock]$Sleep, [string]$PreviousConfigHash)
   $failCodes = 'already_enrolled|manual_authorization_required|identity_conflict|invalid_input|invalid_panel|invalid_identity|invalid_bootstrap|protocol_error|unsafe_path|component_missing'
   $config = [IO.Path]::Combine($Root, 'agente-senha.json')
   $inputFile = [IO.Path]::Combine($Root, 'bootstrap.json')
@@ -480,11 +489,13 @@ function Wait-NxEnrollment {
   $log = [IO.Path]::Combine($Root, 'provisionamento-agente.log')
   $waited = 0
   while ($true) {
-    if ([IO.File]::Exists($config) -and -not [IO.File]::Exists($inputFile) -and -not [IO.File]::Exists($journal)) { return 'activated' }
     $new = @(Get-NxLogLines -Path $log | Select-Object -Skip $LogLines0)
     foreach ($l in $new) {
       if ($l -match ('\s(' + $failCodes + ')$')) { return $Matches[1] }
-      if ($l -match '\s(complete|already_configured)$') { return 'activated' }
+      if ($l -match '\s(complete|already_configured|agent_repaired)$') { return 'activated' }
+    }
+    if ([IO.File]::Exists($config) -and -not [IO.File]::Exists($inputFile) -and -not [IO.File]::Exists($journal)) {
+      if (-not $PreviousConfigHash -or (Get-NxFileHash -Path $config) -cne $PreviousConfigHash) { return 'activated' }
     }
     if ($waited -ge $Seconds) { return 'pending' }
     & $Sleep 3
@@ -838,6 +849,8 @@ function Invoke-NxActivation {
     $file = [IO.Path]::Combine($dir, 'bootstrap.json')
     New-NxProtectedFile -Path $file -Bytes ([Convert]::FromBase64String($DataB64))
     $logLines0 = @(Get-NxLogLines -Path ([IO.Path]::Combine($Root, 'provisionamento-agente.log'))).Count
+    $configHash0 = ''
+    if ($hadConfig) { $configHash0 = Get-NxFileHash -Path ([IO.Path]::Combine($Root, 'agente-senha.json')) }
     $argList = @('-Receber', '-ArquivoAutorizacao', $file, '-PastaDados', $Root)
     if ($replace) { $argList += '-SubstituirAgenteAntigo' }
     $r = & $Run $coord $argList
@@ -862,7 +875,7 @@ function Invoke-NxActivation {
     # 5) aciona o coordenador agora e confirma o cadastro (senao a tarefa conclui em ate 5 minutos)
     $state.CoordStarted = $true
     try { Start-ScheduledTask -TaskName $taskName -ErrorAction Stop } catch { Write-NxLog $Root 'tarefa_nao_iniciada' }
-    $result = Wait-NxEnrollment -Root $Root -LogLines0 $logLines0 -Seconds $WaitSeconds -Sleep $Sleep
+    $result = Wait-NxEnrollment -Root $Root -LogLines0 $logLines0 -Seconds $WaitSeconds -Sleep $Sleep -PreviousConfigHash $configHash0
     Write-NxLog $Root ('cadastro=' + $result)
     if ($result -eq 'activated') { $committed = $true; & $Say $M.ok; return 0 }
     if ($result -eq 'pending') { $committed = $true; & $Say $M.receivedPending; return 0 }
@@ -889,6 +902,8 @@ function Invoke-NxActivation {
       catch { $left = @('desfazer') }
       if ($left.Count -eq 0) {
         Write-NxLog $Root 'rollback_ok'
+        # o cadastro no painel (se o coordenador chegou a rodar) fica sem consulta e vira Parado sozinho em ate 15 min
+        if ($state.CoordStarted) { Write-NxLog $Root 'painel_sem_consulta_ficara_parado' }
         $null = & $Say $M.rolledBack
       } else {
         Write-NxLog $Root ('rollback_incompleto ' + ($left -join ','))
@@ -918,7 +933,7 @@ export const MESSAGES = {
   receivedPending: 'Autorização recebida. A ativação termina sozinha em até 5 minutos; confira em Senhas dos servidores no painel.',
   failed: 'Não foi possível ativar. Gere uma nova autorização no painel e tente de novo. Detalhes em ativar.log.',
   ok: 'Pronto: máquina ativada. Pode fechar.',
-  rolledBack: 'Nada foi mantido nesta máquina: o que esta execução instalou foi desfeito e o agente anterior (se havia) voltou ao que era.',
+  rolledBack: 'Nada foi mantido nesta máquina: o que esta execução instalou foi desfeito e o agente anterior (se havia) voltou ao que era. Se o painel chegou a registrar esta tentativa, ele passa a mostrar Agente cadastrado, mas sem contato em até 15 minutos; gere uma nova autorização e use Reinstalar agente.',
   rollbackIncomplete: 'Não foi possível desfazer tudo o que esta execução instalou. Não repita; contate o suporte Nextec. Detalhes em ativar.log.',
 }
 

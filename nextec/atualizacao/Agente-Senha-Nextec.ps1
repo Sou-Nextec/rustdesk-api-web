@@ -56,6 +56,11 @@ function Get-NextecPasswordTaskInterval {
   return (New-TimeSpan -Minutes $minutes)
 }
 
+# Intervalo real de consulta (segundos) informado ao painel no sync; 0 se o valor configurado for invalido.
+function Get-NextecSyncIntervalSeconds {
+  try { return [int](Get-NextecPasswordTaskInterval).TotalSeconds } catch { return 0 }
+}
+
 function Get-NextecServiceExecutablePath {
   param([Parameter(Mandatory)]$Service)
 
@@ -513,7 +518,8 @@ function Invoke-NextecApplyPassword([string]$Password) {
 
 function Invoke-NextecPasswordCycle([psobject]$Cfg) {
   $token = Revelar $Cfg.token
-  $state = Chamar '/api/nextec/agent/sync' @{id=$Cfg.id;token=$token;capabilities=@('transaction_v1')}
+  # interval_seconds (aditivo): o painel calcula a janela de "ativo" com o ritmo real deste agente (3 intervalos).
+  $state = Chamar '/api/nextec/agent/sync' @{id=$Cfg.id;token=$token;capabilities=@('transaction_v1');interval_seconds=(Get-NextecSyncIntervalSeconds)}
   if ($state.pending_approval -and -not $state.managed) {
     # Inscricao global: a maquina ja esta no painel, mas ainda sem atribuicao. Nunca rotaciona.
     if ($Cfg.enrollment_state -ne 'pending_approval') {

@@ -5,7 +5,8 @@
         <h2 class="nx-hero-title">{{ summary.text }}</h2>
         <ul v-if="summary.total" class="nx-chips" aria-label="Resumo das máquinas">
           <li v-if="summary.counts.client" class="nx-chip is-warn">{{ summary.counts.client }} sem cliente</li>
-          <li v-if="summary.counts.agent" class="nx-chip is-warn">{{ summary.counts.agent }} sem agente</li>
+          <li v-if="summary.counts.agent - summary.stalled" class="nx-chip is-warn">{{ summary.counts.agent - summary.stalled }} sem agente</li>
+          <li v-if="summary.stalled" class="nx-chip is-warn">{{ summary.stalled }} {{ summary.stalled === 1 ? 'agente parado' : 'agentes parados' }}</li>
           <li v-if="summary.counts.rule" class="nx-chip is-warn">{{ summary.counts.rule }} sem senha automática</li>
           <li v-if="summary.counts.ready" class="nx-chip is-ok">{{ summary.counts.ready }} {{ summary.counts.ready === 1 ? 'pronta' : 'prontas' }}</li>
         </ul>
@@ -20,7 +21,7 @@
       </button>
       <ol v-show="howOpen" id="nx-how-body" class="nx-how-list">
         <li><strong>Escolha o cliente.</strong> Diga de qual cliente é a máquina.</li>
-        <li><strong>Instale o agente.</strong> Baixe o arquivo, copie para o servidor e dê duplo clique como administrador.</li>
+        <li><strong>Instale o agente.</strong> Baixe o arquivo, copie para o servidor e dê duplo clique como administrador. Se o agente parar de consultar o painel, use <strong>Reinstalar agente</strong> (o mesmo arquivo).</li>
         <li><strong>Ligue a senha automática.</strong> A senha troca sozinha e o botão Conectar já entra sem digitar.</li>
       </ol>
     </section>
@@ -99,8 +100,8 @@
         </el-table-column>
         <el-table-column label="Próximo passo" min-width="250">
           <template #default="{ row }">
-            <machine-steps :device="row"/>
-            <el-button size="small" type="primary" class="nx-next" @click="onNext(row)">{{ nextStep(row).label }}</el-button>
+            <machine-steps :device="row" :now="nowSec"/>
+            <el-button size="small" type="primary" class="nx-next" @click="onNext(row)">{{ nextStep(row, nowSec).label }}</el-button>
           </template>
         </el-table-column>
         <el-table-column label="Ações" width="200" fixed="right">
@@ -142,26 +143,38 @@
         </el-table-column>
         <el-table-column label="Próximo passo" min-width="250">
           <template #default="{ row }">
-            <machine-steps :device="row"/>
-            <el-button size="small" type="primary" class="nx-next" @click="onNext(row)">{{ nextStep(row).label }}</el-button>
+            <machine-steps :device="row" :now="nowSec"/>
+            <el-button size="small" type="primary" class="nx-next" @click="onNext(row)">{{ nextStep(row, nowSec).label }}</el-button>
           </template>
         </el-table-column>
         <el-table-column label="Situação" min-width="230">
           <template #default="{ row }">
-            <div>
-              <template v-if="row.enrolled">
-                <span class="nx-dot" :class="seenRecently(row) ? 'is-on' : 'is-warn'" aria-hidden="true"></span>
-                <span>Agente {{ seenRecently(row) ? 'ativo' : 'sem contato' }}</span>
-                <span class="nx-muted nx-small"> · visto {{ ago(row.last_seen_at).toLowerCase() }}</span>
-                <div class="nx-muted nx-small nx-next-check">{{ nextCheckText(row) }}</div>
-              </template>
-              <span v-else class="nx-muted"><span class="nx-dot is-off" aria-hidden="true"></span>Agente não cadastrado</span>
+            <div v-if="contact(row).state === 'ativo'">
+              <span class="nx-dot is-on" aria-hidden="true"></span>
+              <span>{{ contact(row).headline }}</span>
+              <span class="nx-muted nx-small"> · {{ contact(row).detail }}</span>
+              <div class="nx-muted nx-small nx-next-check">{{ nextCheckText(row) }}</div>
             </div>
-            <div v-if="row.managed && row.enrolled" class="nx-small"><span class="nx-dot is-on" aria-hidden="true"></span>Senha troca a cada {{ every(row.interval_minutes) }}</div>
+            <div v-else-if="contact(row).state === 'parado'" class="nx-stalled" role="status">
+              <span class="nx-dot is-warn" aria-hidden="true"></span>
+              <span class="nx-warn-text">{{ contact(row).headline }}</span>
+              <div class="nx-small">{{ contact(row).detail }}</div>
+            </div>
+            <div v-else-if="contact(row).state === 'pendente_aprovacao'" class="nx-muted">
+              <span class="nx-dot is-warn" aria-hidden="true"></span>{{ contact(row).headline }}
+            </div>
+            <div v-else class="nx-muted"><span class="nx-dot is-off" aria-hidden="true"></span>{{ contact(row).headline }}</div>
+            <div v-if="row.managed && contact(row).state === 'ativo'" class="nx-small"><span class="nx-dot is-on" aria-hidden="true"></span>Senha troca a cada {{ every(row.interval_minutes) }}</div>
+            <div v-else-if="row.managed && contact(row).state === 'parado'" class="nx-small nx-warn-text"><span class="nx-dot is-warn" aria-hidden="true"></span>Regra pronta, mas o agente está parado</div>
             <div v-else-if="row.managed" class="nx-small nx-warn-text"><span class="nx-dot is-warn" aria-hidden="true"></span>Regra pronta, falta o agente</div>
             <div v-else class="nx-small nx-muted"><span class="nx-dot is-off" aria-hidden="true"></span>Senha automática desligada</div>
+            <div v-if="agentError(row) && contact(row).state !== 'sem_agente'" class="nx-agent-error nx-small" role="alert">
+              <span class="nx-dot is-warn" aria-hidden="true"></span>
+              <span class="nx-warn-text">{{ agentError(row).text }}</span>
+              <div>{{ agentError(row).action }}</div>
+            </div>
             <div v-if="row.has_password" class="nx-small nx-muted">Senha versão {{ row.version }}, trocada {{ ago(row.active_at).toLowerCase() }}<template v-if="row.managed">, próxima {{ until(row.next_rotation_at) }}</template></div>
-            <div v-else-if="row.managed && row.enrolled" class="nx-small nx-muted">Aguardando a primeira troca</div>
+            <div v-else-if="row.managed && contact(row).state === 'ativo' && !agentError(row)" class="nx-small nx-muted">Aguardando a primeira troca</div>
             <div v-if="row.force_rotate && row.enrolled" class="nx-small nx-warn-text nx-rotation-pending"><span class="nx-dot is-warn" aria-hidden="true"></span>Troca solicitada: começa em até 1 minuto</div>
           </template>
         </el-table-column>
@@ -174,13 +187,16 @@
               <el-tooltip :content="secretActionState(row).rotateReason" :disabled="secretActionState(row).canRotate" placement="top">
                 <span class="nx-disabled-action"><el-button size="small" :disabled="!secretActionState(row).canRotate" @click="rotate(row)">Trocar agora</el-button></span>
               </el-tooltip>
+              <el-tooltip v-if="contact(row).state === 'parado'" :content="REMOVE_AGENT_HELP" placement="top">
+                <el-button size="small" @click="onRow('unenroll', row)"><span class="nx-danger-text">Remover agente</span></el-button>
+              </el-tooltip>
               <el-dropdown trigger="click" @command="cmd => onRow(cmd, row)">
                 <el-button size="small" aria-label="Mais ações"><el-icon><el-icon-MoreFilled/></el-icon></el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
                     <el-dropdown-item v-if="!row.managed" command="on">Ligar senha automática</el-dropdown-item>
                     <el-dropdown-item v-else command="off">Desligar nesta máquina</el-dropdown-item>
-                    <el-dropdown-item v-if="row.enrolled" command="unenroll" divided><span class="nx-danger-text">Remover agente</span></el-dropdown-item>
+                    <el-dropdown-item v-if="row.enrolled && contact(row).state !== 'parado'" command="unenroll" divided><span class="nx-danger-text">Remover agente</span></el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
               </el-dropdown>
@@ -363,8 +379,11 @@
       <el-alert v-if="agentNeedsClient" type="warning" :closable="false" show-icon :title="NEEDS_CLIENT_NOTICE" class="nx-agent-warn">
         <el-button size="small" type="primary" @click="chooseFromAgent">Escolher cliente agora</el-button>
       </el-alert>
+      <el-alert v-if="!agentNeedsClient && agentChoice && agentChoice.agentActive" type="info" :closable="false" show-icon :title="agentChoice.notice" class="nx-agent-warn"/>
+      <el-alert v-else-if="!agentNeedsClient && agentChoice && agentChoice.agentStalled" type="warning" :closable="false" show-icon class="nx-agent-warn"
+                title="Este agente está cadastrado, mas parou de consultar o painel. Baixe o arquivo e execute no servidor para reinstalar: o agente novo substitui o parado e as senhas guardadas continuam."/>
       <div class="nx-agent-go">
-        <el-button type="primary" :loading="agent.loading" :disabled="!agent.peer || agentNeedsClient" @click="downloadActivation">Baixar arquivo de ativação</el-button>
+        <el-button type="primary" :loading="agent.loading" :disabled="!agent.peer || agentNeedsClient || !(agentChoice && agentChoice.canAuthorize)" @click="downloadActivation">{{ agentChoice && agentChoice.agentStalled ? 'Baixar arquivo para reinstalar' : 'Baixar arquivo de ativação' }}</el-button>
       </div>
       <p class="nx-help">A autorização vale por 15 minutos e só para a máquina escolhida. O app gerado pelo painel (com o agente) precisa estar instalado no servidor. Não envie o arquivo por link público.</p>
       <p v-if="agent.error" class="nx-error" role="alert">{{ agent.error }}</p>
@@ -400,6 +419,7 @@
   import { connectDevice } from '@/nextec/connect'
   import { nextCheck, createAutoRefresh } from '@/nextec/agent-cycle.mjs'
   import { createRotationWatch, ROTATION_NOTICE } from '@/nextec/rotation-watch.mjs'
+  import { agentContact, agentError, lastContactAt, REMOVE_AGENT_HELP } from '@/nextec/agent-state.mjs'
   import { list as groupList, create as groupCreate } from '@/api/device_group'
   import { list as peerList, update as peerUpdate } from '@/api/peer'
   import MachineSteps from './MachineSteps.vue'
@@ -460,7 +480,6 @@
     onTick: () => { nowSec.value = Math.floor(Date.now() / 1000) },
     onRefresh: () => load(true),
   })
-  const nextCheckText = (row) => nextCheck(row.last_seen_at, nowSec.value).text
   // Depois de "Trocar agora" (ou de ligar a senha): recarrega a lista a cada 15 s, só com a aba visível, até a versão da
   // senha mudar (ou 3 min), para o estado aparecer sozinho. Um único timer para todas as máquinas.
   const rotationWatch = createRotationWatch({
@@ -471,6 +490,9 @@
       ElMessage.success(`Senha trocada: ${row.alias || row.hostname || peerId}.`)
     },
   })
+  const nextCheckText = (row) => nextCheck(lastContactAt(row), nowSec.value).text
+  // Situação do agente a partir da última consulta REAL (last_sync_at), nunca do cadastro.
+  const contact = (row) => agentContact(row, nowSec.value)
   onMounted(() => { load(); refresher.start() })
   onBeforeUnmount(() => { refresher.stop(); rotationWatch.stop() })
   const reloadGroups = async () => {
@@ -479,7 +501,7 @@
   }
 
   // ---------- resumo e como funciona ----------
-  const summary = computed(() => overallSummary(devices.value))
+  const summary = computed(() => overallSummary(devices.value, nowSec.value))
   const HOW_KEY = 'nx-secrets-how-open'
   const readHow = () => { try { return localStorage.getItem(HOW_KEY) !== '0' } catch (e) { return true } }
   const howOpen = ref(readHow())
@@ -490,8 +512,8 @@
   const onCta = () => {
     const a = summary.value.cta && summary.value.cta.action
     if (a === 'show-key') return openKey()
-    const stage = { 'choose-client': 'client', 'install-agent': 'agent', 'enable-rule': 'rule' }[a]
-    const row = firstNeeding(devices.value, stage)
+    const stage = { 'choose-client': 'client', 'install-agent': 'agent', 'reinstall-agent': 'stalled', 'enable-rule': 'rule' }[a]
+    const row = firstNeeding(devices.value, stage, nowSec.value)
     if (row) { if (stage === 'client' && row.state === 'pending') tab.value = 'pending'; onNext(row) }
   }
   const onMore = (cmd) => {
@@ -503,9 +525,9 @@
   }
   // Um botão por máquina: o que ele faz depende só da etapa em que a máquina está.
   const onNext = async (row) => {
-    const a = nextStep(row).action
+    const a = nextStep(row, nowSec.value).action
     if (a === 'choose-client') openChoose(row)
-    else if (a === 'install-agent') openAgent(row.peer_id)
+    else if (a === 'install-agent' || a === 'reinstall-agent') openAgent(row.peer_id)
     else if (a === 'enable-rule') await enableRule(row)
     else if (a === 'connect') await connectDevice(row.peer_id)
   }
@@ -538,7 +560,6 @@
   const pageRows = computed(() => filtered.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value))
 
   const ago = (t) => (t ? timeAgo(t * 1000) : 'nunca')
-  const seenRecently = d => d.last_seen_at && (Date.now() / 1000 - d.last_seen_at) < 20 * 60
   const until = (t) => {
     if (!t) return 'em breve'
     const m = Math.round((t - Date.now() / 1000) / 60)
@@ -726,7 +747,8 @@
   const openAgent = (peer) => {
     Object.assign(agent, { visible: true, peer: typeof peer === 'string' ? peer : '', error: '' })
   }
-  const agentChoices = computed(() => agentOptions(devices.value))
+  const agentChoices = computed(() => agentOptions(devices.value, nowSec.value))
+  const agentChoice = computed(() => agentChoices.value.find(x => String(x.peer_id) === String(agent.peer)) || null)
   const agentNeedsClient = computed(() => {
     const o = agentChoices.value.find(x => String(x.peer_id) === String(agent.peer))
     return !!o && o.needsClient
@@ -744,7 +766,7 @@
       const bundle = activationBundle(r.data, id)
       const pkg = await getAgentPackage()
       downloadActivationCmd(buildActivationCmd(bundle, Date.now(), pkg), activationFileName(id))
-      ElMessage.success('Arquivo baixado. Copie para o servidor e dê duplo clique como administrador, em até 15 minutos. Ele instala o agente sozinho.')
+      ElMessage.success('Arquivo baixado. Copie para o servidor e dê duplo clique como administrador, em até 15 minutos. Ele instala ou reinstala o agente sozinho; o estado vira Ativo quando o agente consultar o painel.')
     } catch (e) { agent.error = friendlyError(e, 'Não foi possível autorizar esta máquina. Atualize a lista e tente de novo.') }
     finally { agent.loading = false }
   }
@@ -758,6 +780,7 @@
     agent_identity_conflict: 'Agente recusado: identidade da máquina mudou', enroll_reject: 'Rejeitou inscrição',
     enroll_block: 'Bloqueou máquina', enroll_unblock: 'Desbloqueou máquina', enroll_key_rotate: 'Girou a credencial de inscrição',
     agent_bootstrap_issue: 'Autorização individual emitida', agent_bootstrap_enroll: 'Agente cadastrado (autorização individual)',
+    agent_replaced_stale: 'Agente parado substituído (reinstalação)',
     app_policy_set: 'Mudou a política do app', app_policy_remove: 'Removeu a política do app', session_disconnect: 'Derrubou uma conexão',
     install_revoke: 'Invalidou comandos de instalação', ticket_settings: 'Mudou o pedido de chamado',
     support_upload: 'Enviou o app de suporte', support_delete: 'Tirou o app de suporte do ar', update_upload: 'Enviou versão do app', update_publish: 'Mudou a publicação do app', update_delete: 'Excluiu versão do app',

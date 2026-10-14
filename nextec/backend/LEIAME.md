@@ -259,7 +259,33 @@ tinha fim de linha CRLF e o `git apply` do Linux o rejeitava ("patch failed ... 
 O workflow `Imagem Nextec` agora aplica toda a série em ordem antes do build e aponta qual patch não aplica.
 
 
-## Patch 0037: limite de consultas do agente por máquina
+
+## Patch 0035: estado do agente derivado de contato real
+
+O cadastro (bootstrap ou inscrição) gravava `last_seen_at = agora` e o painel o tratava como "agente ativo". Se a instalação local
+era desfeita depois (rollback do `.cmd`), o painel mostrava "Tudo pronto" sem agente nenhum e recusava uma autorização nova.
+
+- **Coluna aditiva** `nextec_device_secrets.last_sync_at` (`AutoMigrate`, padrão 0, sem migração de dados). Só a consulta
+  `POST /api/nextec/agent/sync` autenticada a preenche; `last_seen_at` continua sendo "qualquer escrita". Rollback: remover o patch
+  deixa a coluna sem uso. Linha anterior à coluna: `last_sync_at = 0`, ou seja, `parado` se cadastrada, até o próximo sync.
+- **Estado:** `NextecAgentStateAt` devolve `ativo` (sync há menos de `NextecAgentActiveCycles` x `NextecAgentSyncCycle` = 3 x 5 min),
+  `parado` (cadastrado e sem sync recente ou sem sync nenhum), `pendente_aprovacao` ou `sem_agente`. `GET /nextec/secrets` ganhou
+  `devices[].agent_state` e `devices[].last_sync_at`.
+- **Autorização individual sobre agente parado:** `POST /nextec/secrets/bootstrap` e o consumo do código aceitam máquina cadastrada
+  cujo agente está `parado`. O consumo troca o token (compare-and-swap por `token_hash` e `last_sync_at`, na mesma transação que gasta
+  o código), mantém senhas e versões, zera `last_sync_at` e audita `agent_replaced_stale`. Agente `ativo` ou `pendente_aprovacao`
+  continua recusado (409 `agent active` no emitir; no usar o código não é gasto). ID, uuid, hash, prazo de 15 minutos e https
+  seguem como antes.
+- **Último erro do agente:** colunas aditivas `last_error` e `last_error_at`. `POST /api/nextec/agent/sync` aceita `last_error`
+  (opcional; código `^[a-z][a-z0-9_]{0,47}$`, fora disso grava `unknown_error`). Sync sem o campo, ou com ele vazio, limpa;
+  a confirmação da troca também limpa. `GET /nextec/secrets` devolve `devices[].last_error` e `last_error_at`.
+- **Sondagem da reinstalação:** `POST /api/nextec/agent/sync` com `probe:true` só confere o token e responde `{probe:true, agent_state, last_sync_at}`. Não grava `last_sync_at` nem `last_seen_at`, não limpa `last_error`, não entrega operação e audita `agent_probe` (detalhe `agent_state=...`, sem segredos). Token inválido continua 401 e conta no anti-lixo do IP. O provisionador usa a sondagem para escolher entre reparar a instalação local (token válido) e o bootstrap de substituição (401 ou `parado`).
+- **Série:** 0001..0035 aplicam limpas em ordem sobre `v2.6.29`. Toca `model/nextec_secret.go`, `service/nextec_secret.go`,
+  `service/nextec_bootstrap.go`, `http/controller/admin/nextec_bootstrap.go`, `http/controller/api/nextec_agent.go` e cria
+  `service/nextec_agent_state.go` (+ testes). Os patches seguintes (0036 intervalo real, 0037 nome do app) estendem a mesma chamada
+  do sync (`NextecAgentSyncWith` com `NextecAgentReport`), numa única escrita.
+- Testes: `go test -race ./service ...` (a imagem roda a lista do Dockerfile).
+## Patch 0036: limite de consultas do agente por máquina e janela de "ativo" pelo intervalo real
 
 O agente consulta o painel uma vez por minuto (2.11.21). O patch acrescenta, em `agentAuth`, uma janela deslizante em memória de **30 chamadas por minuto por máquina já autenticada** (`service/nextec_agent_ratelimit.go`).
 
@@ -268,4 +294,5 @@ O agente consulta o painel uma vez por minuto (2.11.21). O patch acrescenta, em 
 - Log: no máximo uma linha de aviso por minuto por máquina, com a contagem de chamadas recusadas. As janelas de máquinas ociosas são descartadas a cada 5 minutos (o mapa não cresce).
 - "Trocar agora" (`force_rotate`) já era atendido pela consulta seguinte do agente; o teste `TestAgentRotateNowIsServedByTheNextOneMinuteSync` fixa esse comportamento.
 - Testes: `service/nextec_agent_ratelimit_test.go` (ritmo de 1 por minuto por 4 horas, laço, concorrência com `-race`, log limitado, varredura) e `http/controller/api/nextec_agent_ratelimit_test.go` (429 com `Retry-After`).
-- Numeração: o 0035 já foi usado por `0035-inscricao-por-cliente` em ramos anteriores e o 0036 está reservado por `feat/conectar-abre-direto`; este é o 0037 para não colidir. Série validada sobre `v2.6.29`: 0001..0034 + 0037, e 0001..0034 + 0036 + 0037, aplicam limpas em ordem.
+- **Intervalo real do agente (fonte única do estado):** `POST /api/nextec/agent/sync` aceita `interval_seconds` (opcional, normalizado para 30..3600; sem o campo grava 0 = agente antigo de 5 min). Coluna aditiva `nextec_device_secrets.sync_interval_seconds`. `NextecAgentStateAt` considera ativo quando `last_sync_at` está dentro de 3 intervalos (`NextecAgentActiveWindowSeconds`, mínimo 180 s, máximo 900 s). `GET /nextec/secrets` devolve `devices[].active_window_seconds` e `sync_interval_seconds`; o painel só exibe `agent_state`. Testes: `service/nextec_agent_interval_test.go` e `http/controller/api/nextec_agent_interval_test.go`.
+- Numeração: série contígua na ordem da fila de merge (#93, #94, #92): 0035 estado do agente, 0036 este patch (antes 0037), 0037 nome do app por máquina. 0001..0036 aplicam limpas em ordem sobre `v2.6.29` (`git apply --check` sequencial).
