@@ -2,6 +2,16 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.17
+
+Achados da revisão do PR do instalador (rdgen #45). Nenhuma mudança de tela; vale para os próximos instaladores gerados.
+
+- **Reinstalação com outro painel:** o instalador sem inscrição de outro painel não herda mais a inscrição nem a credencial do painel anterior (comparação pelo host normalizado, ignorando caixa, porta padrão e barra final); a credencial de outro painel vai para `agente-senha.json.anterior` e o agente nunca a envia ao painel novo. A decisão fica no `coordenador.log`, sem segredos.
+- **Painel do instalador no registro:** além de `nextec-marker.json`, o painel do build é lido do valor `Painel` em `HKLM\SOFTWARE\Nextec\Agente` (https validado), depois dos arquivos e antes do padrão.
+- **Atualizador:** o `-UrlBase` definido no build é preservado; o painel da inscrição só é usado quando nenhum `-UrlBase` é dado.
+- **Tarefa de senha:** só vale com SYSTEM (`S-1-5-18`) e RunLevel Highest, uma única ação com o Windows PowerShell 5.1, `-File` do script esperado com `-Executar` e gatilho periódico de no máximo 5 minutos; qualquer divergência registra a tarefa de novo.
+- **Teste de integração do 401:** o agente real contra um painel falso local (HTTP) recebe 401 três vezes seguidas, descarta a credencial e refaz o cadastro; 1 ou 2 respostas 401 não descartam.
+
 ## 2.11.16
 
 Estabilização do agente no cliente (Fase 1). Nenhuma mudança de tela; vale para os próximos instaladores gerados.

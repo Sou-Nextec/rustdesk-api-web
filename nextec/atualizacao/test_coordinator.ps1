@@ -299,12 +299,15 @@ try {
   # Revisao #87 P2: tarefa de senha so vale com conta SYSTEM, powershell.exe do sistema, script e -Executar certos e 5 minutos.
   $rootTask = 'C:\ProgramData\Nextec\Acesso'
   $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-  function New-FakeTask($user = 'SYSTEM', $exe = $psExe, $args2 = '-NoProfile -ExecutionPolicy Bypass -File "C:\ProgramData\Nextec\Acesso\Agente-Senha-Nextec.ps1" -Executar', $interval = 'PT5M', $state = 'Ready') {
+  function New-FakeTask($user = 'SYSTEM', $exe = $psExe, $args2 = '-NoProfile -ExecutionPolicy Bypass -File "C:\ProgramData\Nextec\Acesso\Agente-Senha-Nextec.ps1" -Executar', $interval = 'PT5M', $state = 'Ready', $runLevel = 'Highest', $actionCount = 1, $triggerCount = 1) {
+    $repetition = [pscustomobject]@{ Interval = $interval }
+    $acts = @(); for ($k = 0; $k -lt $actionCount; $k++) { $acts += [pscustomobject]@{ Execute = $exe; Arguments = $args2 } }
+    $trigs = @(); for ($k = 0; $k -lt $triggerCount; $k++) { $trigs += [pscustomobject]@{ Repetition = $repetition } }
     [pscustomobject]@{
       State = $state
-      Principal = [pscustomobject]@{ UserId = $user }
-      Actions = @([pscustomobject]@{ Execute = $exe; Arguments = $args2 })
-      Triggers = @([pscustomobject]@{ Repetition = [pscustomobject]@{ Interval = $interval } })
+      Principal = [pscustomobject]@{ UserId = $user; RunLevel = $runLevel }
+      Actions = $acts
+      Triggers = $trigs
     }
   }
   Assert (Test-NextecAgentTaskShape -Task (New-FakeTask) -Root $rootTask) 'tarefa correta foi recusada'
@@ -315,6 +318,16 @@ try {
   Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -args2 '-File "C:\Outro\Agente-Senha-Nextec.ps1" -Executar') -Root $rootTask)) 'script em outra pasta nao pode valer'
   Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -interval 'PT1H') -Root $rootTask)) 'periodicidade diferente nao pode valer'
   Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -state 'Disabled') -Root $rootTask)) 'tarefa desabilitada nao pode valer'
+  # Achado 4 (revisao #45): configuracao completa da tarefa de senha
+  Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -runLevel 'Limited') -Root $rootTask)) 'RunLevel diferente de Highest nao pode valer'
+  Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -args2 '-NoProfile "C:\ProgramData\Nextec\Acesso\Agente-Senha-Nextec.ps1" -Executar') -Root $rootTask)) 'sem -File nao pode valer'
+  Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -args2 '-NoProfile -Command "& C:\ProgramData\Nextec\Acesso\Agente-Senha-Nextec.ps1" -Executar -File "C:\Outro\x.ps1"') -Root $rootTask)) 'script esperado fora do -File nao pode valer'
+  Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -interval 'PT10M') -Root $rootTask)) 'repeticao maior que 5 minutos nao pode valer'
+  Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -interval '') -Root $rootTask)) 'gatilho sem repeticao nao pode valer'
+  Assert (Test-NextecAgentTaskShape -Task (New-FakeTask -interval 'PT1M') -Root $rootTask) 'repeticao menor ou igual a 5 minutos deve valer'
+  Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -actionCount 2) -Root $rootTask)) 'duas acoes nao podem valer'
+  Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -triggerCount 0) -Root $rootTask)) 'sem gatilho nao pode valer'
+  Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -exe 'C:\Windows\System32\cmd.exe') -Root $rootTask)) 'cmd.exe nao pode valer'
   Write-Host 'PASS AgentTask_ShapeIsFullyValidated'
 
 
@@ -381,6 +394,67 @@ try {
     Assert (Test-Path -LiteralPath (Join-Path $dst 'nextec-marker.json')) "marcador nao foi copiado para a pasta de dados ($($caso.Nome))"
   }
   Write-Host 'PASS Coordinator_StaleEnrollmentPolicyAndMarkerCopy'
+  # Achado 1 (revisao #45): comparacao pelo host normalizado, credencial/estado do painel antigo saem, decisao no log sem segredo.
+  function New-PolicyCase {
+    param([string]$OldEnroll, [string]$NewEnroll, [string]$NewMarker, [string]$CredentialPanel)
+    New-CaseRoot
+    $src = Join-Path $script:root 'origem'; $dst = Join-Path $script:root 'dados'
+    New-Item -ItemType Directory -Path $src, $dst -Force | Out-Null
+    foreach ($name in @('Coordenar-Agente-Nextec.ps1', 'Provisionar-Agente-Nextec.ps1', 'Agente-Senha-Nextec.ps1')) {
+      Microsoft.PowerShell.Management\Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $src $name)
+    }
+    $utf8 = New-Object Text.UTF8Encoding($false)
+    if ($NewMarker) { [IO.File]::WriteAllText((Join-Path $src 'nextec-marker.json'), (@{ v = 1; app = 'XPTO'; upgrade_code = 'x'; painel = $NewMarker } | ConvertTo-Json -Compress), $utf8) }
+    if ($NewEnroll) { [IO.File]::WriteAllText((Join-Path $src 'inscricao.json'), (@{ v = 1; painel = $NewEnroll; chave = 'nx1.1.AbCdEf0123456789AbCdEf' } | ConvertTo-Json -Compress), $utf8) }
+    if ($OldEnroll) {
+      [IO.File]::WriteAllText((Join-Path $dst 'inscricao.json'), (@{ v = 1; painel = $OldEnroll; chave = 'nx1.1.AbCdEf0123456789AbCdEf' } | ConvertTo-Json -Compress), $utf8)
+      [IO.File]::WriteAllText((Join-Path $dst 'inscricao-estado.json'), '{}', $utf8)
+    }
+    if ($CredentialPanel) { [IO.File]::WriteAllText((Join-Path $dst 'agente-senha.json'), (@{ painel = $CredentialPanel; id = '536822159'; token = 'protegido' } | ConvertTo-Json -Compress), $utf8) }
+    $script:NextecReplacedFiles = @()
+    Register-NextecCoordinatorTask -Root $dst -SourceRoot $src | Out-Null
+    return $dst
+  }
+  $d = New-PolicyCase -OldEnroll 'https://velho.example' -NewMarker 'https://VELHO.example:443/'
+  Assert (Test-Path -LiteralPath (Join-Path $d 'inscricao.json')) 'mesmo host com caixa, porta padrao e barra foi tratado como outro painel'
+  Assert (($script:NextecDecisions -join '|') -match 'mantida \(mesmo painel') 'decisao de manter nao foi registrada'
+  $d = New-PolicyCase -OldEnroll 'https://velho.example' -NewEnroll 'https://novo.example' -CredentialPanel 'https://velho.example'
+  Assert (Test-Path -LiteralPath (Join-Path $d 'inscricao.json')) 'inscricao do instalador nao entrou'
+  Assert (-not (Test-Path -LiteralPath (Join-Path $d 'inscricao-estado.json'))) 'estado da inscricao do painel antigo ficou depois de nova inscricao de outro painel'
+  Assert ((-not (Test-Path -LiteralPath (Join-Path $d 'agente-senha.json'))) -and (Test-Path -LiteralPath (Join-Path $d 'agente-senha.json.anterior'))) 'credencial do painel antigo ficou ativa com a inscricao de outro painel'
+  $d = New-PolicyCase -OldEnroll 'https://velho.example' -NewEnroll 'https://velho.example' -CredentialPanel 'https://velho.example'
+  Assert (Test-Path -LiteralPath (Join-Path $d 'agente-senha.json')) 'credencial compativel (mesmo painel) foi descartada'
+  Assert (Test-Path -LiteralPath (Join-Path $d 'inscricao-estado.json')) 'estado do mesmo painel foi descartado'
+  $d = New-PolicyCase -OldEnroll 'https://velho.example' -NewMarker 'https://novo.example' -CredentialPanel 'https://velho.example'
+  Assert (-not (Test-Path -LiteralPath (Join-Path $d 'inscricao.json'))) 'instalador sem inscricao de outro painel herdou a inscricao antiga'
+  Assert ((-not (Test-Path -LiteralPath (Join-Path $d 'agente-senha.json'))) -and (Test-Path -LiteralPath (Join-Path $d 'agente-senha.json.anterior'))) 'credencial do painel antigo continuou valendo'
+  Assert (($script:NextecDecisions -join '|') -match 'removida') 'decisao de remover nao foi registrada'
+  Assert (($script:NextecDecisions -join '|') -notmatch 'nx1\.|protegido') 'decisao do log carrega segredo'
+  $d = New-PolicyCase -OldEnroll 'https://velho.example' -CredentialPanel 'https://velho.example'
+  Assert ((Test-Path -LiteralPath (Join-Path $d 'inscricao.json')) -and (Test-Path -LiteralPath (Join-Path $d 'agente-senha.json'))) 'sem painel no instalador nada deve ser descartado'
+  Write-Host 'PASS Coordinator_PanelPolicyCredentialAndLog'
+
+  # Achado 1, lado do provisionador: credencial gravada para OUTRO painel nao e reaproveitada quando o painel e configurado.
+  New-CaseRoot
+  $paths = Get-NextecProvisionPaths -Root $script:root
+  $oldFixo = $script:NextecPainelFixo; $oldOrigin = $script:NextecPainelOrigem
+  try {
+    $script:NextecPainelFixo = 'https://novo.example'; $script:NextecPainelOrigem = 'C:\inscricao.json'
+    Save-NextecAgentTokenConfig -Path $paths.AgentConfig -Panel 'https://velho.example' -Id '536822159' -Token 'token-do-painel-antigo'
+    try { Invoke-NextecProvisioning -Root $script:root -DiscoverId { '536822159' } -Now $script:current -RegisterAgent { param($path) } -AgentTaskReady { param($r) $true } | Out-Null } catch { }
+    Assert ($script:logs -contains 'panel_changed') 'credencial de outro painel nao foi aposentada'
+    Assert (Test-Path -LiteralPath ($paths.AgentConfig + '.anterior')) 'credencial de outro painel nao foi guardada ao lado'
+    New-CaseRoot
+    Save-NextecAgentTokenConfig -Path $paths.AgentConfig -Panel 'https://novo.example' -Id '536822159' -Token 'token-do-mesmo-painel'
+    $same = Invoke-NextecProvisioning -Root $script:root -DiscoverId { '536822159' } -Now $script:current -RegisterAgent { param($path) } -AgentTaskReady { param($r) $true }
+    Assert ($same -eq 'already_configured' -and $script:logs -notcontains 'panel_changed') 'credencial compativel (mesmo painel) foi aposentada'
+    New-CaseRoot
+    $script:NextecPainelOrigem = 'padrao'
+    Save-NextecAgentTokenConfig -Path $paths.AgentConfig -Panel 'https://velho.example' -Id '536822159' -Token 'token-sem-config'
+    Assert ((Invoke-NextecProvisioning -Root $script:root -DiscoverId { '536822159' } -Now $script:current -RegisterAgent { param($path) } -AgentTaskReady { param($r) $true }) -eq 'already_configured') 'sem painel configurado nada deve ser comparado (compat)'
+  } finally { $script:NextecPainelFixo = $oldFixo; $script:NextecPainelOrigem = $oldOrigin }
+  Write-Host 'PASS Provisioner_CredentialOfOtherPanelIsRetired'
+
 
   New-CaseRoot
   $enrollSource = Join-Path $script:root 'msi'
