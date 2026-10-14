@@ -16,7 +16,7 @@ A imagem é `ghcr.io/sou-nextec/rdgen-nextec`, publicada pelo repositório `Sou-
 | `GERADOR_SECRET_KEY` | opcional: deixe vazia e o gerador cria uma chave aleatória e guarda no volume |
 | `GERADOR_EMAILS_AUTORIZADOS` | e-mails que podem gerar clientes, separados por vírgula (ex.: `admin@nex.tec.br,tecnico@nex.tec.br`). Vazio = qualquer pessoa que passe pelo Access. **Recomendado preencher** |
 | `GERADOR_SH_SECRET` | o mesmo `SH_SECRET` do compose antigo, ou qualquer texto longo |
-| `GERADOR_ENROLL_KEY` | credencial de inscrição do painel (veja a seção abaixo). Vazia = o instalador sai sem a chave e o build avisa |
+| `GERADOR_ENROLL_KEY` | **opcional**. A credencial de inscrição é buscada sozinha no painel a cada build (veja a seção abaixo). Só preencha para forçar um valor fixo de reserva |
 
 Os nomes originais do rdgen (`GHBEARER`, `GHUSER`, `ZIP_PASSWORD`, `SECRET_KEY`, `SH_SECRET`, `GENURL`) também funcionam no
 Portainer; se os dois existirem, vale o `GERADOR_*`.
@@ -29,17 +29,18 @@ cd /caminho/do/rdgen && grep -E 'GHUSER|GHBEARER|ZIP_PASSWORD|SECRET_KEY|SH_SECR
 
 Se alguma obrigatória faltar, a página `/gerador/` mostra exatamente o que falta (em vez de erro genérico).
 
-### Credencial de inscrição (GERADOR_ENROLL_KEY)
+### Credencial de inscrição (automática)
 
-Sem ela o instalador gerado não leva a chave e a máquina não consegue se inscrever sozinha como pendente.
+Não há nada para copiar. A cada build o gerador pede a credencial vigente ao painel pela rede interna da stack
+(`GET http://rustdesk:21114/api/nextec/gen/enroll-key`, com o cabeçalho `X-Nextec-Gen-Secret` igual a `GERADOR_SH_SECRET`)
+e a embute no instalador. Se girar a credencial no painel, o próximo instalador já sai com a nova.
 
-1. No painel, abra **Segurança > Senhas dos servidores** e copie a credencial do card **Credencial de inscrição**.
-2. No Portainer, abra a stack > **Environment variables** e crie `GERADOR_ENROLL_KEY` com esse valor.
-3. Clique em **Update the stack** (marque **Pull and redeploy**).
-4. Gere um instalador **novo** no gerador. Instaladores antigos não têm a chave.
-
-Se a credencial for girada no painel, repita os passos 2 a 4 e gere os instaladores de novo. O servidor de API do instalador
-(`NX_API_SERVER`) já usa `URL_PAINEL` (HTTPS do painel, padrão `https://painel-remoto.nex.tec.br`); confira que `URL_PAINEL` está correta.
+* A rota só aceita o segredo compartilhado e recusa tráfego que veio pelo túnel da Cloudflare (cabeçalhos `CF-*`), então não
+  responde pela internet. Com `GERADOR_SH_SECRET` vazio ela fica desligada.
+* Se o painel estiver fora do ar na hora do build, o gerador usa `GERADOR_ENROLL_KEY` (override opcional). Sem nenhuma das duas,
+  o instalador sai sem a chave e o build avisa.
+* Instaladores gerados **antes** de uma rotação continuam sem poder inscrever máquinas novas; gere de novo.
+* O servidor de API do instalador (`NX_API_SERVER`) usa `URL_PAINEL` (padrão `https://painel-remoto.nex.tec.br`); confira que está correta.
 
 A API emite a autorização individual do agente (`/secrets/bootstrap`) com esse mesmo endereço (`NEXTEC_PANEL_URL`, vindo de `URL_PAINEL`). Ao trocar de domínio, altere só `URL_PAINEL` e reimplante: interface, API e instaladores novos passam a usar o novo endereço. Agentes já instalados continuam no `inscricao.json` antigo até serem reinstalados.
 
