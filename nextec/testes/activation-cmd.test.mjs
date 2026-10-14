@@ -93,7 +93,8 @@ test('PS 5.1: app Client-Nextec-Connect sem agente é achado pelo registro e diz
     const pf = join(d, 'PF'); mkdirSync(join(pf, 'Client-Nextec-Connect'), { recursive: true })
     const out = runFind(`$r = Find-NextecAgent -DataRoot '${join(d, 'PD', 'Nextec', 'Acesso')}' -ProgramRoots @('${pf}') -Entries @() -TaskArgs @() -Services @() -Marker ([pscustomobject]@{InstallDir='${join(pf, 'Client-Nextec-Connect')}';AppName='Client-Nextec-Connect'})
       'script=[' + $r.Script + '] app=[' + $r.App + '] n=' + $r.Searched.Count`)
-    assert.match(out, /script=\[\] app=\[Client-Nextec-Connect\] n=3/)
+    // n=2: pasta de dados e pasta do app (a varredura acha a mesma pasta do marcador e não repete)
+    assert.match(out, /script=\[\] app=\[Client-Nextec-Connect\] n=2/)
   } finally { rmSync(d, { recursive: true, force: true }) }
 })
 

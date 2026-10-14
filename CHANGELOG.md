@@ -2,6 +2,13 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.15
+
+- **Corrigido, Ativar-Nextec-<ID>.cmd parava em servidor real:** um programa qualquer com `InstallLocation` entre aspas no registro (`"C:\Program Files\X\"`) derrubava o script com "Cannot find drive '"C'". Agora todo caminho vindo de fora (registro de desinstalação 64/32 bits, marcador, serviços, tarefas agendadas, Program Files) passa por uma normalização única: tira espaços e aspas, expande `%VAR%`, remove barra final repetida e só aceita caminho local `X:\` válido. Entrada ruim (UNC, caractere inválido, variável sem valor) é ignorada e anotada; a busca continua e o agente é achado mesmo depois de várias entradas ruins.
+- **App instalado sem o agente é reconhecido:** pasta com o RustDesk (entrada de desinstalação, serviço `--service` ou Program Files) preenche o nome do app e a mensagem passa a ser "gere com o MESMO nome do app e instale por cima". Havendo serviço, vale só o app com serviço (o de suporte avulso não instala serviço); sem serviço, lista os encontrados.
+- **Mensagem curta:** a lista do que foi procurado não repete caminhos, mostra no máximo 5 na tela ("e outros N") e a lista completa vai para `Ativar-Nextec-<ID>-busca.log` ao lado do `.cmd` (ou no TEMP). Nenhum erro inesperado termina com exceção crua.
+- **Testes com dados sujos reais** rodando o PowerShell gerado no 5.1 (novo passo no job Windows do CI): parse do bloco embutido, tabela de casos sujos, leitura real da máquina e fumaça do `.cmd` completo.
+
 ## 2.11.14
 
 - **Trava de CI contra erros repetidos:** novo `nextec/testes/verificar-integridade.mjs` roda em todo PR e barra patch, `.sh`, Dockerfile ou workflow com CRLF, `.ps1` com acento sem BOM UTF-8 e série de patches fora do padrão. `.gitattributes` passou a forçar LF nesses tipos e em `.mjs`, `.js`, `.vue` e `.json`.
