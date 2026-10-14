@@ -11,6 +11,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, realpathSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildActivationCmd, FIND_AGENT_PS } from '../../src/nextec/activation-cmd.mjs'
+import { pacoteReal } from './pacote-agente.mjs'
 
 const AGENT = 'Coordenar-Agente-Nextec.ps1'
 const PS51 = process.platform === 'win32' ? 'powershell.exe' : null
@@ -49,8 +50,8 @@ const psArr = (items) => '@(' + items.map(psObj).join(',') + ')'
 const ignored = (o) => o.Searched.filter((s) => s.startsWith('ignorado: '))
 
 // ---------- 1) o PowerShell embutido passa no parser ----------
-test('o PowerShell embutido no .cmd passa no Parser::ParseInput sem erros', { skip: !PARSER }, () => {
-  const t = buildActivationCmd(bundle, Date.now())
+test('o PowerShell embutido no .cmd passa no Parser::ParseInput sem erros', { skip: !PARSER }, async () => {
+  const t = buildActivationCmd(bundle, Date.now(), await pacoteReal())
   const ps = t.slice(t.indexOf('#PS-BEGIN#'))
   const d = tmp()
   try {
@@ -244,14 +245,15 @@ test('PS 5.1: com os dados reais da máquina (registro, serviços, tarefas, Prog
 // ---------- 4) fumaça do .cmd completo ----------
 // Executa o bloco #PS-BEGIN# como o próprio .cmd faz, trocando só o necessário para não tocar na máquina:
 // administrador simulado, pasta de dados temporária e fontes de busca injetadas (sujas).
-function smoke(d, { dropNxid = false, services = null } = {}) {
-  let t = buildActivationCmd(bundle, Date.now())
+async function smoke(d, { dropNxid = false, services = null } = {}) {
+  let t = buildActivationCmd(bundle, Date.now(), await pacoteReal())
   if (dropNxid) t = t.replace(/rem NXID \d+\r\n/, '')
   const cmdFile = join(d, 'Ativar-Nextec-536822159.cmd'); writeFileSync(cmdFile, t, 'latin1')
   const pfDir = join(d, 'PF'); mkdirSync(join(pfDir, 'Outro App'), { recursive: true })
   let ps = t.slice(t.indexOf('#PS-BEGIN#'))
   const swaps = [
     [/^\$admin = .*$/m, '$admin = $true'],
+    [/^\$code = @\(Invoke-NxActivation.*$/m, "Write-Host ('ORQUESTRADOR app=[' + $found.App + '] pasta=[' + $found.AppPath + ']'); exit 0"],
     [/^\$root = .*$/m, `$root = ${q(join(d, 'PD', 'Nextec', 'Acesso'))}`],
     [/^\$pf = .*$/m, `$pf = @($null, '', '"Q:\\x"', ${q(pfDir)})`],
     [/-ProgramRoots \$pf\b/, `-ProgramRoots $pf -Entries ${psArr([
@@ -277,10 +279,10 @@ const semExcecao = (r) => {
   assert.ok(!r.stdout.includes('B'.repeat(43)), 'o código nunca aparece na saída')
 }
 
-test('PS 5.1: fumaça do .cmd com dados sujos termina com "não encontrado", lista curta na tela e completa no arquivo', { skip: !PS51 }, () => {
+test('PS 5.1: fumaça do .cmd com dados sujos termina com "não encontrado", lista curta na tela e completa no arquivo', { skip: !PS51 }, async () => {
   const d = tmp()
   try {
-    const r = smoke(d)
+    const r = await smoke(d)
     assert.equal(r.status, 1, `${r.stdout}\n${r.stderr}`)
     semExcecao(r)
     const linha = r.stdout.slice(r.stdout.indexOf('Procurei em: '))
@@ -298,28 +300,30 @@ test('PS 5.1: fumaça do .cmd com dados sujos termina com "não encontrado", lis
   } finally { rmSync(d, { recursive: true, force: true }) }
 })
 
-test('PS 5.1: fumaça do caso do servidor: Client-Nextec-Connect e Suporte Nextec sem agente pedem o MESMO nome do app', { skip: !PS51 }, () => {
+test('PS 5.1: fumaça do caso do servidor: Client-Nextec-Connect sem agente segue para a instalação do agente, sem pedir outro app', { skip: !PS51 }, async () => {
   const d = tmp()
   try {
     const pf = join(d, 'PF')
     const cli = join(pf, 'Client-Nextec-Connect'); mkdirSync(cli, { recursive: true })
     writeFileSync(join(cli, 'librustdesk.dll'), ''); writeFileSync(join(cli, 'Client-Nextec-Connect.exe'), '')
     const sup = join(pf, 'Suporte Nextec'); mkdirSync(sup, { recursive: true }); writeFileSync(join(sup, 'librustdesk.dll'), '')
-    let r = smoke(d, { services: `@([pscustomobject]@{Name='Client-Nextec-Connect';PathName=${q(`"${join(cli, 'Client-Nextec-Connect.exe')}" --service`)}})` })
-    assert.equal(r.status, 1, `${r.stdout}\n${r.stderr}`)
+    let r = await smoke(d, { services: `@([pscustomobject]@{Name='Client-Nextec-Connect';PathName=${q(`"${join(cli, 'Client-Nextec-Connect.exe')}" --service`)}})` })
+    assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`)
     semExcecao(r)
-    assert.match(r.stdout, /MESMO nome do app \(Client-Nextec-Connect\)/)
-    // sem serviço: lista os dois
-    r = smoke(d, { services: '@()' })
+    assert.match(r.stdout, /ORQUESTRADOR app=\[Client-Nextec-Connect\]/)
+    assert.doesNotMatch(r.stdout, /MESMO nome do app/)
+    // sem servico: ainda ha app (varredura de Program Files); o .cmd instala o agente nele
+    r = await smoke(d, { services: '@()' })
     semExcecao(r)
-    assert.match(r.stdout, /MESMO nome do app \(Client-Nextec-Connect ou Suporte Nextec\)/)
+    assert.match(r.stdout, /ORQUESTRADOR app=\[Client-Nextec-Connect ou Suporte Nextec\]/)
+    assert.doesNotMatch(r.stdout, /MESMO nome do app/)
   } finally { rmSync(d, { recursive: true, force: true }) }
 })
 
-test('PS 5.1: fumaça do .cmd com arquivo corrompido (sem NXID) mostra falha clara, sem exceção', { skip: !PS51 }, () => {
+test('PS 5.1: fumaça do .cmd com arquivo corrompido (sem NXID) mostra falha clara, sem exceção', { skip: !PS51 }, async () => {
   const d = tmp()
   try {
-    const r = smoke(d, { dropNxid: true })
+    const r = await smoke(d, { dropNxid: true })
     assert.equal(r.status, 1, `${r.stdout}\n${r.stderr}`)
     assert.equal(r.stderr.trim(), '', `exceção não tratada:\n${r.stderr}`)
     assert.doesNotMatch(r.stdout, /Exception|CategoryInfo|FullyQualifiedErrorId/)

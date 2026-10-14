@@ -299,12 +299,15 @@ try {
   # Revisao #87 P2: tarefa de senha so vale com conta SYSTEM, powershell.exe do sistema, script e -Executar certos e 5 minutos.
   $rootTask = 'C:\ProgramData\Nextec\Acesso'
   $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-  function New-FakeTask($user = 'SYSTEM', $exe = $psExe, $args2 = '-NoProfile -ExecutionPolicy Bypass -File "C:\ProgramData\Nextec\Acesso\Agente-Senha-Nextec.ps1" -Executar', $interval = 'PT5M', $state = 'Ready') {
+  function New-FakeTask($user = 'SYSTEM', $exe = $psExe, $args2 = '-NoProfile -ExecutionPolicy Bypass -File "C:\ProgramData\Nextec\Acesso\Agente-Senha-Nextec.ps1" -Executar', $interval = 'PT5M', $state = 'Ready', $runLevel = 'Highest', $actionCount = 1, $triggerCount = 1) {
+    $repetition = [pscustomobject]@{ Interval = $interval }
+    $acts = @(); for ($k = 0; $k -lt $actionCount; $k++) { $acts += [pscustomobject]@{ Execute = $exe; Arguments = $args2 } }
+    $trigs = @(); for ($k = 0; $k -lt $triggerCount; $k++) { $trigs += [pscustomobject]@{ Repetition = $repetition } }
     [pscustomobject]@{
       State = $state
-      Principal = [pscustomobject]@{ UserId = $user }
-      Actions = @([pscustomobject]@{ Execute = $exe; Arguments = $args2 })
-      Triggers = @([pscustomobject]@{ Repetition = [pscustomobject]@{ Interval = $interval } })
+      Principal = [pscustomobject]@{ UserId = $user; RunLevel = $runLevel }
+      Actions = $acts
+      Triggers = $trigs
     }
   }
   Assert (Test-NextecAgentTaskShape -Task (New-FakeTask) -Root $rootTask) 'tarefa correta foi recusada'
@@ -315,6 +318,16 @@ try {
   Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -args2 '-File "C:\Outro\Agente-Senha-Nextec.ps1" -Executar') -Root $rootTask)) 'script em outra pasta nao pode valer'
   Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -interval 'PT1H') -Root $rootTask)) 'periodicidade diferente nao pode valer'
   Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -state 'Disabled') -Root $rootTask)) 'tarefa desabilitada nao pode valer'
+  # Achado 4 (revisao #45): configuracao completa da tarefa de senha
+  Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -runLevel 'Limited') -Root $rootTask)) 'RunLevel diferente de Highest nao pode valer'
+  Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -args2 '-NoProfile "C:\ProgramData\Nextec\Acesso\Agente-Senha-Nextec.ps1" -Executar') -Root $rootTask)) 'sem -File nao pode valer'
+  Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -args2 '-NoProfile -Command "& C:\ProgramData\Nextec\Acesso\Agente-Senha-Nextec.ps1" -Executar -File "C:\Outro\x.ps1"') -Root $rootTask)) 'script esperado fora do -File nao pode valer'
+  Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -interval 'PT10M') -Root $rootTask)) 'repeticao maior que 5 minutos nao pode valer'
+  Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -interval '') -Root $rootTask)) 'gatilho sem repeticao nao pode valer'
+  Assert (Test-NextecAgentTaskShape -Task (New-FakeTask -interval 'PT1M') -Root $rootTask) 'repeticao menor ou igual a 5 minutos deve valer'
+  Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -actionCount 2) -Root $rootTask)) 'duas acoes nao podem valer'
+  Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -triggerCount 0) -Root $rootTask)) 'sem gatilho nao pode valer'
+  Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -exe 'C:\Windows\System32\cmd.exe') -Root $rootTask)) 'cmd.exe nao pode valer'
   Write-Host 'PASS AgentTask_ShapeIsFullyValidated'
 
 
@@ -381,6 +394,67 @@ try {
     Assert (Test-Path -LiteralPath (Join-Path $dst 'nextec-marker.json')) "marcador nao foi copiado para a pasta de dados ($($caso.Nome))"
   }
   Write-Host 'PASS Coordinator_StaleEnrollmentPolicyAndMarkerCopy'
+  # Achado 1 (revisao #45): comparacao pelo host normalizado, credencial/estado do painel antigo saem, decisao no log sem segredo.
+  function New-PolicyCase {
+    param([string]$OldEnroll, [string]$NewEnroll, [string]$NewMarker, [string]$CredentialPanel)
+    New-CaseRoot
+    $src = Join-Path $script:root 'origem'; $dst = Join-Path $script:root 'dados'
+    New-Item -ItemType Directory -Path $src, $dst -Force | Out-Null
+    foreach ($name in @('Coordenar-Agente-Nextec.ps1', 'Provisionar-Agente-Nextec.ps1', 'Agente-Senha-Nextec.ps1')) {
+      Microsoft.PowerShell.Management\Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $src $name)
+    }
+    $utf8 = New-Object Text.UTF8Encoding($false)
+    if ($NewMarker) { [IO.File]::WriteAllText((Join-Path $src 'nextec-marker.json'), (@{ v = 1; app = 'XPTO'; upgrade_code = 'x'; painel = $NewMarker } | ConvertTo-Json -Compress), $utf8) }
+    if ($NewEnroll) { [IO.File]::WriteAllText((Join-Path $src 'inscricao.json'), (@{ v = 1; painel = $NewEnroll; chave = 'nx1.1.AbCdEf0123456789AbCdEf' } | ConvertTo-Json -Compress), $utf8) }
+    if ($OldEnroll) {
+      [IO.File]::WriteAllText((Join-Path $dst 'inscricao.json'), (@{ v = 1; painel = $OldEnroll; chave = 'nx1.1.AbCdEf0123456789AbCdEf' } | ConvertTo-Json -Compress), $utf8)
+      [IO.File]::WriteAllText((Join-Path $dst 'inscricao-estado.json'), '{}', $utf8)
+    }
+    if ($CredentialPanel) { [IO.File]::WriteAllText((Join-Path $dst 'agente-senha.json'), (@{ painel = $CredentialPanel; id = '536822159'; token = 'protegido' } | ConvertTo-Json -Compress), $utf8) }
+    $script:NextecReplacedFiles = @()
+    Register-NextecCoordinatorTask -Root $dst -SourceRoot $src | Out-Null
+    return $dst
+  }
+  $d = New-PolicyCase -OldEnroll 'https://velho.example' -NewMarker 'https://VELHO.example:443/'
+  Assert (Test-Path -LiteralPath (Join-Path $d 'inscricao.json')) 'mesmo host com caixa, porta padrao e barra foi tratado como outro painel'
+  Assert (($script:NextecDecisions -join '|') -match 'mantida \(mesmo painel') 'decisao de manter nao foi registrada'
+  $d = New-PolicyCase -OldEnroll 'https://velho.example' -NewEnroll 'https://novo.example' -CredentialPanel 'https://velho.example'
+  Assert (Test-Path -LiteralPath (Join-Path $d 'inscricao.json')) 'inscricao do instalador nao entrou'
+  Assert (-not (Test-Path -LiteralPath (Join-Path $d 'inscricao-estado.json'))) 'estado da inscricao do painel antigo ficou depois de nova inscricao de outro painel'
+  Assert ((-not (Test-Path -LiteralPath (Join-Path $d 'agente-senha.json'))) -and (Test-Path -LiteralPath (Join-Path $d 'agente-senha.json.anterior'))) 'credencial do painel antigo ficou ativa com a inscricao de outro painel'
+  $d = New-PolicyCase -OldEnroll 'https://velho.example' -NewEnroll 'https://velho.example' -CredentialPanel 'https://velho.example'
+  Assert (Test-Path -LiteralPath (Join-Path $d 'agente-senha.json')) 'credencial compativel (mesmo painel) foi descartada'
+  Assert (Test-Path -LiteralPath (Join-Path $d 'inscricao-estado.json')) 'estado do mesmo painel foi descartado'
+  $d = New-PolicyCase -OldEnroll 'https://velho.example' -NewMarker 'https://novo.example' -CredentialPanel 'https://velho.example'
+  Assert (-not (Test-Path -LiteralPath (Join-Path $d 'inscricao.json'))) 'instalador sem inscricao de outro painel herdou a inscricao antiga'
+  Assert ((-not (Test-Path -LiteralPath (Join-Path $d 'agente-senha.json'))) -and (Test-Path -LiteralPath (Join-Path $d 'agente-senha.json.anterior'))) 'credencial do painel antigo continuou valendo'
+  Assert (($script:NextecDecisions -join '|') -match 'removida') 'decisao de remover nao foi registrada'
+  Assert (($script:NextecDecisions -join '|') -notmatch 'nx1\.|protegido') 'decisao do log carrega segredo'
+  $d = New-PolicyCase -OldEnroll 'https://velho.example' -CredentialPanel 'https://velho.example'
+  Assert ((Test-Path -LiteralPath (Join-Path $d 'inscricao.json')) -and (Test-Path -LiteralPath (Join-Path $d 'agente-senha.json'))) 'sem painel no instalador nada deve ser descartado'
+  Write-Host 'PASS Coordinator_PanelPolicyCredentialAndLog'
+
+  # Achado 1, lado do provisionador: credencial gravada para OUTRO painel nao e reaproveitada quando o painel e configurado.
+  New-CaseRoot
+  $paths = Get-NextecProvisionPaths -Root $script:root
+  $oldFixo = $script:NextecPainelFixo; $oldOrigin = $script:NextecPainelOrigem
+  try {
+    $script:NextecPainelFixo = 'https://novo.example'; $script:NextecPainelOrigem = 'C:\inscricao.json'
+    Save-NextecAgentTokenConfig -Path $paths.AgentConfig -Panel 'https://velho.example' -Id '536822159' -Token 'token-do-painel-antigo'
+    try { Invoke-NextecProvisioning -Root $script:root -DiscoverId { '536822159' } -Now $script:current -RegisterAgent { param($path) } -AgentTaskReady { param($r) $true } | Out-Null } catch { }
+    Assert ($script:logs -contains 'panel_changed') 'credencial de outro painel nao foi aposentada'
+    Assert (Test-Path -LiteralPath ($paths.AgentConfig + '.anterior')) 'credencial de outro painel nao foi guardada ao lado'
+    New-CaseRoot
+    Save-NextecAgentTokenConfig -Path $paths.AgentConfig -Panel 'https://novo.example' -Id '536822159' -Token 'token-do-mesmo-painel'
+    $same = Invoke-NextecProvisioning -Root $script:root -DiscoverId { '536822159' } -Now $script:current -RegisterAgent { param($path) } -AgentTaskReady { param($r) $true }
+    Assert ($same -eq 'already_configured' -and $script:logs -notcontains 'panel_changed') 'credencial compativel (mesmo painel) foi aposentada'
+    New-CaseRoot
+    $script:NextecPainelOrigem = 'padrao'
+    Save-NextecAgentTokenConfig -Path $paths.AgentConfig -Panel 'https://velho.example' -Id '536822159' -Token 'token-sem-config'
+    Assert ((Invoke-NextecProvisioning -Root $script:root -DiscoverId { '536822159' } -Now $script:current -RegisterAgent { param($path) } -AgentTaskReady { param($r) $true }) -eq 'already_configured') 'sem painel configurado nada deve ser comparado (compat)'
+  } finally { $script:NextecPainelFixo = $oldFixo; $script:NextecPainelOrigem = $oldOrigin }
+  Write-Host 'PASS Provisioner_CredentialOfOtherPanelIsRetired'
+
 
   New-CaseRoot
   $enrollSource = Join-Path $script:root 'msi'
@@ -444,6 +518,195 @@ try {
   $coordinatorText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Coordenar-Agente-Nextec.ps1') -Raw -Encoding UTF8
   Assert ($coordinatorText -match '\[string\]\$ArquivoAutorizacao' -and $coordinatorText -match 'Remove-Item -LiteralPath \$selectedPath') 'Coordinator lacks -ArquivoAutorizacao or temp file cleanup'
   Write-Host 'PASS Receive_UsesGivenFileWithoutDialogAndRemovesIt'
+
+  # --- agente antigo ou quebrado: so o .cmd do painel (-SubstituirAgenteAntigo) pode tira-lo do caminho ---
+  New-CaseRoot
+  $paths = Get-NextecProvisionPaths -Root $script:root
+  Save-NextecAgentTokenConfig -Path $paths.AgentConfig -Panel $script:NextecPainelFixo -Id '536822159' -Token 'token-antigo-secreto'
+  $script:probeCalls = 0
+  Receive-NextecBootstrapAuthorization -Root $script:root -ReadInput { $script:json } -DiscoverId { '536822159' } -ProbeToken { param($p,$i,$t) $script:probeCalls++; 401 } | Out-Null
+  Assert ($script:probeCalls -eq 0) 'Probe ran without -SubstituirAgenteAntigo'
+  Assert (Test-Path -LiteralPath $paths.AgentConfig -PathType Leaf) 'Normal receive removed the existing agent config'
+  Assert (@(Get-ChildItem -LiteralPath $script:root -Filter '*.antigo-*' -ErrorAction SilentlyContinue).Count -eq 0) 'Normal receive made a backup'
+  # Fluxo normal (sem o .cmd): a autorizacao segue ao painel (comportamento do #87); o painel recusa duplicata com 409
+  # e a credencial existente fica intacta (so e aposentada depois de o servidor aceitar o cadastro novo).
+  $rejected = $false
+  $post409 = {
+    param($panel, $body)
+    $script:postCalls.Add([pscustomobject]@{ panel = $panel; body = $body }) | Out-Null
+    $ex = [Net.WebException]::new('http 409')
+    $ex | Add-Member -NotePropertyName Response -NotePropertyValue ([pscustomobject]@{ StatusCode = 409 }) -Force
+    throw $ex
+  }
+  try { Invoke-TestProvision -Post $post409 } catch { $rejected = ($_.Exception.Message -eq 'already_enrolled') }
+  Assert ($rejected -and $script:postCalls.Count -eq 1) 'Normal flow no longer refuses a duplicate enrollment'
+  Assert ((Read-NextecAgentTokenConfig -Path $paths.AgentConfig).token -eq 'token-antigo-secreto') 'Normal flow changed the existing token'
+  Write-Host 'PASS OldAgent_NormalFlowStillRefusesDuplicate'
+
+  New-CaseRoot
+  $paths = Get-NextecProvisionPaths -Root $script:root
+  Save-NextecAgentTokenConfig -Path $paths.AgentConfig -Panel $script:NextecPainelFixo -Id '536822159' -Token 'token-antigo-secreto'
+  Set-Content -LiteralPath $paths.Journal -Value '{"formato":"antigo"}' -Encoding UTF8
+  $script:probeCalls = 0; $script:probeToken = ''
+  Receive-NextecBootstrapAuthorization -Root $script:root -ReadInput { $script:json } -DiscoverId { '536822159' } -SubstituirAgenteAntigo -ProbeToken { param($p,$i,$t) $script:probeCalls++; $script:probeToken = $t; 401 } | Out-Null
+  Assert ($script:probeCalls -eq 1 -and $script:probeToken -eq 'token-antigo-secreto') 'Refused token was not probed once with the stored token'
+  Assert (-not (Test-Path -LiteralPath $paths.AgentConfig)) 'Refused old agent config stayed in place'
+  Assert (-not (Test-Path -LiteralPath $paths.Journal)) 'Old journal stayed in place'
+  $backup = @(Get-ChildItem -LiteralPath $script:root -Filter 'agente-senha.json.antigo-*')
+  Assert ($backup.Count -eq 1 -and (Get-Content -LiteralPath $backup[0].FullName -Raw) -match 'token-antigo-secreto') 'Old token was not preserved in the backup'
+  Assert (@(Get-ChildItem -LiteralPath $script:root -Filter 'provisionamento-agente.json.antigo-*').Count -eq 1) 'Old journal was not preserved'
+  Assert (Test-Path -LiteralPath $paths.Input -PathType Leaf) 'Authorization input not written after replacing old agent'
+  Assert ($script:logs -contains 'old_agent_replaced') 'Replacement was not logged'
+  $result = Invoke-TestProvision
+  Assert ($result -eq 'complete' -and $script:postCalls.Count -eq 1) "Re-enrollment after replacement did not complete: $result"
+  $fresh = Read-NextecAgentTokenConfig -Path $paths.AgentConfig
+  Assert ($fresh.token -eq $script:postCalls[0].body.proposed_token -and $fresh.token -ne 'token-antigo-secreto') 'New agent config does not carry the new token'
+  Assert (@($script:logs | Where-Object { $_ -match 'token|secret' }).Count -eq 0) 'Secret-looking value in logs'
+  Write-Host 'PASS OldAgent_RefusedTokenIsBackedUpAndReenrolled'
+
+  foreach ($case in @(
+      @{ Name='Recognized'; Status=200; Expect='already_enrolled'; Log='old_agent_kept' },
+      @{ Name='OtherStatus'; Status=403; Expect='already_enrolled'; Log='old_agent_kept' },
+      @{ Name='Unreachable'; Status=0; Expect='panel_unreachable'; Log='panel_unreachable' }
+    )) {
+    New-CaseRoot
+    $paths = Get-NextecProvisionPaths -Root $script:root
+    Save-NextecAgentTokenConfig -Path $paths.AgentConfig -Panel $script:NextecPainelFixo -Id '536822159' -Token 'token-vivo'
+    $script:probeStatus = $case.Status
+    $rejected = $false
+    try { Receive-NextecBootstrapAuthorization -Root $script:root -ReadInput { $script:json } -DiscoverId { '536822159' } -SubstituirAgenteAntigo -ProbeToken { param($p,$i,$t) $script:probeStatus } | Out-Null }
+    catch { $rejected = ($_.Exception.Message -eq $case.Expect) }
+    Assert $rejected ('Switch replaced or mis-reported an agent the panel does not refuse: ' + $case.Name)
+    Assert ((Read-NextecAgentTokenConfig -Path $paths.AgentConfig).token -eq 'token-vivo') 'Recognized agent token changed'
+    Assert (-not (Test-Path -LiteralPath $paths.Input)) 'Authorization written although the agent was kept'
+    Assert ($script:logs -contains $case.Log) ('Missing log code ' + $case.Log)
+    Write-Host ('PASS OldAgent_Kept_' + $case.Name)
+  }
+
+  New-CaseRoot
+  $paths = Get-NextecProvisionPaths -Root $script:root
+  Set-Content -LiteralPath $paths.AgentConfig -Value 'isto nao e json {{{' -Encoding UTF8
+  $script:probeCalls = 0
+  Receive-NextecBootstrapAuthorization -Root $script:root -ReadInput { $script:json } -DiscoverId { '536822159' } -SubstituirAgenteAntigo -ProbeToken { param($p,$i,$t) $script:probeCalls++; 200 } | Out-Null
+  Assert ($script:probeCalls -eq 0 -and -not (Test-Path -LiteralPath $paths.AgentConfig) -and (Test-Path -LiteralPath $paths.Input)) 'Unreadable old config was not replaced without asking the panel'
+  New-CaseRoot
+  $paths = Get-NextecProvisionPaths -Root $script:root
+  Save-NextecAgentTokenConfig -Path $paths.AgentConfig -Panel $script:NextecPainelFixo -Id '999999999' -Token 'token-de-outro-id'
+  $script:probeCalls = 0
+  Receive-NextecBootstrapAuthorization -Root $script:root -ReadInput { $script:json } -DiscoverId { '536822159' } -SubstituirAgenteAntigo -ProbeToken { param($p,$i,$t) $script:probeCalls++; 200 } | Out-Null
+  Assert ($script:probeCalls -eq 0 -and -not (Test-Path -LiteralPath $paths.AgentConfig) -and (Test-Path -LiteralPath $paths.Input)) 'Config of another ID was not replaced'
+  Write-Host 'PASS OldAgent_UnreadableOrOtherIdIsReplaced'
+
+  New-CaseRoot
+  $paths = Get-NextecProvisionPaths -Root $script:root
+  Save-NextecAgentTokenConfig -Path $paths.AgentConfig -Panel $script:NextecPainelFixo -Id '536822159' -Token 'token-antigo-secreto'
+  $script:probeCalls = 0
+  $rejected = $false
+  try { Receive-NextecBootstrapAuthorization -Root $script:root -ReadInput { $script:json } -DiscoverId { '111111111' } -SubstituirAgenteAntigo -ProbeToken { param($p,$i,$t) $script:probeCalls++; 401 } | Out-Null } catch { $rejected = ($_.Exception.Message -eq 'identity_conflict') }
+  Assert ($rejected -and $script:probeCalls -eq 0 -and (Test-Path -LiteralPath $paths.AgentConfig)) 'Authorization for another machine touched the existing agent'
+  $rejected = $false
+  try { Receive-NextecBootstrapAuthorization -Root $script:root -ReadInput { '{"painel":"https://outro.exemplo"}' } -DiscoverId { '536822159' } -SubstituirAgenteAntigo -ProbeToken { param($p,$i,$t) $script:probeCalls++; 401 } | Out-Null } catch { $rejected = $true }
+  Assert ($rejected -and $script:probeCalls -eq 0 -and (Test-Path -LiteralPath $paths.AgentConfig)) 'Invalid authorization touched the existing agent'
+  Write-Host 'PASS OldAgent_InvalidAuthorizationNeverTouchesExistingAgent'
+
+  New-CaseRoot
+  $coordinatorText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Coordenar-Agente-Nextec.ps1') -Raw -Encoding UTF8
+  $workerText = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Provisionar-Agente-Nextec.ps1') -Raw -Encoding UTF8
+  Assert ($coordinatorText -match '\[switch\]\$SubstituirAgenteAntigo' -and $workerText -match '\[switch\]\$SubstituirAgenteAntigo') 'Scripts lack -SubstituirAgenteAntigo'
+  Assert ($coordinatorText -match 'SubstituirAgenteAntigo -and -not \$Receber') 'Coordinator allows -SubstituirAgenteAntigo without -Receber'
+  Write-Host 'PASS OldAgent_SwitchOnlyWithReceive'
+
+  New-CaseRoot
+  $realProbe = (Get-Command Invoke-NextecAgentTokenProbe).ScriptBlock
+  $script:httpCall = $null
+  $status = & $realProbe -Panel $script:NextecPainelFixo -Id '536822159' -Token 'token-nao-logado'
+  Assert ($status -eq 200 -and $script:httpCall.Uri -eq 'https://painel-remoto.nex.tec.br/api/nextec/agent/sync' -and $script:httpCall.MaximumRedirection -eq 0) 'Probe did not use the fixed HTTPS sync endpoint without redirects'
+  $script:httpCall = $null
+  $status = & $realProbe -Panel 'https://outro-host.exemplo' -Id '536822159' -Token 'token-nao-logado'
+  Assert ($status -eq 0 -and $null -eq $script:httpCall) 'Probe sent the token to a host other than the configured panel'
+  Write-Host 'PASS OldAgent_ProbeUsesOnlyConfiguredPanel'
+
+  # Achado P2 (revisao do PR #90): pendente do painel anterior nao bloqueia a inscricao no painel atual.
+  $script:chaveInscricao = 'C' * 43
+  function Add-Enrollment {
+    $paths = Get-NextecProvisionPaths -Root $script:root
+    @{ v = 1; painel = $script:NextecPainelFixo; chave = $script:chaveInscricao } | ConvertTo-Json -Compress | Set-Content -LiteralPath $paths.Enroll -Encoding UTF8
+  }
+  function Add-PendingJournal([string]$Panel, [string]$State = 'pending', [int]$AgeMinutes = 1) {
+    $paths = Get-NextecProvisionPaths -Root $script:root
+    $journal = [pscustomobject]@{
+      painel=$Panel; id='536822159'; uuid='device-uuid-1'; bootstrap='Bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+      proposed_token='Zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'; created_utc=$script:current.AddMinutes(-$AgeMinutes); state=$State
+    }
+    Save-NextecProvisionJournal -Journal $journal -Path $paths.Journal
+  }
+  function Invoke-WithSelfEnroll([scriptblock]$BootstrapPost = { param($p,$b) throw 'network unavailable' }) {
+    $script:selfPosts = New-Object System.Collections.Generic.List[object]
+    $selfPost = { param($panel,$body) $script:selfPosts.Add([pscustomobject]@{ panel=$panel; body=$body }) | Out-Null; [pscustomobject]@{ status=200; token=$body.proposed_token; state='pending' } }
+    Invoke-NextecProvisioning -Root $script:root -DiscoverId { '536822159' } -Now $script:current -NewToken { New-NextecProposedToken } `
+      -PostBootstrap $BootstrapPost -PostSelfEnroll $selfPost -GetUuid { 'uuid-b64' } -RegisterAgent { param($path) $script:registerCalls.Add($path) | Out-Null }
+  }
+
+  # painel diferente: o journal pendente do painel A e descartado e a inscricao segue no painel atual
+  New-CaseRoot; Add-Enrollment
+  $paths = Get-NextecProvisionPaths -Root $script:root
+  Add-PendingJournal -Panel 'https://painel-antigo.exemplo.com.br'
+  $result = Invoke-WithSelfEnroll
+  Assert ($result -eq 'complete') "Pending journal of another panel blocked the enrollment: $result"
+  Assert (-not (Test-Path -LiteralPath $paths.Journal)) 'Journal of another panel was kept'
+  Assert ($script:logs -contains 'pending_other_panel') 'Discard of the other panel pending was not logged'
+  Assert ($script:selfPosts.Count -eq 1 -and $script:selfPosts[0].panel -ceq $script:NextecPainelFixo) 'Enrollment did not go to the current panel'
+  Assert (($script:logs -join ',') -notmatch 'Zzzz|Bbbb') 'Secret value reached the log'
+  Write-Host 'PASS PendingOtherPanel_IsDiscardedAndEnrollsInCurrentPanel'
+
+  # mesmo painel (host normalizado: caixa e barra final) e dentro do prazo: mantem a espera, sem reinscrever
+  New-CaseRoot; Add-Enrollment
+  $paths = Get-NextecProvisionPaths -Root $script:root
+  Add-PendingJournal -Panel $script:NextecPainelFixo
+  $result = Invoke-WithSelfEnroll
+  Assert ($result -eq 'network_retry') "Pending journal of the same panel did not keep waiting: $result"
+  Assert (Test-Path -LiteralPath $paths.Journal -PathType Leaf) 'Journal of the same panel was discarded early'
+  Assert ($script:selfPosts.Count -eq 0) 'Same panel pending triggered a new enrollment'
+  Assert ($script:logs -notcontains 'pending_other_panel') 'Same panel was treated as another panel'
+  Write-Host 'PASS PendingSamePanel_KeepsWaiting'
+
+  # pendente expirado do mesmo painel: reinscreve (nunca espera para sempre)
+  New-CaseRoot; Add-Enrollment
+  $paths = Get-NextecProvisionPaths -Root $script:root
+  Add-PendingJournal -Panel $script:NextecPainelFixo -AgeMinutes 30
+  $result = Invoke-WithSelfEnroll
+  Assert ($result -eq 'complete') "Expired pending did not re-enroll: $result"
+  Assert (-not (Test-Path -LiteralPath $paths.Journal) -and $script:logs -contains 'pending_expired') 'Expired pending was not discarded and logged'
+  Assert ($script:selfPosts.Count -eq 1) 'Expired pending did not enroll again'
+  Write-Host 'PASS PendingExpired_ReEnrolls'
+
+  # recusa manual: dentro de 24 h espera; depois de 24 h reinscreve
+  New-CaseRoot; Add-Enrollment
+  Add-PendingJournal -Panel $script:NextecPainelFixo -State 'manual' -AgeMinutes (23 * 60)
+  $result = Invoke-WithSelfEnroll
+  Assert ($result -eq 'manual_authorization_required' -and $script:selfPosts.Count -eq 0) 'Manual journal inside 24 h should keep waiting'
+  New-CaseRoot; Add-Enrollment
+  Add-PendingJournal -Panel $script:NextecPainelFixo -State 'manual' -AgeMinutes (25 * 60)
+  $result = Invoke-WithSelfEnroll
+  Assert ($result -eq 'complete' -and $script:selfPosts.Count -eq 1) 'Manual journal older than 24 h did not re-enroll'
+  Write-Host 'PASS ManualPending_ExpiresAfter24Hours'
+
+  # estado de inscricao propria criado contra outro painel: descartado, novo token, painel atual gravado
+  New-CaseRoot; Add-Enrollment
+  $paths = Get-NextecProvisionPaths -Root $script:root
+  $keyHash = Get-NextecSha256Hex -Value $script:chaveInscricao
+  Save-NextecSelfState -Path $paths.SelfState -State ([pscustomobject]@{ state='manual'; chave_sha256=$keyHash; proposed_token='Yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy'; attempts=0; next_try_utc=($script:current.AddHours(5).Ticks); blocked_until_utc=0L; painel='https://painel-antigo.exemplo.com.br' })
+  $result = Invoke-WithSelfEnroll
+  Assert ($result -eq 'complete') "Self state of another panel blocked the enrollment: $result"
+  Assert ($script:selfPosts.Count -eq 1 -and $script:selfPosts[0].body.proposed_token -ceq 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA') 'Self state of another panel reused its token'
+  Assert ($script:logs -contains 'pending_other_panel') 'Self state discard was not logged'
+  # estado do mesmo painel dentro do prazo continua em espera
+  New-CaseRoot; Add-Enrollment
+  $paths = Get-NextecProvisionPaths -Root $script:root
+  Save-NextecSelfState -Path $paths.SelfState -State ([pscustomobject]@{ state='manual'; chave_sha256=$keyHash; proposed_token='Yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy'; attempts=0; next_try_utc=($script:current.AddHours(5).Ticks); blocked_until_utc=0L; painel=$script:NextecPainelFixo })
+  $result = Invoke-WithSelfEnroll
+  Assert ($result -eq 'manual_authorization_required' -and $script:selfPosts.Count -eq 0) 'Self state of the same panel did not keep waiting'
+  Write-Host 'PASS SelfStateOtherPanel_IsDiscarded'
 } finally {
   if (Test-Path -LiteralPath $script:root) { Remove-Item -LiteralPath $script:root -Recurse -Force }
 }

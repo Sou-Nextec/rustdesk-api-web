@@ -45,6 +45,39 @@ try {
     @{ AppName = 'XPTO'; painel = 'https://marcador.exemplo.com.br' } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $root 'nextec-marker.json') -Encoding UTF8
     Assert ((Get-NextecPainelConfigurado -Root $root -Padrao $padrao) -ceq 'https://marcador.exemplo.com.br') "$arquivo : marcador ignorado"
   }
+  # Achado 2 (revisao #45): o painel do build tambem vive no registro (valor Painel), lido antes do padrao e depois dos arquivos.
+  foreach ($arquivo in 'Provisionar-Agente-Nextec.ps1', 'Agente-Senha-Nextec.ps1', 'Instalar-Nextec.ps1') {
+    . Import-Funcoes $arquivo
+    $root = Join-Path $tmp ('reg-' + [IO.Path]::GetFileNameWithoutExtension($arquivo))
+    New-Item -ItemType Directory -Path $root -Force | Out-Null
+    $regKey = 'HKCU:\Software\NextecTeste\' + [Guid]::NewGuid().ToString('N')
+    New-Item -Path $regKey -Force | Out-Null
+    try {
+      Assert ((Get-NextecPainelConfigurado -Root $root -Padrao $padrao -RegistryKey $regKey) -ceq $padrao) "$arquivo : registro vazio nao caiu no padrao"
+      Set-ItemProperty -LiteralPath $regKey -Name Painel -Value 'https://registro.exemplo.com.br'
+      $r = Get-NextecPainelConfigurado -Root $root -Padrao $padrao -RegistryKey $regKey
+      Assert ($r -ceq 'https://registro.exemplo.com.br' -and $script:NextecPainelOrigem -ceq $regKey) "$arquivo : painel do registro ignorado"
+      @{ v = 1; painel = 'https://arquivo.exemplo.com.br'; chave = 'C' * 20 } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $root 'inscricao.json') -Encoding UTF8
+      Assert ((Get-NextecPainelConfigurado -Root $root -Padrao $padrao -RegistryKey $regKey) -ceq 'https://arquivo.exemplo.com.br') "$arquivo : inscricao.json deve vencer o registro"
+      Remove-Item -LiteralPath (Join-Path $root 'inscricao.json') -Force
+      foreach ($ruim in 'http://registro.exemplo.com.br', 'https://u:p@registro.exemplo.com.br', 'https://10.0.0.5', 'https://registro.exemplo.com.br:8443', 'https://registro.exemplo.com.br/x') {
+        Set-ItemProperty -LiteralPath $regKey -Name Painel -Value $ruim
+        Assert ((Get-NextecPainelConfigurado -Root $root -Padrao $padrao -RegistryKey $regKey) -ceq $padrao) "$arquivo : painel invalido no registro aceito: $ruim"
+      }
+    } finally { Remove-Item -LiteralPath $regKey -Recurse -Force -ErrorAction SilentlyContinue }
+  }
+  # Achado 3: o -UrlBase explicito do build nao e sobrescrito pelo painel da inscricao.
+  $tokens = $null; $errors = $null
+  $astInst = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Instalar-Nextec.ps1'), [ref]$tokens, [ref]$errors)
+  $fn = $astInst.FindAll({ param($x) $x -is [Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -ceq 'Resolve-NextecUpdateBase' }, $true) | Select-Object -First 1
+  Assert $fn 'Resolve-NextecUpdateBase ausente em Instalar-Nextec.ps1'
+  . ([scriptblock]::Create($fn.Extent.Text))
+  $r = Resolve-NextecUpdateBase -UrlBase 'https://atualiza.exemplo.com.br/api/nextec/update' -PainelConfigurado 'https://novo.exemplo.com.br'
+  Assert ($r.UrlBase -ceq 'https://atualiza.exemplo.com.br/api/nextec/update' -and $r.Origem -ceq 'parametro') '-UrlBase explicito foi sobrescrito pelo painel da inscricao'
+  $r = Resolve-NextecUpdateBase -UrlBase '' -PainelConfigurado 'https://novo.exemplo.com.br'
+  Assert ($r.UrlBase -ceq 'https://novo.exemplo.com.br/api/nextec/update' -and $r.Origem -ceq 'painel') 'sem -UrlBase o painel da inscricao deve ser o padrao'
+  $r = Resolve-NextecUpdateBase -UrlBase '' -PainelConfigurado ''
+  Assert ($r.UrlBase -ceq 'https://painel-remoto.nex.tec.br/api/nextec/update' -and $r.Origem -ceq 'padrao') 'sem nada deve cair no painel antigo'
   # nenhum script compara contra o host fixo literal fora do valor padrao
   foreach ($arquivo in 'Provisionar-Agente-Nextec.ps1', 'Agente-Senha-Nextec.ps1') {
     $texto = Get-Content -LiteralPath (Join-Path $PSScriptRoot $arquivo) -Raw -Encoding UTF8
