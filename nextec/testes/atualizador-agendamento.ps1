@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $updater = Join-Path $repo 'nextec\atualizacao\Instalar-Nextec.ps1'
 $updatesUi = Join-Path $repo 'src\nextec\views\Updates.vue'

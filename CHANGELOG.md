@@ -2,6 +2,12 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.14
+
+- **Trava de CI contra erros repetidos:** novo `nextec/testes/verificar-integridade.mjs` roda em todo PR e barra patch, `.sh`, Dockerfile ou workflow com CRLF, `.ps1` com acento sem BOM UTF-8 e série de patches fora do padrão. `.gitattributes` passou a forçar LF nesses tipos e em `.mjs`, `.js`, `.vue` e `.json`.
+- **Testes de node:** `@vue/compiler-sfc` virou `devDependency` explícita (antes era só transitiva do `vue` e os testes `templates-declarados`, `secrets-view` e `rodape-versao` quebravam sem `npm ci` completo); a verificação acusa o ambiente incompleto com mensagem clara.
+- BOM adicionado a `Manifesto-Connect.ps1` e `atualizador-agendamento.ps1` (tinham acento sem BOM). Sem mudança de comportamento do painel.
+
 ## 2.11.7
 
 - **Atribuir em um clique:** quando o cliente ainda não tem senha automática, o diálogo de Atribuir já vem com "Senha automática do cliente (ligar agora)". Ao confirmar, o servidor liga a regra do cliente e atribui a máquina na mesma transação (patch 0032, `enable_group_rule` em `POST /api/admin/nextec/secrets/assign`). Intervalo padrão de 3 horas, idempotente e auditado (`client_rule_enable`). Identidade (UUID), aprovação e anti-lixo continuam conferidos como antes, e uma recusa não deixa regra ligada pela metade. Sem a flag a API segue recusando, como no patch 0031.

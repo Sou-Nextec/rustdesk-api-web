@@ -64,3 +64,18 @@ A API é simulada em `navegacao.spec.mjs` (`vi.mock('@/utils/request')`); nenhum
 Regras que esses testes protegem: toda tela de rota tem **um único elemento na raiz** (o `<transition mode="out-in">` do
 layout não conclui a saída de raiz sem elemento e a tela seguinte nunca entra) e todo nome usado no template existe no script.
 Dependências de teste ficam só em `devDependencies` (`vitest`, `jsdom`).
+
+## Trava de integridade e testes de node (CI)
+
+`node nextec/testes/verificar-integridade.mjs` roda no CI (workflow "Regressoes do cliente Nextec", em todo PR, logo depois do
+`npm ci` e antes dos testes e do build). Sem dependências. Falha listando os arquivos se:
+
+- patch, `.sh`, Dockerfile ou workflow estiver com CRLF no repositório (o `git apply` do Linux rejeita);
+- `.ps1` com caractere não ASCII não começar com BOM UTF-8 (o Windows PowerShell 5.1 quebra o parse);
+- a série `nextec/backend/*.patch` tiver nome fora de `NNNN-*.patch`, número repetido ou não for patch git. O `git apply` real
+  de toda a série roda no build da imagem (`nextec-imagem.yml`, que também executa em PR), então não é duplicado aqui;
+- `@vue/compiler-sfc` não estiver instalado (faltou `npm ci`): `templates-declarados`, `secrets-view` e `rodape-versao`
+  dependem dele e agora ele é `devDependency` declarada, não só transitiva.
+
+`.gitattributes` força LF em `.patch`, `.sh`, `.yml`, Dockerfile, `.mjs`, `.js`, `.vue` e `.json`. Os `.ps1` não são normalizados
+(o git já preserva o BOM). `npm test` e `npm run test:nav` falham o PR; rode `node nextec/testes/verificar-integridade.mjs` antes de abrir um.
