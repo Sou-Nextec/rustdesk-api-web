@@ -258,3 +258,14 @@ o 0033 toca `http/router/api.go` e cria arquivos novos em `api/` e `service/`, s
 tinha fim de linha CRLF e o `git apply` do Linux o rejeitava ("patch failed ... nextec_bootstrap.go:52"); os `.patch` devem ser LF.
 O workflow `Imagem Nextec` agora aplica toda a série em ordem antes do build e aponta qual patch não aplica.
 
+
+## Patch 0037: limite de consultas do agente por máquina
+
+O agente consulta o painel uma vez por minuto (2.11.21). O patch acrescenta, em `agentAuth`, uma janela deslizante em memória de **30 chamadas por minuto por máquina já autenticada** (`service/nextec_agent_ratelimit.go`).
+
+- Passou do limite: `429` com `Retry-After` (segundos) e corpo `{"error":"rate limited"}`, distinto do `{"error":"too many failures"}` do bloqueio por IP.
+- Nunca soma ao `nextecFailCheck`/`nextecFailAdd`, que continuam contando só autenticação inválida por IP: consultar a cada minuto não aciona o anti-lixo, e uma máquina em laço não bloqueia as outras do mesmo IP. Tentativa com token inválido não ocupa a janela da máquina.
+- Log: no máximo uma linha de aviso por minuto por máquina, com a contagem de chamadas recusadas. As janelas de máquinas ociosas são descartadas a cada 5 minutos (o mapa não cresce).
+- "Trocar agora" (`force_rotate`) já era atendido pela consulta seguinte do agente; o teste `TestAgentRotateNowIsServedByTheNextOneMinuteSync` fixa esse comportamento.
+- Testes: `service/nextec_agent_ratelimit_test.go` (ritmo de 1 por minuto por 4 horas, laço, concorrência com `-race`, log limitado, varredura) e `http/controller/api/nextec_agent_ratelimit_test.go` (429 com `Retry-After`).
+- Numeração: o 0035 já foi usado por `0035-inscricao-por-cliente` em ramos anteriores e o 0036 está reservado por `feat/conectar-abre-direto`; este é o 0037 para não colidir. Série validada sobre `v2.6.29`: 0001..0034 + 0037, e 0001..0034 + 0036 + 0037, aplicam limpas em ordem.

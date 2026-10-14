@@ -19,3 +19,11 @@ O manifesto assinado autentica a release para o atualizador; não altera os avis
 Para cada máquina, rode `Instalar-Nextec.ps1` uma vez como administrador (comando em **Dispositivos > Atualizações do app > Instalar em uma máquina**). Ele cria a tarefa diária "Nextec Acesso - Atualizacao", como SYSTEM, antes de consultar o painel; assim a máquina continua verificando mesmo sem versão publicada. O script e o log ficam em `%ProgramData%\Nextec\Acesso`. O MSI do Nextec-Connect 2.0.9 já traz esse script e registra o atualizador e o coordenador do agente; as tarefas são removidas na desinstalação verdadeira. O script serve para máquinas com instalação anterior ou para reparar a tarefa.
 
 Estado desta alteração: verificadores e publicador testados com chaves descartáveis e compatibilidade com a assinatura real do monitoramento. O atualizador já vai dentro do MSI 2.0.9 (instalação, reparo e desinstalação testados no runner Windows). Ainda pendem o teste de atualização em VM e a migração EXE→MSI preservando o ID. Os clientes já instalados em versões anteriores não passam a executar esse atualizador só porque o painel foi alterado.
+
+## Ritmo do agente de senha (2.11.21)
+
+A tarefa "Nextec Acesso - Senha" consulta o painel **uma vez por minuto** (uma chamada leve de sync; só há propose e confirm quando existe troca). O coordenador ("Nextec Acesso - Cadastro de agente") repete a cada 2 minutos e dispara a tarefa de senha na hora em que a registra.
+
+Os dois intervalos ficam em **um lugar só**: a função `Get-NextecAgentIntervals`, no topo de `Agente-Senha-Nextec.ps1` (`PasswordMinutes`, `CoordinatorMinutes`, de 1 a 60). `Provisionar-Agente-Nextec.ps1` e `Coordenar-Agente-Nextec.ps1` leem os valores desse arquivo sem executá-lo. Para mudar o ritmo, altere só ali: o validador de tarefa passa a aceitar até o novo `PasswordMinutes` e o coordenador registra de novo as tarefas que forem mais lentas. Não crie outro número de intervalo nos scripts (o teste `test_latencia_troca.ps1` procura literais espalhados).
+
+Uma execução por vez: `agente-senha.lock` em `%ProgramData%\Nextec\Acesso`. Na mesma execução, propor, aplicar e confirmar repetem falhas transitórias (2 s e 5 s) antes de deixar para a próxima rodada. Do lado do servidor, o limite de 30 chamadas por minuto por máquina (patch 0037) devolve 429 com `Retry-After` e nunca conta como falha do IP.

@@ -5,6 +5,7 @@ foreach ($f in $ast.FindAll({param($n) $n -is [Management.Automation.Language.Fu
   . ([scriptblock]::Create($f.Extent.Text))
 }
 function Assert($value, $message) { if (-not $value) { throw $message } }
+function Wait-NextecRetry([int]$Seconds) { }   # sem espera real nas repeticoes da mesma execucao
 function Escrever($message) { Assert ($message -notmatch 'secret|password-candidate') 'Secret in log' }
 function Proteger($value) { return 'protected:' + $value }
 function Revelar($value) { return $value.Substring('protected:'.Length) }
