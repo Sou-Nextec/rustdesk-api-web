@@ -6,7 +6,7 @@ $agentScript = Join-Path $PSScriptRoot 'Agente-Senha-Nextec.ps1'
 $tokens = $null; $errors = $null
 $ast = [Management.Automation.Language.Parser]::ParseFile($agentScript, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw "Agente-Senha-Nextec.ps1 nao compilou: $($errors[0].Message)" }
-foreach ($name in @('Get-NextecHttpStatus', 'Register-NextecAuthFailure')) {
+foreach ($name in @('Get-NextecHttpStatus', 'Register-NextecAuthFailure', 'Update-NextecAuthFailures')) {
   $definition = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
   if (-not $definition) { throw "Funcao ausente: $name" }
   . ([scriptblock]::Create($definition.Extent.Text))
@@ -58,6 +58,23 @@ try {
   Assert (-not (Test-Path -LiteralPath $selfState)) 'estado de inscricao antigo nao foi limpo'
   Assert (-not (Test-Path -LiteralPath $counter)) 'contador nao zerou'
   Write-Host 'PASS AuthRecovery_ThreeConsecutive401RetireCredential'
+
+  # "tres SEGUIDAS": 401, 503, 401, 401 nao aposenta (a sequencia foi interrompida); mais um 401 completa tres seguidas.
+  Set-Content -LiteralPath $config -Value '{"id":"536822159"}' -Encoding UTF8
+  Remove-Item -LiteralPath $counter -Force -ErrorAction SilentlyContinue
+  foreach ($status in @(401, 503, 401, 401)) {
+    Assert (-not (Update-NextecAuthFailures -Status $status -CounterPath $counter -ConfigPath $config -DataRoot $root)) "status $status nao pode aposentar (sequencia 401,503,401,401)"
+  }
+  Assert (Test-Path -LiteralPath $config) 'credencial aposentada sem tres 401 seguidos'
+  Assert (Update-NextecAuthFailures -Status 401 -CounterPath $counter -ConfigPath $config -DataRoot $root) 'terceiro 401 seguido deve aposentar'
+  Assert (-not (Test-Path -LiteralPath $config)) 'credencial continuou ativa depois de tres 401 seguidos'
+  Remove-Item -LiteralPath ($config + '.anterior') -Force -ErrorAction SilentlyContinue
+  foreach ($status in @(401, 401, 0, 401, 401)) {
+    Set-Content -LiteralPath $config -Value '{}' -Encoding UTF8
+    [void](Update-NextecAuthFailures -Status $status -CounterPath $counter -ConfigPath $config -DataRoot $root)
+  }
+  Assert (Test-Path -LiteralPath $config) 'falha de rede (status 0) no meio nao interrompe a sequencia'
+  Write-Host 'PASS AuthRecovery_OnlyConsecutive401Count'
 
   # contador corrompido nao derruba nada
   Set-Content -LiteralPath $config -Value '{}' -Encoding UTF8
