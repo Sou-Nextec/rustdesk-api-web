@@ -127,6 +127,7 @@ try {
   # 3) tentativa seguinte: o provisionador real refaz o cadastro (self-enroll) e grava credencial nova
   $enrollKey = 'nx1.1790000000.AbCdEf0123456789_-AbCdEf0123456789'
   [IO.File]::WriteAllText((Join-Path $PastaDados 'inscricao.json'), (@{ v = 1; painel = $script:testOrigin; chave = $enrollKey } | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
+  if ($isAdmin) { Set-Acl -LiteralPath (Join-Path $PastaDados 'inscricao.json') -AclObject (New-NextecProvisionAcl) }
   $post = { param($panel, $body) Invoke-NextecSelfEnrollPost -Panel $panel -Body $body -TestOrigin $script:testOrigin }
   $result = Invoke-NextecProvisioning -Root $PastaDados -DiscoverId { '536822159' } -Now ([DateTime]::UtcNow) -PostSelfEnroll $post `
     -PostBootstrap { param($p, $b) throw 'legacy bootstrap must not be used' } -RegisterAgent { param($path) } -GetUuid { Get-NextecMachineUuid } `
