@@ -7,8 +7,6 @@ cofre devolve active_window_seconds. Fonte unica: o painel so exibe agent_state.
 
 diff --git a/http/controller/api/nextec_agent.go b/http/controller/api/nextec_agent.go
 index 245455f..56b16cc 100644
-diff --git a/http/controller/api/nextec_agent.go b/http/controller/api/nextec_agent.go
-index 245455f..56b16cc 100644
 --- a/http/controller/api/nextec_agent.go
 +++ b/http/controller/api/nextec_agent.go
 @@ -3,6 +3,7 @@ package api
