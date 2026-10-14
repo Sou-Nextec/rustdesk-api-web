@@ -61,7 +61,7 @@ export function overallSummary(devices = []) {
   let cta = null
   let text
   if (!total) {
-    text = 'Nenhuma máquina ainda. Instale o Nextec-Connect em um servidor e aguarde 1 minuto.'
+    text = 'Nenhuma máquina ainda. Instale o app gerado pelo painel em um servidor e aguarde 1 minuto.'
     cta = { action: 'show-key', label: 'Ver credencial de inscrição' }
   } else if (c.client) {
     text = `Você tem ${plural(c.client, 'máquina sem cliente', 'máquinas sem cliente')}.`
@@ -84,7 +84,7 @@ export function firstNeeding(devices = [], stage) {
 }
 
 export const NEEDS_CLIENT_NOTICE = 'Esta máquina ainda não tem cliente. Escolha o cliente para continuar.'
-export const AGENT_EMPTY_NOTICE = 'Nenhuma máquina encontrada. Instale o Nextec-Connect na máquina e aguarde 1 minuto.'
+export const AGENT_EMPTY_NOTICE = 'Nenhuma máquina encontrada. Instale o app gerado pelo painel na máquina e aguarde 1 minuto.'
 
 // Autorização individual: lista TODAS as máquinas. As sem cliente aparecem com selo e levam a "Escolher cliente agora".
 export function agentOptions(devices = []) {

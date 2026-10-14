@@ -364,7 +364,7 @@
       <div class="nx-agent-go">
         <el-button type="primary" :loading="agent.loading" :disabled="!agent.peer || agentNeedsClient" @click="downloadActivation">Baixar arquivo de ativação</el-button>
       </div>
-      <p class="nx-help">A autorização vale por 15 minutos e só para a máquina escolhida. O app Nextec-Connect precisa estar instalado no servidor. Não envie o arquivo por link público.</p>
+      <p class="nx-help">A autorização vale por 15 minutos e só para a máquina escolhida. O app gerado pelo painel (com o agente) precisa estar instalado no servidor. Não envie o arquivo por link público.</p>
       <p v-if="agent.error" class="nx-error" role="alert">{{ agent.error }}</p>
       <template #footer><el-button type="primary" @click="agent.visible = false">Fechar</el-button></template>
     </el-dialog>

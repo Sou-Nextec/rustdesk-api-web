@@ -104,12 +104,41 @@ function Get-NextecInstalledClient {
     [object[]]$Services,
     [string]$WindowsDirectory = $env:WinDir,
     [string]$ProfileRootBase,
-    [scriptblock]$PeerIdReader
+    [scriptblock]$PeerIdReader,
+    [object]$Marker,
+    [string]$MarkerFile
   )
 
   if ($null -eq $Services) {
     $Services = @(Get-CimInstance -ClassName Win32_Service -ErrorAction Stop)
   }
+
+  # Marcador de instalação (independente de nome): HKLM\SOFTWARE\Nextec\Agente {AppName} ou nextec-marker.json.
+  # Serve só para desempatar quando há mais de um serviço RustDesk; nenhum nome de app é fixo aqui.
+  $markerApp = ''
+  $markerSource = ''
+  if ($null -ne $Marker) {
+    $markerApp = [string]$Marker.AppName
+    $markerSource = 'marcador informado'
+  } else {
+    try {
+      $reg = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Nextec\Agente' -ErrorAction Stop
+      $markerApp = [string]$reg.AppName
+      $markerSource = 'HKLM\SOFTWARE\Nextec\Agente'
+    } catch { $markerApp = '' }
+    if (-not $markerApp) {
+      $markerPath = $MarkerFile
+      if (-not $markerPath -and $env:ProgramData) { $markerPath = Join-Path $env:ProgramData 'Nextec\Acesso\nextec-marker.json' }
+      try {
+        if ($markerPath -and (Test-Path -LiteralPath $markerPath -PathType Leaf)) {
+          $mj = Get-Content -Raw -LiteralPath $markerPath -ErrorAction Stop | ConvertFrom-Json
+          if ($mj.AppName) { $markerApp = [string]$mj.AppName } elseif ($mj.app_name) { $markerApp = [string]$mj.app_name }
+          $markerSource = $markerPath
+        }
+      } catch { $markerApp = '' }
+    }
+  }
+  if ($markerApp -notmatch '^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$') { $markerApp = '' }
 
   $candidates = @(
     foreach ($service in $Services) {
@@ -127,7 +156,13 @@ function Get-NextecInstalledClient {
   )
 
   if ($candidates.Count -eq 0) {
-    throw 'identity_conflict: nenhum serviço instalado do RustDesk/Nextec foi encontrado.'
+    $seen = @($Services | Where-Object { $_ }).Count
+    if ($markerApp) { $how = "AppName do marcador: $markerApp ($markerSource)" } else { $how = 'sem marcador (HKLM\SOFTWARE\Nextec\Agente ou nextec-marker.json)' }
+    throw ('identity_conflict: nenhum serviço instalado do RustDesk/Nextec foi encontrado. Procurado: serviço com --service cujo nome é o do executável e pasta config com .toml ({0} serviços vistos; {1}).' -f $seen, $how)
+  }
+  if ($candidates.Count -gt 1 -and $markerApp) {
+    $byMarker = @($candidates | Where-Object { [string]$_.Service.Name -ieq $markerApp })
+    if ($byMarker.Count -eq 1) { $candidates = $byMarker }
   }
   if ($candidates.Count -gt 1) {
     $names = ($candidates | ForEach-Object { [string]$_.Service.Name }) -join ', '
