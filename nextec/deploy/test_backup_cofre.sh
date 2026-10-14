@@ -15,7 +15,7 @@ montar() {
   echo '{}' > "$P/data/nextec-settings.json"; echo cfg > "$P/api/x.yml"
   sqlite3 "$P/data/db_v2.sqlite3" "PRAGMA journal_mode=WAL; create table t(x); insert into t values(1);" >/dev/null
 }
-rodar() { BACKUP_PASSFILE="$base/pass" PASTA="$P" PATH="${FAKEPATH:-}$PATH" "$script" "$1" >"$base/out" 2>&1; }
+rodar() { BACKUP_PASSFILE="$base/pass" PASTA="$P" PATH="${FAKEPATH:-}$PATH" bash "$script" "$1" >"$base/out" 2>&1; }
 encs() { ls "$1"/*.enc 2>/dev/null | wc -l; }
 
 # 1) caminho feliz: todos os arquivos dentro do pacote
