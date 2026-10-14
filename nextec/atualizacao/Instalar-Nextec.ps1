@@ -9,7 +9,7 @@
   (Dispositivos > Atualizações do app) a versão e quem a recebe (todos ou um grupo piloto).
 
 .PARAMETER UrlBase
-  Endereço da atualização (padrão: o painel, https://painel-remoto.nex.tec.br/api/nextec/update).
+  Endereço da atualização. Padrão: o painel gravado em inscricao.json (<painel>/api/nextec/update); sem esse arquivo, o painel antigo (compatibilidade).
   Serve também qualquer site com versao.json e o MSI lado a lado.
 
 .PARAMETER GrupoId
@@ -31,7 +31,7 @@
 #>
 [CmdletBinding()]
 param(
-  [string]$UrlBase = 'https://painel-remoto.nex.tec.br/api/nextec/update',
+  [string]$UrlBase = '',
   [int]$GrupoId = 0,
   [string]$ChaveCliente = '',
   [switch]$Forcar,
@@ -49,6 +49,42 @@ $ChaveReg = 'HKLM:\SOFTWARE\Nextec\Acesso'
 $script:PastaSegura = $false
 $script:ReleaseVerificada = $false
 $script:OrigemAtualizador = $PSCommandPath
+
+# Painel configuravel: o host vem do inscricao.json local (ou do marcador), nunca da rede.
+function ConvertTo-NextecPainelUrl {
+  param([string]$Url)
+  if ([string]::IsNullOrWhiteSpace($Url) -or $Url.Length -gt 253 -or $Url -match '[\s\@]') { return $null }
+  $u = $null
+  if (-not [Uri]::TryCreate($Url.Trim(), [UriKind]::Absolute, [ref]$u)) { return $null }
+  if ($u.Scheme -cne 'https' -or $u.UserInfo -or $u.Query -or $u.Fragment -or $u.AbsolutePath -cne '/' -or -not $u.IsDefaultPort) { return $null }
+  if ($u.HostNameType -ne [UriHostNameType]::Dns) { return $null }
+  if ($u.Host -cnotmatch '^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$') { return $null }
+  return ('https://' + $u.Host)
+}
+
+function Get-NextecPainelConfigurado {
+  param(
+    [string]$Root = (Join-Path $env:ProgramData 'Nextec\Acesso'),
+    [string]$Padrao = 'https://painel-remoto.nex.tec.br'
+  )
+  foreach ($nome in @('inscricao.json', 'nextec-marker.json')) {
+    $arquivo = Join-Path $Root $nome
+    try {
+      if (-not (Test-Path -LiteralPath $arquivo -PathType Leaf)) { continue }
+      if ((Get-Item -LiteralPath $arquivo).Length -gt 4096) { continue }
+      $valor = [IO.File]::ReadAllText($arquivo, [Text.Encoding]::UTF8).TrimStart([char]0xFEFF) | ConvertFrom-Json
+      $painel = ConvertTo-NextecPainelUrl ([string]$valor.painel)
+      if ($painel) { $script:NextecPainelOrigem = $arquivo; return $painel }
+    } catch { }
+  }
+  $script:NextecPainelOrigem = 'padrao'
+  return $Padrao
+}
+
+# O painel vem do inscricao.json instalado e vence qualquer -UrlBase (troca de dominio nao quebra a frota).
+$painelConfigurado = Get-NextecPainelConfigurado -Root $Pasta -Padrao ''
+if ($painelConfigurado) { $UrlBase = $painelConfigurado + '/api/nextec/update' }
+elseif (-not $UrlBase) { $UrlBase = 'https://painel-remoto.nex.tec.br/api/nextec/update'; $script:NextecPainelOrigem = 'padrao' }
 
 function RegistrarAtualizador {
   if ($SoVerificar) { throw 'Registrar e SoVerificar não podem ser usados juntos.' }
@@ -384,6 +420,7 @@ try {
   if (-not $SoVerificar) { ProtegerPastaAtualizador; $script:PastaSegura = $true }
 
   [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+  if ($script:NextecPainelOrigem -ceq 'padrao') { Escrever 'Aviso: inscricao.json ausente; usando o painel padrao (compat com instalacao antiga).' }
   $UrlBase = $UrlBase.TrimEnd('/')
   $baseUri = [Uri]$UrlBase
   if (-not $baseUri.IsAbsoluteUri -or $baseUri.Scheme -ne 'https' -or $baseUri.Query -or $baseUri.Fragment -or $baseUri.UserInfo -or $UrlBase.Contains('"')) { throw 'Endereço de atualização inválido; use HTTPS.' }

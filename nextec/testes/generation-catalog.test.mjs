@@ -22,3 +22,64 @@ test('missing files and uncertain submission never appear ready', () => {
   assert.equal(generationState({ status: 'success', files: [{ name: 'client.msi' }] }).tone, 'success')
   assert.equal(activeGeneration({ status: 'in_progress' }), true)
 })
+
+import { failedGeneration, deletableGeneration, deleteGeneration, deleteGenerations } from '../../src/nextec/generation-catalog.mjs'
+const fakeFetch = (status, body, calls = []) => async (url, init) => {
+  calls.push({ url, init })
+  return { ok: status < 400, status, json: async () => body }
+}
+test('failed items are identified and can be deleted; running ones cannot', () => {
+  assert.equal(failedGeneration({ status: 'failure' }), true)
+  assert.equal(failedGeneration({ status: 'in_progress', submission_error: 'x' }), true)
+  assert.equal(failedGeneration({ status: 'incomplete' }), true)
+  assert.equal(failedGeneration({ status: 'success', files: [{}] }), false)
+  assert.equal(deletableGeneration({ uuid, status: 'failure' }), true)
+  assert.equal(deletableGeneration({ uuid, status: 'in_progress' }), false)
+  assert.equal(deletableGeneration({ uuid, status: 'success', deletable: false }), false)
+  assert.equal(generationState({ status: 'in_progress', submission_error: 'x' }).label, 'Falhou')
+})
+test('deleting one failed item sends the guarded request', async () => {
+  const calls = []
+  const result = await deleteGeneration(uuid, { fetchImpl: fakeFetch(200, { deleted: [uuid], blocked: [] }, calls) })
+  assert.deepEqual(result.deleted, [uuid])
+  assert.equal(calls[0].url, `/gerador/nextec/geracoes/${uuid}/excluir/`)
+  assert.equal(calls[0].init.method, 'DELETE')
+  assert.equal(calls[0].init.headers['X-Nextec-Acao'], 'excluir')
+})
+test('item already sent to updates needs explicit confirmation', async () => {
+  const calls = []
+  await assert.rejects(deleteGeneration(uuid, { fetchImpl: fakeFetch(409, { error: 'enviado', code: 'imported' }) }), e => e.code === 'imported')
+  await deleteGeneration(uuid, { confirmImported: true, fetchImpl: fakeFetch(200, { deleted: [uuid] }, calls) })
+  assert.match(calls[0].url, /\?confirmar=1$/)
+})
+test('bulk delete sends only valid ids or the failed scope', async () => {
+  const calls = []
+  const f = fakeFetch(200, { deleted: [uuid], blocked: [] }, calls)
+  await deleteGenerations({ uuids: [uuid], fetchImpl: f })
+  assert.deepEqual(JSON.parse(calls[0].init.body), { uuids: [uuid] })
+  await deleteGenerations({ scope: 'failed', fetchImpl: f })
+  assert.deepEqual(JSON.parse(calls[1].init.body), { scope: 'failed' })
+})
+test('path traversal identifiers are refused before any request', async () => {
+  const calls = []
+  const f = fakeFetch(200, {}, calls)
+  await assert.rejects(deleteGeneration('../../etc/passwd', { fetchImpl: f }), e => e.code === 'invalid')
+  await assert.rejects(deleteGenerations({ uuids: [uuid, '../x'], fetchImpl: f }), e => e.code === 'invalid')
+  await assert.rejects(deleteGenerations({ uuids: [], fetchImpl: f }), e => e.code === 'invalid')
+  assert.equal(calls.length, 0)
+})
+
+import { deleteNeedsConfirmation, deletionPrompt } from '../../src/nextec/generation-catalog.mjs'
+test('imported item is deletable but asks explicit confirmation; in-progress is not deletable', () => {
+  const imported = { uuid, status: 'success', client_name: 'Cobraq', deletable: true, delete_requires_confirmation: true, delete_confirmation_message: 'Já enviado para Atualizações.' }
+  assert.equal(deletableGeneration(imported), true)
+  assert.equal(deleteNeedsConfirmation(imported), true)
+  const prompt = deletionPrompt(imported)
+  assert.equal(prompt.confirmImported, true)
+  assert.match(prompt.message, /Já enviado para Atualizações/)
+  const plain = { uuid, status: 'failure', deletable: true, delete_requires_confirmation: false }
+  assert.equal(deletionPrompt(plain).confirmImported, false)
+  assert.equal(deleteNeedsConfirmation(plain), false)
+  assert.equal(deletableGeneration({ uuid, status: 'in_progress', deletable: false }), false)
+  assert.equal(deleteNeedsConfirmation({ uuid, status: 'in_progress', deletable: false, delete_requires_confirmation: true }), false)
+})

@@ -188,6 +188,37 @@ function Get-NextecInstalledClient {
   }
 }
 
+# Painel configuravel: o host vem do inscricao.json local (ou do marcador), nunca da rede.
+function ConvertTo-NextecPainelUrl {
+  param([string]$Url)
+  if ([string]::IsNullOrWhiteSpace($Url) -or $Url.Length -gt 253 -or $Url -match '[\s\@]') { return $null }
+  $u = $null
+  if (-not [Uri]::TryCreate($Url.Trim(), [UriKind]::Absolute, [ref]$u)) { return $null }
+  if ($u.Scheme -cne 'https' -or $u.UserInfo -or $u.Query -or $u.Fragment -or $u.AbsolutePath -cne '/' -or -not $u.IsDefaultPort) { return $null }
+  if ($u.HostNameType -ne [UriHostNameType]::Dns) { return $null }
+  if ($u.Host -cnotmatch '^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$') { return $null }
+  return ('https://' + $u.Host)
+}
+
+function Get-NextecPainelConfigurado {
+  param(
+    [string]$Root = (Join-Path $env:ProgramData 'Nextec\Acesso'),
+    [string]$Padrao = 'https://painel-remoto.nex.tec.br'
+  )
+  foreach ($nome in @('inscricao.json', 'nextec-marker.json')) {
+    $arquivo = Join-Path $Root $nome
+    try {
+      if (-not (Test-Path -LiteralPath $arquivo -PathType Leaf)) { continue }
+      if ((Get-Item -LiteralPath $arquivo).Length -gt 4096) { continue }
+      $valor = [IO.File]::ReadAllText($arquivo, [Text.Encoding]::UTF8).TrimStart([char]0xFEFF) | ConvertFrom-Json
+      $painel = ConvertTo-NextecPainelUrl ([string]$valor.painel)
+      if ($painel) { $script:NextecPainelOrigem = $arquivo; return $painel }
+    } catch { }
+  }
+  $script:NextecPainelOrigem = 'padrao'
+  return $Padrao
+}
+
 function Escrever([string]$msg) {
   if (-not (Test-Path $PastaDados)) { New-Item -ItemType Directory -Path $PastaDados -Force | Out-Null }
   if ((Test-Path $Log) -and (Get-Item $Log).Length -gt 1MB) { Move-Item $Log "$Log.antigo" -Force }
@@ -448,7 +479,7 @@ if ($Registrar) {
   if (-not $admin) { throw 'Execute como administrador.' }
   ProtegerPastaAgente
   $cfg = Get-Content -LiteralPath $Config -Raw -Encoding UTF8 | ConvertFrom-Json
-  if ($cfg.painel -cne 'https://painel-remoto.nex.tec.br' -or -not $cfg.token) { throw 'invalid_agent_config' }
+  if (-not (ConvertTo-NextecPainelUrl ([string]$cfg.painel)) -or -not $cfg.token) { throw 'invalid_agent_config' }
   if ((MeuId) -ne $cfg.id) { throw 'identity_conflict' }
   Revelar $cfg.token | Out-Null
   Register-NextecPasswordTask -Source $PSCommandPath
@@ -464,7 +495,14 @@ if ($Instalar) {
     if (-not $admin) { throw 'Execute como administrador.' }
     ProtegerPastaAgente
   }
-  $script:PainelUrl = $Painel.TrimEnd('/')
+  # o painel configurado no instalador (inscricao.json) vence o argumento; sem arquivo, vale o argumento validado
+  $painelCfg = Get-NextecPainelConfigurado -Root $PastaDados -Padrao ''
+  if ($painelCfg) { $script:PainelUrl = $painelCfg }
+  else {
+    $script:PainelUrl = ConvertTo-NextecPainelUrl $Painel
+    if (-not $script:PainelUrl) { throw 'Endereco do painel invalido (precisa ser https://dominio, sem IP nem credenciais).' }
+    Escrever 'Aviso: inscricao.json ausente; usando o painel informado (compat com instalacao antiga).'
+  }
   $meuId = MeuId
   Escrever "ID do RustDesk: $meuId"
   try {
@@ -515,7 +553,13 @@ if ($Executar) {
   ProtegerPastaAgente
   try {
     $cfg = Get-Content $Config -Raw | ConvertFrom-Json
-    $script:PainelUrl = $cfg.painel
+    # troca de dominio: vale o painel configurado hoje; sem arquivo, o gravado no cadastro (validado)
+    $script:PainelUrl = Get-NextecPainelConfigurado -Root $PastaDados -Padrao ''
+    if (-not $script:PainelUrl) {
+      $script:PainelUrl = ConvertTo-NextecPainelUrl ([string]$cfg.painel)
+      if (-not $script:PainelUrl) { throw 'invalid_agent_config' }
+      Escrever 'Aviso: inscricao.json ausente; usando o painel do cadastro (compat).'
+    }
     $token = Revelar $cfg.token
     $meuId = $cfg.id
     $idServico = MeuId

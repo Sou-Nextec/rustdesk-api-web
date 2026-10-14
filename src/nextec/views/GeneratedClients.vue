@@ -10,6 +10,19 @@
       </el-button>
     </div>
 
+    <div v-if="rows.length" class="nx-generated-bulk" role="toolbar" aria-label="Excluir itens gerados">
+      <el-checkbox :model-value="allSelected" :indeterminate="someSelected && !allSelected" :disabled="!deletableRows.length || !!deleting"
+        @change="toggleAll">Selecionar todos</el-checkbox>
+      <span class="nx-generated-bulk-actions">
+        <el-button v-if="selected.length" type="danger" plain :loading="deleting === 'selected'" :disabled="!!deleting" @click="removeSelected">
+          Excluir selecionados ({{ selected.length }})
+        </el-button>
+        <el-button v-if="failedCount" :loading="deleting === 'failed'" :disabled="!!deleting" @click="clearFailed">
+          Limpar falhas ({{ failedCount }})
+        </el-button>
+      </span>
+    </div>
+
     <p v-if="activeCount" class="nx-generated-live" role="status" aria-live="polite">
       {{ activeCount === 1 ? '1 instalador está sendo gerado.' : activeCount + ' instaladores estão sendo gerados.' }}
       A lista confere o andamento sozinha a cada 15 segundos.
@@ -33,8 +46,10 @@
     </div>
 
     <ul v-if="rows.length" class="nx-generation-list">
-      <li v-for="row in rows" :key="row.uuid" class="nx-generation" :class="'is-' + generationState(row).tone">
+      <li v-for="row in rows" :key="row.uuid" class="nx-generation" :class="['is-' + generationState(row).tone, { 'is-selected': selected.includes(row.uuid) }]">
         <div class="nx-generation-head">
+          <el-checkbox v-if="deletableGeneration(row)" :model-value="selected.includes(row.uuid)" :disabled="!!deleting"
+            :aria-label="'Selecionar ' + (row.client_name || row.filename || 'item')" @change="toggle(row.uuid, $event)" />
           <div class="nx-generation-title">
             <strong>{{ row.client_name || (row.profile === 'analysts' ? 'Analistas' : 'Cliente padrão') }}</strong>
             <span class="nx-generation-meta">{{ platformLabel(row.platform) }} · {{ date(row.created_at) }}</span>
@@ -73,6 +88,12 @@
           </el-button>
         </div>
 
+        <div v-if="deletableGeneration(row)" class="nx-generation-remove">
+          <el-button text type="danger" :loading="deleting === row.uuid" :disabled="!!deleting" @click="removeOne(row)">
+            <el-icon v-if="deleting !== row.uuid" aria-hidden="true"><el-icon-Delete /></el-icon><span>Excluir</span>
+          </el-button>
+        </div>
+
         <p class="nx-generation-tech">
           Pacote Nextec {{ row.package_version || 'sem versão' }} · Base RustDesk {{ row.rustdesk_version || 'não informada' }}
           <template v-if="row.filename"> · {{ row.filename }}</template>
@@ -96,11 +117,18 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { generationDownload, generationState, activeGeneration, validGenerationId } from '@/nextec/generation-catalog.mjs'
+import { generationDownload, generationState, activeGeneration, validGenerationId, failedGeneration, deletableGeneration, deletionPrompt, deleteGeneration, deleteGenerations } from '@/nextec/generation-catalog.mjs'
 import { importGeneratedRelease } from '@/nextec/api'
 defineEmits(['create'])
 const rows = ref([]), count = ref(0), page = ref(1), loading = ref(false), error = ref(''), importing = ref('')
 const router = useRouter()
+const selected = ref([]), deleting = ref('')
+const deletableRows = computed(() => rows.value.filter(deletableGeneration))
+const failedCount = computed(() => rows.value.filter(row => failedGeneration(row) && deletableGeneration(row)).length)
+const allSelected = computed(() => deletableRows.value.length > 0 && deletableRows.value.every(row => selected.value.includes(row.uuid)))
+const someSelected = computed(() => selected.value.length > 0)
+const toggle = (id, on) => { selected.value = on ? [...new Set([...selected.value, id])] : selected.value.filter(item => item !== id) }
+const toggleAll = on => { selected.value = on ? deletableRows.value.map(row => row.uuid) : [] }
 let timer, disposed = false, busy = false, cursor = 0
 const activeCount = computed(() => rows.value.filter(activeGeneration).length)
 const date = value => value ? new Date(value).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : 'Data não informada'
@@ -157,6 +185,61 @@ async function sendToUpdates(row) {
   } catch { ElMessage.error('Não foi possível preparar o pacote. Confira a configuração da integração no servidor e tente novamente.') }
   finally { importing.value = '' }
 }
+function afterDelete(ids) {
+  const gone = new Set(ids)
+  rows.value = rows.value.filter(row => !gone.has(row.uuid))
+  selected.value = selected.value.filter(id => !gone.has(id))
+  count.value = Math.max(0, count.value - ids.length)
+  if (!rows.value.length && page.value > 1) page.value -= 1
+  if (!rows.value.length) load()
+}
+async function confirmDelete(message, title = 'Excluir item', confirmButtonText = 'Excluir') {
+  try { await ElMessageBox.confirm(message, title, { confirmButtonText, cancelButtonText: 'Cancelar', type: 'warning', confirmButtonClass: 'el-button--danger' }); return true }
+  catch { return false }
+}
+async function removeOne(row) {
+  const prompt = deletionPrompt(row)
+  if (!await confirmDelete(prompt.message, prompt.title, prompt.confirmText)) return
+  deleting.value = row.uuid
+  try {
+    try { await deleteGeneration(row.uuid, { confirmImported: prompt.confirmImported }) }
+    catch (e) {
+      // Lista desatualizada: o servidor ainda pede a confirmação extra. Mostra o aviso dele antes de repetir.
+      if (e.code !== 'imported' || prompt.confirmImported) throw e
+      if (!await confirmDelete(e.message, 'Item já enviado para Atualizações', 'Excluir mesmo assim')) return
+      await deleteGeneration(row.uuid, { confirmImported: true })
+    }
+    ElMessage.success('Item excluído.'); afterDelete([row.uuid])
+  } catch (e) { ElMessage.error(e.message || 'Não foi possível excluir.'); load() }
+  finally { deleting.value = '' }
+}
+async function bulk(payload, label) {
+  deleting.value = label
+  try {
+    let result = await deleteGenerations(payload)
+    const imported = (result.blocked || []).filter(item => item.code === 'imported')
+    const names = imported.map(item => { const row = rows.value.find(r => r.uuid === item.uuid); return row?.client_name || row?.filename || item.uuid.slice(0, 8) })
+    if (imported.length && await confirmDelete(`${imported.length === 1 ? '1 item já foi enviado' : imported.length + ' itens já foram enviados'} para Atualizações (${names.join(', ')}). Excluir remove só os arquivos de download; a versão preparada no painel não é afetada. Excluir mesmo assim?`, 'Itens enviados para Atualizações', 'Excluir mesmo assim')) {
+      const more = await deleteGenerations({ uuids: imported.map(item => item.uuid), confirmImported: true })
+      result = { deleted: [...result.deleted, ...more.deleted], blocked: [...(result.blocked || []).filter(item => item.code !== 'imported'), ...more.blocked] }
+    }
+    const kept = (result.blocked || []).length
+    if (result.deleted.length) ElMessage.success(result.deleted.length === 1 ? '1 item excluído.' : result.deleted.length + ' itens excluídos.')
+    if (kept) ElMessage.warning(kept === 1 ? '1 item não foi excluído: ' + result.blocked[0].reason : kept + ' itens não foram excluídos (em andamento ou já enviados).')
+    if (!result.deleted.length && !kept) ElMessage.info('Nada para excluir.')
+    selected.value = []; await load()
+  } catch (e) { ElMessage.error(e.message || 'Não foi possível excluir.') }
+  finally { deleting.value = '' }
+}
+async function removeSelected() {
+  if (!selected.value.length) return
+  if (!await confirmDelete(`Excluir ${selected.value.length === 1 ? '1 item selecionado' : selected.value.length + ' itens selecionados'}? Os arquivos gerados também serão apagados.`, 'Excluir selecionados')) return
+  await bulk({ uuids: [...selected.value] }, 'selected')
+}
+async function clearFailed() {
+  if (!await confirmDelete(`Excluir todos os itens com falha${count.value > 20 ? ', inclusive de outras páginas' : ''}? Itens prontos e em andamento ficam.`, 'Limpar falhas')) return
+  await bulk({ scope: 'failed' }, 'failed')
+}
 function visible() { if (!document.hidden) poll() }
 onMounted(() => { load(); document.addEventListener('visibilitychange', visible) })
 onBeforeUnmount(() => { disposed = true; clearTimeout(timer); document.removeEventListener('visibilitychange', visible) })
@@ -178,6 +261,11 @@ defineExpose({ reload: load })
   &.is-danger { border-left-color: var(--el-color-danger); }
 }
 .nx-generation-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+.nx-generated-bulk { display: flex; justify-content: space-between; align-items: center; gap: 8px 12px; flex-wrap: wrap; margin-top: 14px; padding: 6px 12px; border: 1px solid var(--nx-divider); border-radius: 12px; background: var(--nx-bg);
+  .nx-generated-bulk-actions { display: flex; gap: 8px; flex-wrap: wrap; .el-button { margin: 0; } } }
+.nx-generation.is-selected { border-color: var(--nx-focus); box-shadow: 0 0 0 1px var(--nx-focus); }
+.nx-generation-head > .el-checkbox { height: auto; margin-top: 2px; }
+.nx-generation-remove { display: flex; justify-content: flex-end; margin: -4px 0 -6px; .el-button { margin: 0; } }
 .nx-generation-title { display: grid; gap: 2px; min-width: 0; flex: 1 1 260px; strong { font-size: 15px; line-height: 1.35; color: var(--nx-text); } }
 .nx-generation-meta { color: var(--nx-text-muted); font-size: 13px; }
 .nx-generation-progress { p { margin: 6px 0 0; font-size: 13px; color: var(--nx-text); span { margin-left: 8px; color: var(--nx-text-muted); } } }
@@ -194,6 +282,7 @@ defineExpose({ reload: load })
   .nx-generated { padding: 8px 14px 16px; }
   .nx-generated-head .el-button { width: 100%; }
   .nx-generation { padding: 12px; }
+  .nx-generated-bulk-actions { width: 100%; .el-button { flex: 1 1 100%; } }
   .nx-generation-actions > * { flex: 1 1 100%; justify-content: center; box-sizing: border-box; }
   .nx-generation-actions .nx-send { order: -1; margin-left: 0; }
   .nx-generation-actions .el-button { white-space: normal; height: auto; min-height: 40px; }

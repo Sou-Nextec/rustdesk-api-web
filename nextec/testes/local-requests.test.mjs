@@ -21,3 +21,17 @@ test('Linux-only requests preserve arch, version and hash', () => {
  assert.deepEqual(signingRequest(request),request)
  assert.throws(()=>signingRequest({...request,linux:{...request.linux,unknown:{}}}))
 })
+
+import { normalizePainel } from '../../src/nextec/local-requests.mjs'
+const bundleOk = host => ({painel:host,id:'536822159',uuid:'uuid',bootstrap:'a'.repeat(43)})
+test('painel esperado vem da origem informada, nao de valor fixo', () => {
+ assert.equal(activationBundle(bundleOk('https://novo-painel.exemplo.com.br'),'536822159','https://novo-painel.exemplo.com.br').painel,'https://novo-painel.exemplo.com.br')
+ assert.throws(()=>activationBundle(bundleOk('https://painel-remoto.nex.tec.br'),'536822159','https://novo-painel.exemplo.com.br'))
+})
+test('painel recusa http, credencial, IP literal, porta e caminho', () => {
+ for (const ruim of ['http://painel.exemplo.com','https://user:pw@painel.exemplo.com','https://10.0.0.5','https://painel.exemplo.com:8443','https://painel.exemplo.com/x','https://localhost','https://painel.exemplo.com@evil.com','javascript:alert(1)']) {
+  assert.equal(normalizePainel(ruim), null, ruim)
+  assert.throws(()=>activationBundle(bundleOk(ruim),'536822159',ruim))
+ }
+ assert.equal(normalizePainel('https://Painel.Exemplo.com/'), 'https://painel.exemplo.com')
+})
