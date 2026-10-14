@@ -14,6 +14,37 @@ $script:NextecPainelFixo = 'https://painel-remoto.nex.tec.br'
 $script:NextecTaskName = 'Nextec Acesso - Cadastro de agente'
 $script:NextecProvisionScriptRoot = $PSScriptRoot
 
+# Painel configuravel: o host vem do inscricao.json local (ou do marcador), nunca da rede.
+function ConvertTo-NextecPainelUrl {
+  param([string]$Url)
+  if ([string]::IsNullOrWhiteSpace($Url) -or $Url.Length -gt 253 -or $Url -match '[\s\@]') { return $null }
+  $u = $null
+  if (-not [Uri]::TryCreate($Url.Trim(), [UriKind]::Absolute, [ref]$u)) { return $null }
+  if ($u.Scheme -cne 'https' -or $u.UserInfo -or $u.Query -or $u.Fragment -or $u.AbsolutePath -cne '/' -or -not $u.IsDefaultPort) { return $null }
+  if ($u.HostNameType -ne [UriHostNameType]::Dns) { return $null }
+  if ($u.Host -cnotmatch '^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$') { return $null }
+  return ('https://' + $u.Host)
+}
+
+function Get-NextecPainelConfigurado {
+  param(
+    [string]$Root = (Join-Path $env:ProgramData 'Nextec\Acesso'),
+    [string]$Padrao = 'https://painel-remoto.nex.tec.br'
+  )
+  foreach ($nome in @('inscricao.json', 'nextec-marker.json')) {
+    $arquivo = Join-Path $Root $nome
+    try {
+      if (-not (Test-Path -LiteralPath $arquivo -PathType Leaf)) { continue }
+      if ((Get-Item -LiteralPath $arquivo).Length -gt 4096) { continue }
+      $valor = [IO.File]::ReadAllText($arquivo, [Text.Encoding]::UTF8).TrimStart([char]0xFEFF) | ConvertFrom-Json
+      $painel = ConvertTo-NextecPainelUrl ([string]$valor.painel)
+      if ($painel) { $script:NextecPainelOrigem = $arquivo; return $painel }
+    } catch { }
+  }
+  $script:NextecPainelOrigem = 'padrao'
+  return $Padrao
+}
+
 function Get-NextecProvisionPaths {
   param([string]$Root = (Join-Path $env:ProgramData 'Nextec\Acesso'))
   [pscustomobject]@{
@@ -157,7 +188,7 @@ function New-NextecProposedToken {
 
 function Write-NextecProvisionLog {
   param([Parameter(Mandatory)][string]$Code, [string]$Root = (Join-Path $env:ProgramData 'Nextec\Acesso'))
-  if ($Code -notmatch '^(pending|complete|network_retry|manual_authorization_required|already_configured|identity_conflict|already_enrolled|registration_retry|invalid_input|invalid_panel|invalid_identity|invalid_bootstrap|protocol_error|unsafe_path|component_missing|self_enrolled|self_backoff|self_blocked|self_manual|peer_not_registered|rate_limited)$') { $Code = 'protocol_error' }
+  if ($Code -notmatch '^(pending|complete|network_retry|manual_authorization_required|already_configured|identity_conflict|already_enrolled|registration_retry|invalid_input|invalid_panel|invalid_identity|invalid_bootstrap|protocol_error|unsafe_path|component_missing|self_enrolled|self_backoff|self_blocked|self_manual|peer_not_registered|rate_limited|painel_padrao)$') { $Code = 'protocol_error' }
   $paths = Get-NextecProvisionPaths -Root $Root
   Assert-NextecProvisionPath -Path $paths.Root
   if (-not (Test-Path -LiteralPath $paths.Root -PathType Container)) { Initialize-NextecProvisionDirectory -Root $paths.Root }
@@ -238,14 +269,15 @@ function Read-NextecAgentTokenConfig {
   param([Parameter(Mandatory)][string]$Path)
   $config = Read-NextecProvisionJson -Path $Path
   if (-not $config) { return $null }
-  if ([string]$config.painel -cne $script:NextecPainelFixo -or [string]$config.id -notmatch '^\d{6,64}$' -or -not $config.token) { throw 'protocol_error' }
-  [pscustomobject]@{ painel=[string]$config.painel; id=[string]$config.id; token=(Unprotect-NextecProvisionValue ([string]$config.token)) }
+  if (-not (ConvertTo-NextecPainelUrl ([string]$config.painel)) -or [string]$config.id -notmatch '^\d{6,64}$' -or -not $config.token) { throw 'protocol_error' }
+  # troca de dominio: o painel valido e o configurado hoje, nao o gravado no cadastro
+  [pscustomobject]@{ painel=[string]$script:NextecPainelFixo; id=[string]$config.id; token=(Unprotect-NextecProvisionValue ([string]$config.token)) }
 }
 
 function Invoke-NextecBootstrapPost {
   param([Parameter(Mandatory)][string]$Panel, [Parameter(Mandatory)]$Body)
   $uri = ([Uri]::new($Panel.TrimEnd('/') + '/api/nextec/agent/bootstrap'))
-  if ($uri.Scheme -cne 'https' -or $uri.Host -cne 'painel-remoto.nex.tec.br' -or $uri.UserInfo -or $uri.Query -or $uri.Fragment) { throw 'invalid_panel' }
+  if ($uri.Scheme -cne 'https' -or $uri.Host -cne ([Uri]$script:NextecPainelFixo).Host -or $uri.UserInfo -or $uri.Query -or $uri.Fragment) { throw 'invalid_panel' }
   Invoke-RestMethod -Uri $uri.AbsoluteUri -Method Post -ContentType 'application/json' -Body ($Body | ConvertTo-Json -Compress) -TimeoutSec 30 -MaximumRedirection 0 -UserAgent 'Nextec-Connect-Agent/1'
 }
 
@@ -339,7 +371,7 @@ function Invoke-NextecSelfEnrollPost {
     $target = $TestOrigin + '/api/nextec/agent/self-enroll'
   } else {
     $uri = [Uri]::new($Panel.TrimEnd('/') + '/api/nextec/agent/self-enroll')
-    if ($uri.Scheme -cne 'https' -or $uri.Host -cne 'painel-remoto.nex.tec.br' -or $uri.UserInfo -or $uri.Query -or $uri.Fragment) { throw 'invalid_panel' }
+    if ($uri.Scheme -cne 'https' -or $uri.Host -cne ([Uri]$script:NextecPainelFixo).Host -or $uri.UserInfo -or $uri.Query -or $uri.Fragment) { throw 'invalid_panel' }
     $target = $uri.AbsoluteUri
   }
   try {
@@ -583,9 +615,12 @@ function Receive-NextecBootstrapAuthorization {
   'Autorização temporária gravada em local protegido; o coordenador tentará o cadastro por até 15 minutos.'
 }
 
+# O host do painel vem de inscricao.json (ou do marcador); sem arquivo, cai no padrao antigo com aviso.
+$script:NextecPainelFixo = Get-NextecPainelConfigurado -Root $PastaDados -Padrao $script:NextecPainelFixo
 if ($Receber) { Receive-NextecBootstrapAuthorization -Root $PastaDados; return }
 if ($Executar) {
   try {
+    if ($script:NextecPainelOrigem -ceq 'padrao') { Write-NextecProvisionLog 'painel_padrao' -Root $PastaDados }
     Assert-NextecProvisionFileAcl -Path $PSCommandPath
     Invoke-NextecProvisioning -Root $PastaDados | Out-Null
   }

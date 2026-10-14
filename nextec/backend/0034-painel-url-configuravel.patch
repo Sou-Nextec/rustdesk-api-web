@@ -1,0 +1,253 @@
+diff --git a/http/controller/admin/nextec_bootstrap.go b/http/controller/admin/nextec_bootstrap.go
+index e8b7563..28bea7e 100644
+--- a/http/controller/admin/nextec_bootstrap.go
++++ b/http/controller/admin/nextec_bootstrap.go
+@@ -52,7 +52,16 @@ func (n *NextecBootstrap) Issue(c *gin.Context) {
+ 		c.JSON(http.StatusConflict, gin.H{"error": "bootstrap denied"})
+ 		return
+ 	}
+-	payload := gin.H{"bootstrap": token, "expires_in": 900, "painel": "https://painel-remoto.nex.tec.br", "id": id, "uuid": uuid}
+-	// Keep the original fields for existing bootstrap operators and the panel envelope.
+-	c.JSON(http.StatusOK, gin.H{"code": 0, "data": payload, "bootstrap": token, "expires_in": 900, "painel": "https://painel-remoto.nex.tec.br", "id": id, "uuid": uuid})
++	painel, err := service.NextecPanelURL(c.Request)
++	if err != nil {
++		c.JSON(http.StatusConflict, gin.H{"error": "panel url not configured"})
++		return
++	}
++	c.JSON(http.StatusOK, nextecBootstrapResponse(token, painel, id, uuid))
++}
++
++// nextecBootstrapResponse monta o envelope do painel e mantém os campos originais para operadores existentes.
++func nextecBootstrapResponse(token, painel, id, uuid string) gin.H {
++	payload := gin.H{"bootstrap": token, "expires_in": 900, "painel": painel, "id": id, "uuid": uuid}
++	return gin.H{"code": 0, "data": payload, "bootstrap": token, "expires_in": 900, "painel": painel, "id": id, "uuid": uuid}
+ }
+diff --git a/http/controller/admin/nextec_bootstrap_panel_test.go b/http/controller/admin/nextec_bootstrap_panel_test.go
+new file mode 100644
+index 0000000..46cb621
+--- /dev/null
++++ b/http/controller/admin/nextec_bootstrap_panel_test.go
+@@ -0,0 +1,43 @@
++package admin
++
++import (
++	"encoding/json"
++	"os"
++	"strings"
++	"testing"
++
++	"github.com/lejianwen/rustdesk-api/v2/service"
++)
++
++// Emite o bootstrap como a API emite, com outro domínio, e confere o envelope. Com NEXTEC_E2E_OUT grava a resposta
++// para o teste de ponta a ponta do agente e da interface (node) consumir.
++func TestBootstrapEmiteDominioConfigurado(t *testing.T) {
++	t.Setenv("NEXTEC_PANEL_URL", "https://painel.outro.exemplo")
++	painel, err := service.NextecPanelURL(nil)
++	if err != nil || painel != "https://painel.outro.exemplo" {
++		t.Fatalf("painel: %q %v", painel, err)
++	}
++	body, err := json.Marshal(nextecBootstrapResponse(strings.Repeat("A", 43), painel, "536822159", "uuid-1"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	var got struct {
++		Code int `json:"code"`
++		Data struct {
++			Painel string `json:"painel"`
++			ID     string `json:"id"`
++		} `json:"data"`
++		Painel string `json:"painel"`
++	}
++	if err := json.Unmarshal(body, &got); err != nil {
++		t.Fatal(err)
++	}
++	if got.Data.Painel != painel || got.Painel != painel || got.Data.ID != "536822159" || got.Code != 0 {
++		t.Fatalf("envelope: %s", body)
++	}
++	if out := os.Getenv("NEXTEC_E2E_OUT"); out != "" {
++		if err := os.WriteFile(out, body, 0o644); err != nil {
++			t.Fatal(err)
++		}
++	}
++}
+diff --git a/service/nextec_panel_url.go b/service/nextec_panel_url.go
+new file mode 100644
+index 0000000..4921060
+--- /dev/null
++++ b/service/nextec_panel_url.go
+@@ -0,0 +1,89 @@
++package service
++
++import (
++	"errors"
++	"net"
++	"net/http"
++	"net/url"
++	"os"
++	"regexp"
++	"strings"
++)
++
++// ErrNextecPanelURL indica que não há endereço de painel válido (https, sem credencial, porta, caminho ou IP literal).
++var ErrNextecPanelURL = errors.New("endereço do painel não configurado ou inválido")
++
++var nextecPanelHostRe = regexp.MustCompile(`^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$`)
++
++// NextecPanelURLNormalize aceita somente https://host (mesma regra do agente e da interface:
++// sem credencial, porta, caminho, consulta, IP literal ou nome sem domínio) e devolve https://host em minúsculas.
++func NextecPanelURLNormalize(v string) (string, bool) {
++	v = strings.TrimSpace(v)
++	if v == "" || len(v) > 253 || strings.ContainsAny(v, " \t\r\n\\@?#") {
++		return "", false
++	}
++	u, err := url.Parse(v)
++	if err != nil || u.Scheme != "https" || u.User != nil || u.Port() != "" || (u.Path != "" && u.Path != "/") {
++		return "", false
++	}
++	host := strings.ToLower(u.Hostname())
++	if net.ParseIP(host) != nil || !nextecPanelHostRe.MatchString(host) {
++		return "", false
++	}
++	return "https://" + host, true
++}
++
++// NextecPanelURLConfigured lê a única fonte explícita: NEXTEC_PANEL_URL, depois URL_PAINEL.
++// Valor definido porém inválido não cai em outra fonte (erro visível em vez de emitir endereço errado).
++func NextecPanelURLConfigured() (string, bool, error) {
++	for _, key := range []string{"NEXTEC_PANEL_URL", "URL_PAINEL"} {
++		if raw := strings.TrimSpace(os.Getenv(key)); raw != "" {
++			if v, ok := NextecPanelURLNormalize(raw); ok {
++				return v, true, nil
++			}
++			return "", true, ErrNextecPanelURL
++		}
++	}
++	return "", false, nil
++}
++
++func nextecTrustedProxy(remoteAddr string) bool {
++	host, _, err := net.SplitHostPort(remoteAddr)
++	if err != nil {
++		host = remoteAddr
++	}
++	ip := net.ParseIP(host)
++	return ip != nil && (ip.IsLoopback() || ip.IsPrivate())
++}
++
++// NextecPanelURLFromRequest deriva o endereço do próprio pedido: X-Forwarded-Host/Proto só quando o pedido vem
++// de proxy local ou privado; sem proxy, vale o Host com TLS. Usado apenas quando a stack não define a URL.
++func NextecPanelURLFromRequest(r *http.Request) (string, bool) {
++	if r == nil {
++		return "", false
++	}
++	host, proto := r.Host, "http"
++	if r.TLS != nil {
++		proto = "https"
++	}
++	if nextecTrustedProxy(r.RemoteAddr) {
++		if h := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Host"), ",")[0]); h != "" {
++			host = h
++		}
++		if p := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-Proto"), ",")[0])); p != "" {
++			proto = p
++		}
++	}
++	return NextecPanelURLNormalize(proto + "://" + host)
++}
++
++// NextecPanelURL é a fonte única do endereço do painel emitido pela API (autorização individual, bootstrap, instalação).
++func NextecPanelURL(r *http.Request) (string, error) {
++	if v, set, err := NextecPanelURLConfigured(); set {
++		return v, err
++	}
++	if v, ok := NextecPanelURLFromRequest(r); ok {
++		return v, nil
++	}
++	return "", ErrNextecPanelURL
++}
+diff --git a/service/nextec_panel_url_test.go b/service/nextec_panel_url_test.go
+new file mode 100644
+index 0000000..b88959b
+--- /dev/null
++++ b/service/nextec_panel_url_test.go
+@@ -0,0 +1,79 @@
++package service
++
++import (
++	"crypto/tls"
++	"net/http"
++	"net/http/httptest"
++	"testing"
++)
++
++func TestNextecPanelURLNormalize(t *testing.T) {
++	ok := map[string]string{
++		"https://painel.outro.exemplo":      "https://painel.outro.exemplo",
++		"https://Painel.Outro.Exemplo/":     "https://painel.outro.exemplo",
++		" https://painel-remoto.nex.tec.br": "https://painel-remoto.nex.tec.br",
++	}
++	for in, want := range ok {
++		if got, valid := NextecPanelURLNormalize(in); !valid || got != want {
++			t.Fatalf("%q: got %q %v", in, got, valid)
++		}
++	}
++	for _, bad := range []string{"", "http://painel.exemplo.com", "https://u:p@painel.exemplo.com", "https://10.0.0.5", "https://[::1]",
++		"https://painel.exemplo.com:8443", "https://painel.exemplo.com/x", "https://painel.exemplo.com?a=1", "https://painel.exemplo.com#x",
++		"https://localhost", "https://painel.exemplo.com@evil.com", "painel.exemplo.com", "javascript:alert(1)"} {
++		if got, valid := NextecPanelURLNormalize(bad); valid {
++			t.Fatalf("%q aceito como %q", bad, got)
++		}
++	}
++}
++
++func TestNextecPanelURLEnvTemPrioridadeENaoCaiEmOutraFonte(t *testing.T) {
++	t.Setenv("NEXTEC_PANEL_URL", "")
++	t.Setenv("URL_PAINEL", "https://painel.outro.exemplo")
++	r := httptest.NewRequest("POST", "http://qualquer.exemplo.com/x", nil)
++	if got, err := NextecPanelURL(r); err != nil || got != "https://painel.outro.exemplo" {
++		t.Fatalf("URL_PAINEL: %q %v", got, err)
++	}
++	t.Setenv("NEXTEC_PANEL_URL", "https://novo.exemplo.com.br")
++	if got, err := NextecPanelURL(r); err != nil || got != "https://novo.exemplo.com.br" {
++		t.Fatalf("NEXTEC_PANEL_URL: %q %v", got, err)
++	}
++	t.Setenv("NEXTEC_PANEL_URL", "http://inseguro.exemplo.com")
++	if got, err := NextecPanelURL(r); err == nil {
++		t.Fatalf("valor invalido deveria falhar, veio %q", got)
++	}
++}
++
++func TestNextecPanelURLDerivaDoPedidoSemConfiguracao(t *testing.T) {
++	t.Setenv("NEXTEC_PANEL_URL", "")
++	t.Setenv("URL_PAINEL", "")
++	proxy := httptest.NewRequest("POST", "http://painel-interno:8080/x", nil)
++	proxy.RemoteAddr = "172.18.0.5:44000"
++	proxy.Header.Set("X-Forwarded-Host", "painel.outro.exemplo")
++	proxy.Header.Set("X-Forwarded-Proto", "https")
++	if got, err := NextecPanelURL(proxy); err != nil || got != "https://painel.outro.exemplo" {
++		t.Fatalf("proxy confiavel: %q %v", got, err)
++	}
++	pub := httptest.NewRequest("POST", "http://painel-interno:8080/x", nil)
++	pub.RemoteAddr = "203.0.113.9:5000"
++	pub.Header.Set("X-Forwarded-Host", "evil.exemplo.com")
++	pub.Header.Set("X-Forwarded-Proto", "https")
++	if got, err := NextecPanelURL(pub); err == nil {
++		t.Fatalf("encaminhamento de origem publica aceito: %q", got)
++	}
++	direct := httptest.NewRequest("POST", "https://painel.direto.exemplo/x", nil)
++	direct.RemoteAddr = "203.0.113.9:5000"
++	direct.TLS = &tls.ConnectionState{}
++	if got, err := NextecPanelURL(direct); err != nil || got != "https://painel.direto.exemplo" {
++		t.Fatalf("tls direto: %q %v", got, err)
++	}
++	plain := httptest.NewRequest("POST", "http://painel.exemplo.com/x", nil)
++	plain.RemoteAddr = "203.0.113.9:5000"
++	if _, err := NextecPanelURL(plain); err == nil {
++		t.Fatal("http puro nao pode emitir painel")
++	}
++	var nilReq *http.Request
++	if _, err := NextecPanelURL(nilReq); err == nil {
++		t.Fatal("sem pedido e sem configuracao deve falhar")
++	}
++}

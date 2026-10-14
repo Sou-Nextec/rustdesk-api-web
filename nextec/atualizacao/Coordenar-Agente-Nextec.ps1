@@ -207,6 +207,8 @@ if ($Receber) {
   foreach ($definition in $workerAst.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
     . ([scriptblock]::Create($definition.Extent.Text))
   }
+  # host do painel: inscricao.json/marcador instalado; sem arquivo, o padrao antigo (compat)
+  $script:NextecPainelFixo = Get-NextecPainelConfigurado -Root $PastaDados -Padrao $script:NextecPainelFixo
   $readSelectedFile = { Get-Content -LiteralPath $selectedPath -Raw -Encoding UTF8 }
   try { Receive-NextecBootstrapAuthorization -Root $PastaDados -ReadInput $readSelectedFile }
   finally {

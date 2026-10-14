@@ -246,3 +246,15 @@ Se o cliente não tem regra de senha ligada, o servidor a cria ou religa **dentr
 informado, senão o da regra desligada existente, senão 180 min. Regra já ligada não é alterada. Qualquer recusa (identidade/UUID,
 cliente de outro dono sem `move`, intervalo inválido) desfaz tudo. Auditoria `client_rule_enable` mais `enroll_assign`; a resposta
 traz `group_rule_enabled`. Sem a flag o comportamento do 0031 (`ErrNextecNoGroupRule`) permanece.
+
+## Patch 0034: endereço do painel configurável
+
+A API emite o endereço de `NEXTEC_PANEL_URL`, depois `URL_PAINEL`; sem nenhum, deriva do domínio acessado (proxy local/privado ou TLS direto).
+Só aceita `https://host` (sem porta, caminho, credencial ou IP). Valor definido porém inválido dá erro, não cai em outra fonte.
+
+Série validada sobre `v2.6.29`: 0001..0032 + 0034 aplicam limpas em ordem, e também 0001..0032 + 0033 + 0034 (cenário em que o #82 entra
+antes) e 0001..0032 + 0034 + 0033 (o #82 entra depois). O 0034 só toca `nextec_bootstrap.go` e arquivos novos em `service/` e `admin/`;
+o 0033 toca `http/router/api.go` e cria arquivos novos em `api/` e `service/`, sem sobreposição. Falha anterior do CI: o arquivo do 0034
+tinha fim de linha CRLF e o `git apply` do Linux o rejeitava ("patch failed ... nextec_bootstrap.go:52"); os `.patch` devem ser LF.
+O workflow `Imagem Nextec` agora aplica toda a série em ordem antes do build e aponta qual patch não aplica.
+

@@ -2,11 +2,25 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.11
+
+- **API com o mesmo painel da interface:** a autorização individual do agente (`/secrets/bootstrap`) deixou de emitir `painel-remoto.nex.tec.br` fixo. O endereço vem de uma fonte única: `NEXTEC_PANEL_URL` (a stack repassa `URL_PAINEL`), e, se vazia, do domínio acessado (`X-Forwarded-Host/Proto` só de proxy local ou privado). Valor inválido gera erro claro em vez de emitir endereço errado.
+- **Validação única:** só `https://dominio`, sem credencial, porta, caminho, consulta ou IP literal, igual ao agente e à interface.
+- Patch `0034-painel-url-configuravel.patch` com testes Go (`-race`) e teste de ponta a ponta (resposta da API em `painel.outro.exemplo` aceita pela interface, pelo `.cmd` e pelo provisionador PowerShell 5.1).
+
+## 2.11.10
+
+- **Painel configurável, nada fixo:** os scripts do agente (Windows `.ps1` e Linux `.py` do coordenador) leem o endereço do painel do `inscricao.json` instalado (ou do `nextec-marker.json`), nunca da rede. Trocar de domínio não quebra a frota: o valor do arquivo vence o cadastro antigo e o `-UrlBase` do atualizador.
+- **Validação do host:** só `https://dominio`, sem credencial, IP literal, porta, caminho ou consulta; sem redirecionamento. Sem arquivo (instalação antiga), cai no painel padrão e grava aviso no log.
+- **Tela de ativação:** o painel esperado passa a ser a origem da própria página, em vez de um valor fixo.
+- Novos testes (PowerShell 5.1, Python e node). Pendente: `atualizador-linux.py` e `agente-senha-linux.py` não estão nesta base e precisam do mesmo tratamento; o rdgen deve ressincronizar os scripts e gravar `inscricao.json` com `painel` válido.
+
 ## 2.11.8
 
 - **O gerador obtém a credencial de inscrição sozinho:** a cada build o rdgen busca a credencial vigente no painel pela rede interna da stack (`GET /api/nextec/gen/enroll-key`, protegido pelo segredo compartilhado `GERADOR_SH_SECRET` e recusado quando vem pelo túnel da Cloudflare). Não é mais preciso copiar a credencial para `GERADOR_ENROLL_KEY` no Portainer nem refazer o deploy ao girar: o próximo instalador já sai com a nova. `GERADOR_ENROLL_KEY` virou override opcional (usado só se a busca falhar).
 - Novo patch de backend `0033-gen-enroll-key.patch` (aplicar sobre a série, com a API v2.6.29). **A imagem da API precisa ser reconstruída**; o rdgen precisa da versão com a busca automática.
 - Texto do card "Credencial de inscrição" atualizado: "O gerador usa esta credencial automaticamente". `GERADOR.md` e o cabeçalho da stack também.
+
 ## 2.11.7
 
 - **Atribuir em um clique:** quando o cliente ainda não tem senha automática, o diálogo de Atribuir já vem com "Senha automática do cliente (ligar agora)". Ao confirmar, o servidor liga a regra do cliente e atribui a máquina na mesma transação (patch 0032, `enable_group_rule` em `POST /api/admin/nextec/secrets/assign`). Intervalo padrão de 3 horas, idempotente e auditado (`client_rule_enable`). Identidade (UUID), aprovação e anti-lixo continuam conferidos como antes, e uma recusa não deixa regra ligada pela metade. Sem a flag a API segue recusando, como no patch 0031.
