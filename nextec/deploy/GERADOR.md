@@ -41,6 +41,8 @@ Sem ela o instalador gerado não leva a chave e a máquina não consegue se insc
 Se a credencial for girada no painel, repita os passos 2 a 4 e gere os instaladores de novo. O servidor de API do instalador
 (`NX_API_SERVER`) já usa `URL_PAINEL` (HTTPS do painel, padrão `https://painel-remoto.nex.tec.br`); confira que `URL_PAINEL` está correta.
 
+A API emite a autorização individual do agente (`/secrets/bootstrap`) com esse mesmo endereço (`NEXTEC_PANEL_URL`, vindo de `URL_PAINEL`). Ao trocar de domínio, altere só `URL_PAINEL` e reimplante: interface, API e instaladores novos passam a usar o novo endereço. Agentes já instalados continuam no `inscricao.json` antigo até serem reinstalados.
+
 ## 2. Túnel da Cloudflare (Zero Trust > Networks > Tunnels > o túnel do painel > Public hostnames)
 
 Adicione um hostname **acima** do que já existe para o painel:

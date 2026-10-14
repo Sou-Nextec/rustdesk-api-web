@@ -50,5 +50,27 @@ try {
     $texto = Get-Content -LiteralPath (Join-Path $PSScriptRoot $arquivo) -Raw -Encoding UTF8
     Assert ($texto -notmatch "-cne 'https://painel-remoto|-cne 'painel-remoto") "$arquivo : ainda compara com host fixo"
   }
+  # ponta a ponta simulada: resposta REAL da API (gerada pelo teste Go com outro dominio) aceita pelo provisionador
+  $fixture = Join-Path (Join-Path (Join-Path $PSScriptRoot '..') 'testes\fixtures') 'bootstrap-outro-dominio.json'
+  $resp = [IO.File]::ReadAllText($fixture, [Text.Encoding]::UTF8) | ConvertFrom-Json
+  Assert ($resp.code -eq 0 -and $resp.data.painel -ceq 'https://painel.outro.exemplo') 'fixture da API sem o dominio configurado'
+  $tokens = $null; $errors = $null
+  $ast = [Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Provisionar-Agente-Nextec.ps1'), [ref]$tokens, [ref]$errors)
+  foreach ($n in 'ConvertTo-NextecPainelUrl', 'Get-NextecPainelConfigurado', 'ConvertFrom-NextecStrictBootstrapJson') {
+    $f = $ast.FindAll({ param($x) $x -is [Management.Automation.Language.FunctionDefinitionAst] -and $x.Name -ceq $n }, $true) | Select-Object -First 1
+    Assert $f "$n ausente"
+    . ([scriptblock]::Create($f.Extent.Text))
+  }
+  $e2e = Join-Path $tmp 'e2e'; New-Item -ItemType Directory -Path $e2e -Force | Out-Null
+  @{ v = 1; painel = 'https://painel.outro.exemplo'; chave = 'C' * 20 } | ConvertTo-Json -Compress | Set-Content -LiteralPath (Join-Path $e2e 'inscricao.json') -Encoding UTF8
+  $script:NextecPainelFixo = Get-NextecPainelConfigurado -Root $e2e -Padrao $padrao
+  $autorizacao = [ordered]@{ painel = $resp.data.painel; id = $resp.data.id; uuid = $resp.data.uuid; bootstrap = $resp.data.bootstrap } | ConvertTo-Json -Compress
+  $ok = ConvertFrom-NextecStrictBootstrapJson $autorizacao
+  Assert ($ok.painel -ceq 'https://painel.outro.exemplo' -and $ok.id -ceq '536822159') 'autorizacao do outro dominio recusada'
+  # agente instalado com outro painel recusa a autorizacao deste (trocar de dominio sem reinstalar nao confunde)
+  $script:NextecPainelFixo = $padrao
+  $recusou = $false
+  try { ConvertFrom-NextecStrictBootstrapJson $autorizacao | Out-Null } catch { $recusou = ($_.Exception.Message -ceq 'invalid_panel') }
+  Assert $recusou 'autorizacao de outro painel foi aceita'
   Write-Host 'painel configuravel: OK'
 } finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }

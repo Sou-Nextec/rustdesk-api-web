@@ -2,6 +2,12 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.11
+
+- **API com o mesmo painel da interface:** a autorização individual do agente (`/secrets/bootstrap`) deixou de emitir `painel-remoto.nex.tec.br` fixo. O endereço vem de uma fonte única: `NEXTEC_PANEL_URL` (a stack repassa `URL_PAINEL`), e, se vazia, do domínio acessado (`X-Forwarded-Host/Proto` só de proxy local ou privado). Valor inválido gera erro claro em vez de emitir endereço errado.
+- **Validação única:** só `https://dominio`, sem credencial, porta, caminho, consulta ou IP literal, igual ao agente e à interface.
+- Patch `0034-painel-url-configuravel.patch` com testes Go (`-race`) e teste de ponta a ponta (resposta da API em `painel.outro.exemplo` aceita pela interface, pelo `.cmd` e pelo provisionador PowerShell 5.1).
+
 ## 2.11.10
 
 - **Painel configurável, nada fixo:** os scripts do agente (Windows `.ps1` e Linux `.py` do coordenador) leem o endereço do painel do `inscricao.json` instalado (ou do `nextec-marker.json`), nunca da rede. Trocar de domínio não quebra a frota: o valor do arquivo vence o cadastro antigo e o `-UrlBase` do atualizador.

@@ -3,7 +3,8 @@
 # Variáveis (Portainer > Environment variables):
 #   TUNNEL_TOKEN  obrigatória (token do túnel da Cloudflare)
 #   DOMINIO       padrão remoto.nex.tec.br
-#   URL_PAINEL    padrão https://painel-remoto.nex.tec.br
+#   URL_PAINEL    padrão https://painel-remoto.nex.tec.br (a API emite autorização e instalação com este endereço;
+#                 https, sem porta, caminho, credencial ou IP. Vazia na API, ela deriva do domínio acessado)
 #   PASTA_DADOS   padrão /opt/rustdesk-nextec (guarda data/ e api/ no disco da VPS)
 # Gerador de clientes (rdgen), em ${URL_PAINEL}/gerador. Variáveis do serviço "rdgen":
 #   GERADOR_GH_USER      usuário do GitHub dono do repositório rdgen (padrão Sou-Nextec)
@@ -61,6 +62,8 @@ services:
       - RUSTDESK_API_RUSTDESK_ID_SERVER=${DOMINIO:-remoto.nex.tec.br}:21116
       - RUSTDESK_API_RUSTDESK_RELAY_SERVER=${DOMINIO:-remoto.nex.tec.br}:21117
       - RUSTDESK_API_RUSTDESK_API_SERVER=${URL_PAINEL:-https://painel-remoto.nex.tec.br}
+      # endereço emitido nas autorizações do agente; vazio = a API deriva do domínio acessado (https)
+      - NEXTEC_PANEL_URL=${URL_PAINEL:-}
       - NX_RDGEN_INTERNAL_URL=http://rdgen:8000
       - NX_RDGEN_SHARED_SECRET=${GERADOR_SH_SECRET:-${SH_SECRET:-}}
       - RUSTDESK_API_KEY_FILE=/data/id_ed25519.pub
