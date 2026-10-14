@@ -22,7 +22,10 @@ from manifest import validate
 
 
 PRODUCT = "nextec-connect"
-APP_NAME = "Nextec-Connect"
+# O nome do app é livre (Nextec-Connect, Client-Nextec-Connect, XPTO...): o pedido pode trazer "app_name" e o
+# ProductName do MSI precisa ser exatamente esse. Sem "app_name", basta um nome seguro (o hash já é fixo no pedido).
+APP_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}\Z")
+DEB_PACKAGE_RE = re.compile(r"[a-z0-9][a-z0-9+.-]{1,63}\Z")
 VERSION_RE = re.compile(r"\d{1,4}\.\d{1,4}\.\d{1,4}(?:\.\d{1,4})?\Z")
 MAX_SEQUENCE = 9007199254740991
 MAX_ASSET_SIZE = 300 * 1024 * 1024
@@ -109,12 +112,16 @@ def parse_request(raw):
         request = json.loads(raw.decode("utf-8-sig"), object_pairs_hook=_unique_object)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError("Pedido JSON inválido.") from exc
-    if not isinstance(request, dict) or set(request) - {"produto", "formato", "versao", "sequencia", "windows", "linux"}:
+    if not isinstance(request, dict) or set(request) - {"produto", "formato", "versao", "sequencia", "windows", "linux", "app_name"}:
         raise ValueError("Formato de pedido não permitido.")
     if not {"produto", "formato", "versao", "sequencia"}.issubset(request):
         raise ValueError("Campos principais do pedido estão ausentes.")
     if request["produto"] != PRODUCT or type(request["formato"]) is not int or request["formato"] != 1:
         raise ValueError("Pedido não é uma release Connect compatível.")
+    if "app_name" in request:
+        app_name = request["app_name"]
+        if not isinstance(app_name, str) or not APP_NAME_RE.fullmatch(app_name):
+            raise ValueError("Nome do app inválido no pedido.")
     version = request["versao"]
     if not isinstance(version, str) or not VERSION_RE.fullmatch(version):
         raise ValueError("Versão da release inválida.")
@@ -203,8 +210,13 @@ def inspect_msi(msi_path, request, *, property_reader=read_msi_properties):
     if size != windows["tamanho"] or digest.hexdigest() != windows["sha256"]:
         raise ValueError("Hash ou tamanho do MSI local não corresponde ao pedido.")
     properties = property_reader(path)
-    if properties.get("ProductName") != APP_NAME:
-        raise ValueError("O MSI não é o pacote Nextec-Connect esperado.")
+    product_name = properties.get("ProductName")
+    expected_name = request.get("app_name")
+    if expected_name is not None:
+        if product_name != expected_name:
+            raise ValueError("O ProductName do MSI não corresponde ao app_name do pedido.")
+    elif not isinstance(product_name, str) or not APP_NAME_RE.fullmatch(product_name):
+        raise ValueError("O MSI não traz um ProductName válido.")
     # WiX generated packages append a zero revision to the semantic release.
     # Accept only that exact representation, never arbitrary version prefixes.
     if properties.get("ProductVersion") not in (request["versao"], request["versao"] + ".0"):
@@ -322,8 +334,9 @@ def inspect_deb(deb_path, request, arch):
     if len(controls) != 1:
         raise ValueError("O DEB precisa ter exatamente um arquivo control.")
     fields = _read_deb_control(controls[0])
-    if fields.get("Package") != "nextec-connect":
-        raise ValueError(f"O DEB {arch} não é o pacote nextec-connect esperado.")
+    package = fields.get("Package")
+    if not isinstance(package, str) or not DEB_PACKAGE_RE.fullmatch(package):
+        raise ValueError(f"O DEB {arch} não traz um nome de pacote válido.")
     if fields.get("Version") != request["versao"]:
         raise ValueError(f"Version do DEB {arch} não corresponde à versão pedida.")
     if fields.get("Architecture") != arch:

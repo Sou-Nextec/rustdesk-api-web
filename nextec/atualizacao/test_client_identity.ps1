@@ -80,7 +80,7 @@ try {
     $b = New-TestClient -Root $base -AppName 'RustDesk'
     $failure = ''
     try {
-      Get-NextecInstalledClient -Services @($a.Service, $b.Service) -ProfileRootBase $base `
+      Get-NextecInstalledClient -Services @($a.Service, $b.Service) -ProfileRootBase $base -Marker ([pscustomobject]@{ AppName = '' }) `
         -PeerIdReader { param($service, $exe) '812345678' } | Out-Null
     } catch { $failure = $_.Exception.Message }
     Assert-True ($failure -match 'múltiplos serviços/instalações encontrados' -and $failure -match 'Nextec-Connect' -and $failure -match 'RustDesk') 'o teste precisa encontrar duas instalações reais no mesmo perfil e rejeitá-las como múltiplas'
@@ -91,6 +91,33 @@ try {
     $client = Get-NextecInstalledClient -Services @($fixture.Service) -ProfileRootBase (Join-Path $temp 'custom') `
       -PeerIdReader { param($service, $exe) $fixture.PeerId }
     Assert-True ($client.ConfigRoot -match 'Suporte-Nextec\\config$') 'nome personalizado do executável não determinou o perfil'
+  }
+
+  foreach ($appName in @('XPTO', 'Nextec-Connect', 'Client-Nextec-Connect')) {
+    Invoke-Test "Identity_MarkerChoosesApp_$appName" {
+      $base = Join-Path $temp ('marker-' + $appName)
+      $mine = New-TestClient -Root $base -AppName $appName -PeerId '711111111'
+      $other = New-TestClient -Root $base -AppName 'RustDesk' -PeerId '722222222'
+      # sem marcador: duas instalações são ambíguas
+      $failure = ''
+      try { Get-NextecInstalledClient -Services @($other.Service, $mine.Service) -ProfileRootBase $base -Marker ([pscustomobject]@{ AppName = '' }) -PeerIdReader { '711111111' } | Out-Null } catch { $failure = $_.Exception.Message }
+      Assert-True ($failure -match 'múltiplos serviços') 'sem marcador deveria ser ambíguo'
+      # marcador AppName escolhe o serviço certo, qualquer que seja o nome
+      $client = Get-NextecInstalledClient -Services @($other.Service, $mine.Service) -ProfileRootBase $base -Marker ([pscustomobject]@{ AppName = $appName }) -PeerIdReader { '711111111' }
+      Assert-True ($client.ServiceName -eq $appName) "marcador deveria escolher $appName"
+      Assert-True ($client.ConfigRoot -match ([regex]::Escape($appName) + '\\config$')) 'pasta de config deve derivar do AppName'
+      # marcador em arquivo nextec-marker.json (app_name)
+      $mf = Join-Path $base 'nextec-marker.json'
+      [IO.File]::WriteAllText($mf, (@{ app_name = $appName; install_dir = $base } | ConvertTo-Json), (New-Object Text.UTF8Encoding($false)))
+      $client = Get-NextecInstalledClient -Services @($other.Service, $mine.Service) -ProfileRootBase $base -MarkerFile $mf -PeerIdReader { '711111111' }
+      Assert-True ($client.ServiceName -eq $appName) "arquivo de marcador deveria escolher $appName"
+    }
+  }
+
+  Invoke-Test 'Identity_NoneFoundListsWhatWasSearched' {
+    $failure = ''
+    try { Get-NextecInstalledClient -Services @() -Marker ([pscustomobject]@{ AppName = 'XPTO' }) | Out-Null } catch { $failure = $_.Exception.Message }
+    Assert-True ($failure -match '^identity_conflict: nenhum serviço instalado do RustDesk/Nextec foi encontrado' -and $failure -match 'Procurado' -and $failure -match 'XPTO') 'mensagem deve listar o que foi procurado'
   }
 
   Invoke-Test 'Identity_AnyDeskServiceIsNotAnotherRustDeskInstall' {
