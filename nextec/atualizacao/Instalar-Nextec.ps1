@@ -332,6 +332,23 @@ function Get-NextecInstalledClient {
   }
 }
 
+# Sessao remota em andamento: o RustDesk mantem um processo `--cm` (gerenciador de conexao) enquanto alguem esta conectado.
+# Atualizar nessa hora reinicia o servico e derruba o tecnico. Sem ExePath vale qualquer cliente RustDesk.
+function Test-NextecSessaoAtiva {
+  param([object[]]$Processos, [string]$ExePath = '')
+  if ($null -eq $Processos) {
+    try { $Processos = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop) } catch { return $false }
+  }
+  foreach ($p in $Processos) {
+    $linha = [string]$p.CommandLine
+    if ($linha -notmatch '(?i)\s--cm(-no-ui)?(\s|"|$)') { continue }
+    $dono = [string]$p.ExecutablePath
+    if ($ExePath -and $dono -and ($dono -ine $ExePath)) { continue }
+    return $true
+  }
+  return $false
+}
+
 function IdDoRustDesk {
   try { return (Get-NextecInstalledClient).PeerId }
   catch {
@@ -511,6 +528,17 @@ try {
 
   $precisa = $Forcar -or (-not $instalada) -or ([version]$alvo.versao -ne [version]$instalada)
   if (-not $precisa) { Escrever 'Já está na versão publicada. Nada a fazer.'; return }
+
+  # Não derruba um atendimento: com sessão remota ativa a atualização fica para a próxima verificação (diária).
+  # -Forcar ignora (uso manual do administrador).
+  if (-not $Forcar -and -not $SoVerificar -and $instalada) {
+    $exeAtual = ''
+    try { $exeAtual = [string](Get-NextecInstalledClient).ExePath } catch { $exeAtual = '' }
+    if (Test-NextecSessaoAtiva -ExePath $exeAtual) {
+      Escrever "Há uma sessão remota em andamento: a atualização para $($alvo.versao) fica para a próxima verificação."
+      return
+    }
+  }
 
   # 3. baixar e conferir
   $tmp = Join-Path (Join-Path $Pasta 'download') ([Guid]::NewGuid().ToString('N'))
