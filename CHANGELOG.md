@@ -2,6 +2,15 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.12.0
+
+Instalador por cliente: instalou, apareceu, já está no cliente e com a senha automática (patch 0035 da API, gerador 2.4.0).
+
+- **Credencial por cliente (`nx2.<cliente>.<época>.<assinatura>`):** a máquina que se inscreve com ela entra **aprovada no cliente da credencial**, sem passar por Pendentes e sem Atribuir. Se o cliente não tem regra de senha, a regra é ligada na primeira máquina (como o Atribuir faz); se o admin a desligou de propósito, a máquina entra aprovada e sem senha automática. Nunca move máquina que já é de outro cliente (ela fica pendente para você decidir), respeita bloqueio por ID + UUID e os mesmos limites de inscrição. **Girar a chave de inscrição** revoga a global e todas as de cliente.
+- **Menu Clientes > Baixar instalador deste cliente:** abre o gerador com o cliente já escolhido. O formulário do gerador ganhou o seletor **Cliente do painel** (lista vinda do painel); sem escolher, o instalador continua geral e a máquina entra em Pendentes.
+- **Rotas internas do gerador:** `GET /api/nextec/gen/enroll-key?group=<id>` e `GET /api/nextec/gen/clients` (mesmo segredo e mesmas travas da rota da chave global; nunca pelo túnel).
+- **Exige:** patch 0035 (vem na imagem do painel) e o gerador 2.4.0. Sem o gerador novo nada muda: o instalador geral continua funcionando.
+
 ## 2.11.16
 
 Estabilização do agente no cliente (Fase 1). Nenhuma mudança de tela; vale para os próximos instaladores gerados.

@@ -36,6 +36,7 @@
                   <el-dropdown-menu>
                     <el-dropdown-item v-if="!row.isSub" command="subs">Adicionar subgrupos</el-dropdown-item>
                     <el-dropdown-item command="devices">Ver dispositivos</el-dropdown-item>
+                    <el-dropdown-item v-if="!row.isSub" command="installer">Baixar instalador deste cliente</el-dropdown-item>
                     <el-dropdown-item command="install">Comando de instalação</el-dropdown-item>
                     <el-dropdown-item command="delete" divided><span class="nx-danger-text">Excluir</span></el-dropdown-item>
                   </el-dropdown-menu>
@@ -387,6 +388,7 @@
   const onRow = async (cmd, row) => {
     if (cmd === 'subs') Object.assign(sb, { visible: true, parent: row, text: '', access: { teams: [], users: [], rule: 1 } })
     if (cmd === 'install') openInstall(row)
+    if (cmd === 'installer') router.push({ path: '/user/generator', query: { cliente: String(row.id) } })
     if (cmd === 'devices') router.push({ path: '/user/peer', query: { client: String(row.id) } })
     if (cmd === 'delete') {
       const subs = row.isSub ? [] : row.children

@@ -258,3 +258,21 @@ o 0033 toca `http/router/api.go` e cria arquivos novos em `api/` e `service/`, s
 tinha fim de linha CRLF e o `git apply` do Linux o rejeitava ("patch failed ... nextec_bootstrap.go:52"); os `.patch` devem ser LF.
 O workflow `Imagem Nextec` agora aplica toda a série em ordem antes do build e aponta qual patch não aplica.
 
+
+## Patch 0035: inscrição por cliente
+
+Credencial `nx2.<cliente>.<época>.<HMAC-SHA256(chave do cofre, "enroll2:"+cliente+":"+época)>`, na mesma época da credencial global (girar
+a global invalida as de cliente). `NextecSelfEnroll` reconhece o prefixo `nx2.`, confere cliente existente e, depois de gravar a pendente,
+chama `NextecEnrollAssign` com `Username "inscricao-por-cliente"`:
+
+- cliente com regra ligada: `rule=group`;
+- cliente que nunca teve regra: `rule=group` + `enable_group_rule` (liga na primeira máquina, auditado como `client_rule_enable`);
+- regra desligada pelo admin: `rule=none` (aprovada, sem senha automática; a regra não é religada);
+- máquina que já está em outro cliente, cliente apagado ou identidade divergente: fica **pendente** (a inscrição não falha).
+
+A resposta do self-enroll devolve `state: "assigned"` quando aprovou e `pending` quando não. Repetição com o mesmo token é idempotente e
+tenta aprovar de novo uma pendente. Rotas internas do gerador (mesmo segredo `X-Nextec-Gen-Secret`, nunca pelo túnel):
+`GET /api/nextec/gen/enroll-key?group=<id>` (`{enroll_key, epoch, client_id, client_name}`; 404 `client_not_found`; 400 para `group` inválido,
+nunca cai na global em silêncio) e `GET /api/nextec/gen/clients` (`{clients:[{id,name}]}`, por nome, máximo 1000).
+Testes: `service/nextec_client_enroll_test.go` e `http/controller/api/nextec_genclient_test.go`. Rollback: remover o patch; as máquinas já
+aprovadas continuam como estão e as credenciais `nx2` passam a ser recusadas (401).
