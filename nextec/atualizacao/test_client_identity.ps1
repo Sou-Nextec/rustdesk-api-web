@@ -221,6 +221,14 @@ try {
       catch { $failed = $_.Exception.Message -match 'password_apply_failed' }
       Assert-True $failed "saída ambígua ou falha deveria ser recusada: ExitCode=$($result.ExitCode), Output=$($result.Output)"
     }
+    # a resposta do cliente aparece no erro (diagnostico de campo), limitada e so ASCII
+    $msg = ''
+    try { Assert-NextecPasswordApplied -Result ([pscustomobject]@{ ExitCode = 0; Output = "linha
+Installation and administrative privileges required!" }) } catch { $msg = $_.Exception.Message }
+    Assert-True ($msg -match 'resposta: Installation and administrative privileges required!') 'a resposta do cliente deve acompanhar o erro'
+    $msg = ''
+    try { Assert-NextecPasswordApplied -Result ([pscustomobject]@{ ExitCode = 0; Output = ('x' * 400) }) } catch { $msg = $_.Exception.Message }
+    Assert-True ($msg.Length -lt 260) 'a resposta do cliente precisa ser truncada'
   }
 
   Invoke-Test 'AgentAcl_ReplacesExplicitUsersRules' {
