@@ -68,8 +68,18 @@ PY
   bancos=$((bancos + 1))
 }
 
-for f in "$PASTA"/data/id_ed25519 "$PASTA"/data/id_ed25519.pub "$PASTA"/data/nextec-vault.key "$PASTA"/data/nextec-settings.json; do
-  [ -f "$f" ] && cp -p "$f" "$stage/" || true
+# Arquivo AUSENTE pode ser opcional; arquivo PRESENTE que nao copia aborta tudo (nada e publicado nem rotacionado).
+copiar() {
+  local origem="$1" destino="$2"
+  cp -a "$origem" "$destino" || falha "não foi possível copiar $origem. Nada foi gravado."
+}
+# A chave do servidor de ID e obrigatoria: sem ela, restaurar perde a identidade que os clientes reconhecem.
+for f in id_ed25519 id_ed25519.pub; do
+  [ -f "$PASTA/data/$f" ] || falha "data/$f não existe em $PASTA: confira PASTA. Nada foi gravado."
+  copiar "$PASTA/data/$f" "$stage/"
+done
+for f in nextec-vault.key nextec-settings.json; do
+  if [ -f "$PASTA/data/$f" ]; then copiar "$PASTA/data/$f" "$stage/"; fi
 done
 bancos=0
 for db in "$PASTA"/data/db_v2.sqlite3 "$PASTA"/data/*.sqlite3; do
@@ -79,9 +89,11 @@ done
 [ "$bancos" -gt 0 ] || falha "nenhum banco (*.sqlite3) em $PASTA/data: confira PASTA. Nada foi gravado."
 
 # arquivos de atualização publicados e configurações da API, se existirem
-for d in updates conf; do [ -d "$PASTA/data/$d" ] && cp -a "$PASTA/data/$d" "$stage/" || true; done
-[ -d "$PASTA/api" ] && cp -a "$PASTA/api" "$stage/api" || true
-cp -p "$PASTA"/.env "$stage/" 2>/dev/null || true
+for d in updates conf; do
+  if [ -d "$PASTA/data/$d" ]; then copiar "$PASTA/data/$d" "$stage/"; fi
+done
+if [ -d "$PASTA/api" ]; then copiar "$PASTA/api" "$stage/api"; fi
+if [ -f "$PASTA/.env" ]; then copiar "$PASTA/.env" "$stage/"; fi
 
 # sem a chave do cofre as senhas do backup sao ilegiveis: so segue se ela vier pela variavel NEXTEC_VAULT_KEY no .env salvo
 if [ ! -f "$stage/nextec-vault.key" ]; then

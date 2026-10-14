@@ -31,6 +31,10 @@ jobs:
       - name: Navegacao entre telas (monta o painel e percorre as rotas A, B, A, C)
         run: npx vitest run --config vitest.config.mjs
       - run: npm run build
+      - name: Backup do cofre (copia falha aborta, sem banco ou chave falha)
+        run: |
+          sudo apt-get install -y -qq sqlite3 >/dev/null
+          bash nextec/deploy/test_backup_cofre.sh
 
   identity:
     runs-on: windows-2022
