@@ -154,6 +154,7 @@
               <span>{{ contact(row).headline }}</span>
               <span class="nx-muted nx-small"> · {{ contact(row).detail }}</span>
               <div class="nx-muted nx-small nx-next-check">{{ nextCheckText(row) }}</div>
+              <div v-if="row.app_name" class="nx-muted nx-small nx-app-name">App {{ row.app_name }}</div>
             </div>
             <div v-else-if="contact(row).state === 'parado'" class="nx-stalled" role="status">
               <span class="nx-dot is-warn" aria-hidden="true"></span>

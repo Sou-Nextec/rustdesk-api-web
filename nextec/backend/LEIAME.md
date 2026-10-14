@@ -296,3 +296,31 @@ O agente consulta o painel uma vez por minuto (2.11.21). O patch acrescenta, em 
 - Testes: `service/nextec_agent_ratelimit_test.go` (ritmo de 1 por minuto por 4 horas, laço, concorrência com `-race`, log limitado, varredura) e `http/controller/api/nextec_agent_ratelimit_test.go` (429 com `Retry-After`).
 - **Intervalo real do agente (fonte única do estado):** `POST /api/nextec/agent/sync` aceita `interval_seconds` (opcional, normalizado para 30..3600; sem o campo grava 0 = agente antigo de 5 min). Coluna aditiva `nextec_device_secrets.sync_interval_seconds`. `NextecAgentStateAt` considera ativo quando `last_sync_at` está dentro de 3 intervalos (`NextecAgentActiveWindowSeconds`, mínimo 180 s, máximo 900 s). `GET /nextec/secrets` devolve `devices[].active_window_seconds` e `sync_interval_seconds`; o painel só exibe `agent_state`. Testes: `service/nextec_agent_interval_test.go` e `http/controller/api/nextec_agent_interval_test.go`.
 - Numeração: série contígua na ordem da fila de merge (#93, #94, #92): 0035 estado do agente, 0036 este patch (antes 0037), 0037 nome do app por máquina. 0001..0036 aplicam limpas em ordem sobre `v2.6.29` (`git apply --check` sequencial).
+## Patch 0037: nome do app por máquina e protocolo do link
+
+O RustDesk registra no sistema o protocolo com o nome do app em minúsculas. O patch 0020 guarda um protocolo global; este
+passa a usar o da própria máquina, descoberto por dados, com o global como fallback.
+
+- **Coluna aditiva** `nextec_device_secrets.app_name` (`AutoMigrate`, padrão vazio, sem migração de dados). Rollback: remover o
+  patch deixa a coluna sem uso.
+- **Entrada:** `POST /api/nextec/agent/sync` aceita `app_name` (opcional). O agente lê o `AppName` do marcador
+  (`HKLM\SOFTWARE\Nextec\Agente` ou `nextec-marker.json`) e envia a cada verificação. Validação `^[A-Za-z0-9-]{1,64}$`: valor
+  inválido ou ausente é ignorado e o sync responde normalmente (agente antigo e painel antigo seguem funcionando). Só grava com o
+  token autenticado da máquina.
+- **Derivação:** protocolo = nome em minúsculas, desde que sirva de protocolo (`^[a-z][a-z0-9+.-]{1,31}$`) e não esteja na lista
+  proibida (`http`, `https`, `file`, `ftp`, `ws`, `wss`, `javascript`, `vbscript`, `data`, `blob`, `about`, `mailto`, `tel`, `sms`,
+  `chrome`, `edge`, `view-source`, `ms-msdt`, `search-ms`), porque o link leva a senha da máquina. Só máquina **aprovada** decide o
+  protocolo (inscrição pendente usa o global). Sem nome válido: protocolo global (`NextecConnectSchemeGet`, padrão `rustdesk`).
+- **Saída:** `GET /my/connect-link` mantém `url` e `auto_password` e acrescenta `scheme`, `scheme_source` (`machine` ou `global`),
+  `app_name`, `agent_enrolled`, `agent_active` e `agent_state` (mesma regra da lista do cofre: consulta real dentro de 3 intervalos do agente), `password_state` (`none`, `pending_approval`,
+  `waiting_first`, `ready`, `restricted`), `last_seen_at`, `last_sync_at` e `interval_minutes`. `GET /nextec/secrets` ganhou `devices[].app_name`,
+  `scheme` e `scheme_source`.
+- **Painel:** o link é o do servidor, sem alteração. O front só decide se abre direto (lembrança por protocolo no navegador ou
+  agente ativo) e se avisa que a primeira senha ainda não foi aplicada.
+- **Mesma escrita do sync:** `app_name` entra em `NextecAgentReport` e é gravado na mesma atualização de `last_sync_at`,
+  `last_error` (0035) e `sync_interval_seconds` (0036), só com o token autenticado; nome inválido ou ausente não muda o gravado.
+- **Série:** 0001..0037 aplicam limpas em ordem sobre `v2.6.29` (`git apply --check` sequencial). Toca
+  `model/nextec_secret.go`, `service/nextec_secret.go`, `http/controller/api/nextec_agent.go`,
+  `http/controller/admin/my/nextec_connect.go` e cria `service/nextec_appname.go` (+ testes, inclusive
+  `service/nextec_agent_sync_unified_test.go`).
+- Testes: `service/nextec_appname_test.go` e `http/controller/api/nextec_appname_test.go` (rodam no build da imagem; também com `-race`).
