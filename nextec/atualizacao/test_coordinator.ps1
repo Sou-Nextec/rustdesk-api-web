@@ -219,16 +219,104 @@ try {
     Write-Host 'PASS ExpiredJournal_ExplicitNewAuthorizationCanRecover'
   } finally { $script:json = $oldJson }
 
+  # Campo: agente antigo com credencial morta (401) e autorizacao nova do painel. O painel so emite autorizacao
+  # para maquina sem agente ativo, entao a credencial local e velha: vai para .anterior e o cadastro segue.
   New-CaseRoot
   $paths = Get-NextecProvisionPaths -Root $script:root
   Save-NextecAgentTokenConfig -Path $paths.AgentConfig -Panel $script:NextecPainelFixo -Id '536822159' -Token 'existing-token'
   Add-AuthorizationFile
-  $rejected=$false
-  try { Invoke-TestProvision } catch { $rejected=($_.Exception.Message -eq 'already_enrolled') }
-  Assert $rejected 'Existing agent token was overwritten'
-  Assert ($script:postCalls.Count -eq 0) 'Bootstrap issued for an already configured agent'
-  Assert ((Read-NextecAgentTokenConfig -Path $paths.AgentConfig).token -eq 'existing-token') 'Existing token changed'
-  Write-Host 'PASS ExistingAgent_NeverReenrolled'
+  $result = Invoke-TestProvision
+  Assert ($result -eq 'complete') 'Explicit authorization did not replace the stale agent credential'
+  Assert ($script:postCalls.Count -eq 1) 'Bootstrap was not sent after replacing the stale credential'
+  Assert ((Read-NextecAgentTokenConfig -Path $paths.AgentConfig).token -eq 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA') 'New token was not saved'
+  Assert (Test-Path -LiteralPath ($paths.AgentConfig + '.anterior')) 'Stale credential was not kept aside'
+  Assert ($script:logs -contains 'agent_config_replaced') 'Replacement was not logged'
+  Assert (-not (Test-Path -LiteralPath $paths.Input)) 'Authorization file stayed on disk'
+  Write-Host 'PASS StaleAgent_ReplacedByExplicitAuthorization'
+
+  New-CaseRoot
+  $paths = Get-NextecProvisionPaths -Root $script:root
+  Save-NextecAgentTokenConfig -Path $paths.AgentConfig -Panel $script:NextecPainelFixo -Id '111111111' -Token 'old-id-token'
+  $result = Invoke-TestProvision
+  Assert ($result -eq 'manual_authorization_required') 'Credential of another ID should be retired and fall back to enrollment'
+  Assert (-not (Test-Path -LiteralPath $paths.AgentConfig)) 'Credential of another ID stayed active'
+  Assert (Test-Path -LiteralPath ($paths.AgentConfig + '.anterior')) 'Credential of another ID was not kept aside'
+  Assert ($script:logs -contains 'identity_changed') 'ID change was not logged'
+  Write-Host 'PASS ChangedId_RetiresCredentialInsteadOfLoopingForever'
+
+  New-CaseRoot
+  $paths = Get-NextecProvisionPaths -Root $script:root
+  Set-Content -LiteralPath $paths.AgentConfig -Value '{ formato antigo quebrado' -Encoding UTF8
+  $result = Invoke-TestProvision
+  Assert (-not (Test-Path -LiteralPath $paths.AgentConfig)) 'Unreadable credential stayed in place'
+  Assert ($script:logs -contains 'agent_config_unreadable') 'Unreadable credential was not logged'
+  Write-Host 'PASS UnreadableCredential_IsRetired'
+
+  New-CaseRoot
+  $paths = Get-NextecProvisionPaths -Root $script:root
+  Save-NextecAgentTokenConfig -Path $paths.AgentConfig -Panel $script:NextecPainelFixo -Id '536822159' -Token 'good-token'
+  $result = Invoke-NextecProvisioning -Root $script:root -DiscoverId { '536822159' } -Now $script:current -RegisterAgent { param($path) $script:registerCalls.Add($path) | Out-Null } -AgentTaskReady { param($r) $true }
+  Assert ($result -eq 'already_configured' -and $script:registerCalls.Count -eq 0) 'Ready password task must not be re-registered every cycle'
+  $result = Invoke-NextecProvisioning -Root $script:root -DiscoverId { '536822159' } -Now $script:current -RegisterAgent { param($path) $script:registerCalls.Add($path) | Out-Null } -AgentTaskReady { param($r) $false }
+  Assert ($result -eq 'already_configured' -and $script:registerCalls.Count -eq 1) 'Missing password task must be registered'
+  Write-Host 'PASS ConfiguredAgent_RegistersTaskOnlyWhenMissing'
+
+  New-CaseRoot
+  $paths = Get-NextecProvisionPaths -Root $script:root
+  Add-AuthorizationFile
+  $failure = ''
+  try { Invoke-TestProvision -Id '999999999' | Out-Null } catch { $failure = $_.Exception.Message }
+  Assert ($failure -eq 'identity_conflict') 'Authorization of another machine must be refused'
+  Assert (-not (Test-Path -LiteralPath $paths.Input)) 'Refused authorization stayed on disk and would block the next ones'
+  Write-Host 'PASS WrongMachineAuthorization_IsDiscarded'
+
+  # Revisao #87 P1: a credencial existente so e aposentada DEPOIS de o servidor aceitar o cadastro novo.
+  foreach ($falha in @(
+      @{ Nome = 'recusa 401'; Status = 401 },
+      @{ Nome = 'conflito 409'; Status = 409 },
+      @{ Nome = 'rede'; Status = 0 })) {
+    New-CaseRoot
+    $paths = Get-NextecProvisionPaths -Root $script:root
+    Save-NextecAgentTokenConfig -Path $paths.AgentConfig -Panel $script:NextecPainelFixo -Id '536822159' -Token 'token-que-funciona'
+    Add-AuthorizationFile
+    $status = $falha.Status
+    $post = {
+      param($panel, $body)
+      $script:postCalls.Add([pscustomobject]@{ panel = $panel; body = $body }) | Out-Null
+      if ($status -eq 0) { throw [Net.WebException]::new('sem rede') }
+      $ex = [Net.WebException]::new('http ' + $status)
+      $resp = [pscustomobject]@{ StatusCode = $status }
+      $ex | Add-Member -NotePropertyName Response -NotePropertyValue $resp -Force
+      throw $ex
+    }.GetNewClosure()
+    try { Invoke-TestProvision -Post $post | Out-Null } catch { }
+    Assert (Test-Path -LiteralPath $paths.AgentConfig) "credencial existente sumiu depois de $($falha.Nome)"
+    Assert ((Read-NextecAgentTokenConfig -Path $paths.AgentConfig).token -eq 'token-que-funciona') "credencial existente foi alterada depois de $($falha.Nome)"
+    Assert (-not (Test-Path -LiteralPath ($paths.AgentConfig + '.anterior'))) "credencial foi guardada em .anterior sem o servidor aceitar ($($falha.Nome))"
+  }
+  Write-Host 'PASS StaleAgent_KeptUntilServerAcceptsNewEnrollment'
+
+  # Revisao #87 P2: tarefa de senha so vale com conta SYSTEM, powershell.exe do sistema, script e -Executar certos e 5 minutos.
+  $rootTask = 'C:\ProgramData\Nextec\Acesso'
+  $psExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  function New-FakeTask($user = 'SYSTEM', $exe = $psExe, $args2 = '-NoProfile -ExecutionPolicy Bypass -File "C:\ProgramData\Nextec\Acesso\Agente-Senha-Nextec.ps1" -Executar', $interval = 'PT5M', $state = 'Ready') {
+    [pscustomobject]@{
+      State = $state
+      Principal = [pscustomobject]@{ UserId = $user }
+      Actions = @([pscustomobject]@{ Execute = $exe; Arguments = $args2 })
+      Triggers = @([pscustomobject]@{ Repetition = [pscustomobject]@{ Interval = $interval } })
+    }
+  }
+  Assert (Test-NextecAgentTaskShape -Task (New-FakeTask) -Root $rootTask) 'tarefa correta foi recusada'
+  Assert (Test-NextecAgentTaskShape -Task (New-FakeTask -user 'S-1-5-18') -Root $rootTask) 'SID do SYSTEM deve valer'
+  Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -user 'BUILTIN\Users') -Root $rootTask)) 'conta comum nao pode valer'
+  Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -exe 'C:\Temp\powershell.exe') -Root $rootTask)) 'executavel diferente nao pode valer'
+  Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -args2 '-NoProfile -File "C:\ProgramData\Nextec\Acesso\Agente-Senha-Nextec.ps1"') -Root $rootTask)) 'sem -Executar nao pode valer'
+  Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -args2 '-File "C:\Outro\Agente-Senha-Nextec.ps1" -Executar') -Root $rootTask)) 'script em outra pasta nao pode valer'
+  Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -interval 'PT1H') -Root $rootTask)) 'periodicidade diferente nao pode valer'
+  Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -state 'Disabled') -Root $rootTask)) 'tarefa desabilitada nao pode valer'
+  Write-Host 'PASS AgentTask_ShapeIsFullyValidated'
+
 
   New-CaseRoot
   $script:taskRegistration=$null
@@ -252,6 +340,47 @@ try {
   Register-NextecCoordinatorTask -Root $sameRoot -SourceRoot $sameRoot | Out-Null
   Assert ($script:copyCount -eq 0) 'Source equal to destination was copied over itself'
   Write-Host 'PASS Coordinator_SourceEqualsDestinationIsIdempotent'
+
+  # Caso de campo: agente antigo deixou Agente-Senha-Nextec.ps1 com permissao herdada em ProgramData.
+  # Antes o registro lancava unsafe_path e o MSI desfazia a instalacao inteira (1603). Agora o arquivo e trocado.
+  New-CaseRoot
+  $legacyRoot = Join-Path $script:root 'legado'
+  New-Item -ItemType Directory -Path $legacyRoot -Force | Out-Null
+  $legacyAgent = Join-Path $legacyRoot 'Agente-Senha-Nextec.ps1'
+  Set-Content -LiteralPath $legacyAgent -Value '# agente antigo de 11/10' -Encoding UTF8
+  $script:failAclPath = $legacyAgent
+  $script:copyCount = 0
+  Register-NextecCoordinatorTask -Root $legacyRoot -SourceRoot $PSScriptRoot | Out-Null
+  Assert ($script:copyCount -eq 3) 'Registration stopped on a legacy file with unexpected ACL'
+  Assert ((Get-Content -LiteralPath $legacyAgent -Raw) -match 'transaction_v1|Get-NextecInstalledClient') 'Legacy agent script was not replaced by the packaged one'
+  $script:failAclPath = $null
+  Write-Host 'PASS Coordinator_ReplacesLegacyFileWithUnexpectedAcl'
+
+  # Revisao #45 P1: inscricao.json anterior nao sobrevive a um instalador de OUTRO painel; marcador vai para a pasta de dados.
+  foreach ($caso in @(
+      @{ Nome = 'outro painel'; NovoPainel = 'https://novo.example'; VelhoPainel = 'https://velho.example'; Mantem = $false },
+      @{ Nome = 'mesmo painel'; NovoPainel = 'https://velho.example'; VelhoPainel = 'https://velho.example'; Mantem = $true },
+      @{ Nome = 'marcador sem painel'; NovoPainel = ''; VelhoPainel = 'https://velho.example'; Mantem = $true })) {
+    New-CaseRoot
+    $src = Join-Path $script:root 'origem'
+    $dst = Join-Path $script:root 'dados'
+    New-Item -ItemType Directory -Path $src, $dst -Force | Out-Null
+    foreach ($name in @('Coordenar-Agente-Nextec.ps1', 'Provisionar-Agente-Nextec.ps1', 'Agente-Senha-Nextec.ps1')) {
+      Microsoft.PowerShell.Management\Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $src $name)
+    }
+    $marker = [ordered]@{ v = 1; app = 'XPTO'; upgrade_code = 'x' }
+    if ($caso.NovoPainel) { $marker.painel = $caso.NovoPainel }
+    [IO.File]::WriteAllText((Join-Path $src 'nextec-marker.json'), ($marker | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding($false)))
+    [IO.File]::WriteAllText((Join-Path $dst 'inscricao.json'), (@{ v = 1; painel = $caso.VelhoPainel; chave = 'nx1.1.AbCdEf0123456789AbCdEf' } | ConvertTo-Json -Compress), (New-Object Text.UTF8Encoding($false)))
+    [IO.File]::WriteAllText((Join-Path $dst 'inscricao-estado.json'), '{}', (New-Object Text.UTF8Encoding($false)))
+    $script:NextecReplacedFiles = @()
+    Register-NextecCoordinatorTask -Root $dst -SourceRoot $src | Out-Null
+    $kept = Test-Path -LiteralPath (Join-Path $dst 'inscricao.json')
+    Assert ($kept -eq $caso.Mantem) "politica da inscricao anterior errada ($($caso.Nome)): mantida=$kept"
+    Assert ($kept -eq (Test-Path -LiteralPath (Join-Path $dst 'inscricao-estado.json'))) "estado da inscricao deve seguir o arquivo ($($caso.Nome))"
+    Assert (Test-Path -LiteralPath (Join-Path $dst 'nextec-marker.json')) "marcador nao foi copiado para a pasta de dados ($($caso.Nome))"
+  }
+  Write-Host 'PASS Coordinator_StaleEnrollmentPolicyAndMarkerCopy'
 
   New-CaseRoot
   $enrollSource = Join-Path $script:root 'msi'

@@ -299,7 +299,7 @@ export const MESSAGES = {
   notAdmin: 'Execute como administrador. Clique com o botão direito no arquivo e escolha Executar como administrador.',
   unsafe: 'A pasta do agente não está protegida como esperado. Reinstale o app gerado pelo painel.',
   failed: 'Não foi possível ativar. Gere uma nova autorização no painel e tente de novo.',
-  ok: 'Pronto: máquina ativada. Pode fechar.',
+  ok: 'Pronto: autorização entregue e cadastro iniciado. A máquina aparece como ativa no painel em até 1 minuto. Pode fechar.',
 }
 
 // `bundle` é o resultado de activationBundle(): { painel, id, uuid, bootstrap }.
