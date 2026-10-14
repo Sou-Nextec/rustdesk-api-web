@@ -17,7 +17,7 @@ function Import-Funcao([string]$nome) {
   return $f.Extent.Text
 }
 . ([scriptblock]::Create((Import-Funcao 'Get-NextecAppName')))
-foreach ($nome in @('Get-NextecAgentIntervals', 'Get-NextecPasswordTaskInterval', 'Get-NextecSyncIntervalSeconds')) { . ([scriptblock]::Create((Import-Funcao $nome))) }
+foreach ($nome in @('Get-NextecAgentIntervals', 'Get-NextecPasswordTaskInterval', 'Get-NextecSyncIntervalSeconds', 'Get-NextecLastErrorCode')) { . ([scriptblock]::Create((Import-Funcao $nome))) }
 $cicloTexto = Import-Funcao 'Invoke-NextecPasswordCycle'
 
 try {

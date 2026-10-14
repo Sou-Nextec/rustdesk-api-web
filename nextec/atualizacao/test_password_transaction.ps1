@@ -64,7 +64,7 @@ Assert (@($calls | Where-Object path -eq '/api/nextec/agent/password').Count -eq
 Write-Host 'PASS Transaction_ConfirmTimeoutRecovery'
 
 Reset-Case
-$cliOutput='Settings are disabled!'
+$cliOutput='IPC connection failed'
 try { Invoke-NextecPasswordCycle $cfg; throw 'Expected apply rejection' } catch { Assert ($_.Exception.Message -match 'password_apply_failed') 'Unexpected apply error' }
 Assert (@($calls | Where-Object path -eq '/api/nextec/agent/confirm').Count -eq 0) 'Rejected CLI confirmed remotely'
 Assert (-not $cfg.applied_operation_id) 'Rejected CLI marked applied'

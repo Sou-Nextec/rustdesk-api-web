@@ -252,7 +252,11 @@ try {
     )) {
       $failed = $false
       try { Assert-NextecPasswordApplied -Result $result }
-      catch { $failed = $_.Exception.Message -match 'password_apply_failed' }
+      catch {
+        # cliente com disable-settings tem codigo proprio (client_settings_locked); o resto segue password_apply_failed
+        $expected = if ($result.Output -ceq 'Settings are disabled!') { '^client_settings_locked:' } else { 'password_apply_failed' }
+        $failed = $_.Exception.Message -match $expected
+      }
       Assert-True $failed "saída ambígua ou falha deveria ser recusada: ExitCode=$($result.ExitCode), Output=$($result.Output)"
     }
     # a resposta do cliente aparece no erro (diagnostico de campo), limitada e so ASCII

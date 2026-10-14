@@ -107,8 +107,78 @@ function Get-NextecPeerId {
   return $lines[-1]
 }
 
+# Cliente gerado com "Bloquear configurações" (disable-settings=Y): no RustDesk 1.5.0, `--password` e `--option`
+# imprimem "Settings are disabled!" e saem com código 0 (src/core_main.rs, is_cli_setting_change_disabled). Nenhuma
+# nova tentativa resolve: só um instalador gerado de novo. Código estável: client_settings_locked.
+function Test-NextecSettingsLockedOutput([string]$Output) {
+  return [bool](@(([string]$Output -split "`r?`n") | Where-Object { $_.Trim() -ceq 'Settings are disabled!' }).Count)
+}
+
+function Assert-NextecClientSettingsUnlocked([string]$Output, [string]$Comando) {
+  if (Test-NextecSettingsLockedOutput $Output) {
+    throw "client_settings_locked: o cliente recusou $Comando (resposta: Settings are disabled!)."
+  }
+}
+
+# Ultimo erro do agente (codigo estavel, sem texto livre e sem segredos) para o painel mostrar "A troca de senha esta
+# falhando". So mensagens com prefixo de codigo ("client_settings_locked: ...") sao registradas; falha de rede ou HTTP
+# (o painel nem recebeu a rodada) nao muda o registro. Rodada sem erro apaga o arquivo.
+function Get-NextecErrorCode([string]$Message) {
+  if ([string]$Message -cmatch '^([a-z][a-z0-9_]{0,47}):') { return $Matches[1] }
+  return ''
+}
+
+function Set-NextecLastErrorCode {
+  param([Parameter(Mandatory)][string]$Path, [string]$Message)
+  $code = Get-NextecErrorCode $Message
+  if (-not $code) { return }
+  [IO.File]::WriteAllText($Path, $code, [Text.UTF8Encoding]::new($false))
+}
+
+function Get-NextecLastErrorCode {
+  param([Parameter(Mandatory)][string]$Path)
+  try {
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return '' }
+    $code = ([IO.File]::ReadAllText($Path)).Trim()
+    if ($code -cmatch '^[a-z][a-z0-9_]{0,47}$') { return $code }
+  } catch { }
+  return ''
+}
+
+# Espera longa depois de client_settings_locked: até $Hours horas, ou até o executável do cliente mudar (reinstalação).
+function Test-NextecSettingsLockedWait {
+  param([Parameter(Mandatory)][string]$Path, [string]$Fingerprint, [DateTime]$Now = [DateTime]::UtcNow)
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+  try {
+    $wait = [IO.File]::ReadAllText($Path) | ConvertFrom-Json
+    $until = [DateTime]::Parse([string]$wait.until, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind).ToUniversalTime()
+  } catch { Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue; return $false }
+  if ($Now -ge $until -or [string]$wait.client -cne [string]$Fingerprint) {
+    Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    return $false
+  }
+  return $true
+}
+
+function Set-NextecSettingsLockedWait {
+  param([Parameter(Mandatory)][string]$Path, [string]$Fingerprint, [DateTime]$Now = [DateTime]::UtcNow, [int]$Hours = 6)
+  $value = @{ code = 'client_settings_locked'; until = $Now.AddHours($Hours).ToString('o'); client = [string]$Fingerprint } | ConvertTo-Json -Compress
+  [IO.File]::WriteAllText($Path, $value, [Text.UTF8Encoding]::new($false))
+}
+
+# Identifica o executável instalado (caminho, tamanho, data): instalar por cima muda e encerra a espera na hora.
+function Get-NextecClientFingerprint {
+  try { $cliente = ClienteInstalado } catch { return '' }
+  if (-not $cliente -or -not $cliente.ExePath) { return '' }
+  try {
+    $item = Get-Item -LiteralPath $cliente.ExePath -ErrorAction Stop
+    return ('{0}|{1}|{2}' -f $item.FullName.ToLowerInvariant(), $item.Length, $item.LastWriteTimeUtc.Ticks)
+  } catch { return '' }
+}
+
 function Assert-NextecPasswordApplied {
   param([Parameter(Mandatory)]$Result)
+  Assert-NextecClientSettingsUnlocked -Output ([string]$Result.Output) -Comando '--password'
 
   # Contrato confirmado no upstream RustDesk 1.5.0: sucesso IPC imprime Done!;
   # builds sem esse contrato precisam ser verificados antes de serem declarados compatíveis.
@@ -417,6 +487,8 @@ function ProtegerPastaAgente {
     $Config,
     $Log,
     "$Log.antigo",
+    (Join-Path $PastaDados 'agente-senha.bloqueio.json'),
+    (Join-Path $PastaDados 'agente-senha.ultimo-erro'),
     (Join-Path $PastaDados 'Agente-Senha-Nextec.ps1')
   )
   foreach ($path in $managedFiles) {
@@ -494,9 +566,11 @@ function SenhaForte {
 function Opcao([string]$chave, [string]$valor) {
   if ($Simular) { Escrever "[simulação] --option $chave $valor"; return }
   $consulta = InvocarRustDesk -Argumentos @('--option', $chave)
+  Assert-NextecClientSettingsUnlocked -Output ([string]$consulta.Output) -Comando "--option $chave"
   if ($consulta.ExitCode -ne 0) { throw "O RustDesk não conseguiu consultar '$chave' (código $($consulta.ExitCode)): $($consulta.Output)" }
   if ($consulta.Output -ne $valor) {
     $alteracao = InvocarRustDesk -Argumentos @('--option', $chave, $valor)
+    Assert-NextecClientSettingsUnlocked -Output ([string]$alteracao.Output) -Comando "--option $chave"
     if ($alteracao.ExitCode -ne 0) { throw "O RustDesk não conseguiu aplicar '$chave' (código $($alteracao.ExitCode)): $($alteracao.Output)" }
     Escrever "Opção $chave = $valor"
   }
@@ -544,13 +618,21 @@ function Invoke-NextecApplyPassword([string]$Password) {
   }
 }
 
-function Invoke-NextecPasswordCycle([psobject]$Cfg) {
+# -SemCliente: o sync com o painel continua (presença), mas nada é pedido ao cliente (espera de client_settings_locked).
+function Invoke-NextecPasswordCycle([psobject]$Cfg, [switch]$SemCliente) {
+  $script:NextecClienteAdiado = $false
   $token = Revelar $Cfg.token
   # Campos aditivos (painel antigo ignora): interval_seconds, para o painel calcular a janela de "ativo" com o ritmo real
   # deste agente; app_name, so com marcador valido (sem ele o painel usa o protocolo global).
   $corpoSync = @{id=$Cfg.id;token=$token;capabilities=@('transaction_v1');interval_seconds=(Get-NextecSyncIntervalSeconds)}
   $nomeApp = Get-NextecAppName -Root $PastaDados
   if ($nomeApp) { $corpoSync.app_name = $nomeApp }
+  # last_error (0035): codigo estavel da ultima rodada que falhou (ex.: client_settings_locked). Sem o campo, o painel
+  # entende que a ultima rodada nao falhou e limpa o aviso.
+  if ($PastaDados) {
+    $ultimoErro = Get-NextecLastErrorCode -Path (Join-Path $PastaDados 'agente-senha.ultimo-erro')
+    if ($ultimoErro) { $corpoSync.last_error = $ultimoErro }
+  }
   $state = Chamar '/api/nextec/agent/sync' $corpoSync
   if ($state.pending_approval -and -not $state.managed) {
     # Inscricao global: a maquina ja esta no painel, mas ainda sem atribuicao. Nunca rotaciona.
@@ -592,6 +674,7 @@ function Invoke-NextecPasswordCycle([psobject]$Cfg) {
       } else { Write-NextecIdleLog 'Sem regra ativa; nenhuma senha foi aplicada.' }
       return
     }
+    if ($SemCliente) { $script:NextecClienteAdiado = $true; return }
     Opcao 'approve-mode' $state.approve_mode
     Opcao 'verification-method' $state.verification_method
     if (-not $state.rotate) { Write-NextecIdleLog 'Sincronizacao concluida; nenhuma troca necessaria.'; return }
@@ -627,6 +710,7 @@ function Invoke-NextecPasswordCycle([psobject]$Cfg) {
   }
   # API anterior: manter a compatibilidade somente enquanto este dispositivo nao negociou v1.
   if (-not $state.managed) { Escrever 'Sem regra ativa; aguardando politica.'; return }
+  if ($SemCliente) { $script:NextecClienteAdiado = $true; return }
   Opcao 'approve-mode' $state.approve_mode
   Opcao 'verification-method' $state.verification_method
   if (-not $state.rotate) { return }
@@ -805,6 +889,9 @@ if ($Instalar) {
 # no log e, se for 401, conta para a aposentadoria da credencial (3 seguidos).
 function Invoke-NextecAgentExecute {
   $falhas = Join-Path $PastaDados 'agente-senha.falhas'
+  $espera = Join-Path $PastaDados 'agente-senha.bloqueio.json'
+  $ultimoErro = Join-Path $PastaDados 'agente-senha.ultimo-erro'
+  $impressao = ''
   try {
     $cfg = Get-Content $Config -Raw | ConvertFrom-Json
     # troca de dominio: vale o painel configurado hoje; sem arquivo, o gravado no cadastro (validado)
@@ -824,11 +911,21 @@ function Invoke-NextecAgentExecute {
     if ($idServico -ne $meuId) {
       throw "O agente está vinculado ao ID $meuId, mas o serviço RustDesk atende o ID $idServico. A execução foi interrompida para não trocar a senha da máquina errada. Remova o agente antigo no painel e cadastre novamente para vincular o ID do serviço."
     }
-    Invoke-NextecPasswordCycle $cfg | Out-Null
+    $impressao = Get-NextecClientFingerprint
+    $emEspera = Test-NextecSettingsLockedWait -Path $espera -Fingerprint $impressao
+    Invoke-NextecPasswordCycle $cfg -SemCliente:$emEspera | Out-Null
     Remove-Item -LiteralPath $falhas -Force -ErrorAction SilentlyContinue
+    # Em espera: o painel recebeu o sync, mas o cliente continua bloqueado; sem nova linha no log a cada rodada.
+    if ($emEspera -and $script:NextecClienteAdiado) { return $false }
+    Remove-Item -LiteralPath $ultimoErro -Force -ErrorAction SilentlyContinue
     return $true
   } catch {
     Write-NextecIdleLog "ERRO: $($_.Exception.Message)"
+    try { Set-NextecLastErrorCode -Path $ultimoErro -Message ([string]$_.Exception.Message) } catch { }
+    if ($_.Exception.Message -like 'client_settings_locked:*') {
+      try { Set-NextecSettingsLockedWait -Path $espera -Fingerprint $impressao } catch { }
+      Escrever "O app foi gerado com 'Bloquear configurações'; gere o instalador de novo com a versão atual do gerador e instale por cima. Nova tentativa em 6 h ou logo após a reinstalação."
+    }
     if (Update-NextecAuthFailures -Status (Get-NextecHttpStatus $_.Exception) -CounterPath $falhas -ConfigPath $Config -DataRoot $PastaDados) {
       Escrever 'O painel recusou a credencial deste agente 3 vezes seguidas (401). Ela foi guardada em agente-senha.json.anterior e o cadastro sera refeito automaticamente.'
     }

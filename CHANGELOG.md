@@ -2,6 +2,13 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.24
+
+- **Agente reconhece o cliente gerado com "Bloquear configurações":** no RustDesk 1.5.0, a opção `disable-settings` do gerador faz `--password` e `--option` responderem "Settings are disabled!". O agente registrava `password_apply_failed` a cada rodada e o painel ficava em "Aguardando a primeira troca". Agora a resposta vira o código estável `client_settings_locked`, com a orientação no `agente-senha.log`: "O app foi gerado com 'Bloquear configurações'; gere o instalador de novo com a versão atual do gerador e instale por cima". O `--option` também é conferido (antes o log dizia "Opção approve-mode = password" sem ter aplicado nada).
+- **Sem repetir a cada rodada:** depois de `client_settings_locked` o agente espera 6 h (`agente-senha.bloqueio.json` em `%ProgramData%\Nextec\Acesso`) sem chamar o cliente nem escrever no log; o sync com o painel continua. Instalar o app por cima muda o executável e encerra a espera na hora.
+- **Painel vê a falha (revisão, campo `last_error` do 0035):** o agente guarda o código estável da última rodada que falhou (`agente-senha.ultimo-erro`, só o código, sem texto livre nem segredo; falha de rede ou HTTP não conta) e o envia como `last_error` no mesmo corpo do `/agent/sync`, junto de `interval_seconds` e `app_name`. Durante a espera de `client_settings_locked` cada sync leva o código, e a tela mostra "A troca de senha está falhando" com a ação; a primeira rodada sem erro apaga o arquivo e o sync seguinte vai sem o campo, o que limpa o aviso no painel. Fila linear: este PR mescla o #92 (que já traz #93 e #94) e mantém os dois comportamentos no `Agente-Senha-Nextec.ps1` (repetição curta e log sem inundar do #94, espera de 6 h deste PR).
+- **Teste novo:** `nextec/atualizacao/test_client_settings_locked.ps1` (Windows PowerShell 5.1) roda o agente real contra um executável dublê que responde "Settings are disabled!". O gerador corrigido (rdgen) deixa de gravar `disable-settings` quando o app tem o agente; depois do merge, o rdgen precisa ressincronizar `Agente-Senha-Nextec.ps1`.
+
 ## 2.11.23
 
 Conectar abre o app direto, com o protocolo da própria máquina, e avisa quando a senha automática ainda não foi aplicada.
