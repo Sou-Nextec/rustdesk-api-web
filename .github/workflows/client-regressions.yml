@@ -31,6 +31,10 @@ jobs:
       - name: Navegacao entre telas (monta o painel e percorre as rotas A, B, A, C)
         run: npx vitest run --config vitest.config.mjs
       - run: npm run build
+      - name: Backup do cofre (copia falha aborta, sem banco ou chave falha)
+        run: |
+          sudo apt-get install -y -qq sqlite3 >/dev/null
+          bash nextec/deploy/test_backup_cofre.sh
 
   identity:
     runs-on: windows-2022
@@ -69,7 +73,7 @@ jobs:
       - name: Validar coordenador e tarefas de gerenciamento
         shell: powershell
         run: |
-          foreach ($test in @('test_coordinator.ps1', 'test_agent_task_registration.ps1', 'test_updater_identity.ps1', 'test_agent_http.ps1', 'test_remove_tasks.ps1', 'test_agent_auth_recovery.ps1', 'test_self_enroll.ps1', 'test_painel_configuravel.ps1', 'test_invocar_rustdesk.ps1')) {
+          foreach ($test in @('test_coordinator.ps1', 'test_agent_task_registration.ps1', 'test_updater_identity.ps1', 'test_agent_http.ps1', 'test_remove_tasks.ps1', 'test_agent_auth_recovery.ps1', 'test_self_enroll.ps1', 'test_painel_configuravel.ps1', 'test_invocar_rustdesk.ps1', 'test_updater_session.ps1', 'test_diagnostico.ps1')) {
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File "nextec/atualizacao/$test"
             if ($LASTEXITCODE -ne 0) { throw "Management regression failed: $test" }
           }

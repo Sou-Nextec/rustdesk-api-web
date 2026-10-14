@@ -4,7 +4,33 @@ Ponto de entrada para quem assume o projeto (pessoa ou IA). Resume o mapa, o est
 Documentos de detalhe estão listados na seção "Onde está cada documentação". Nada aqui contém segredo: tokens, senhas e
 chaves ficam no Portainer e nos segredos do GitHub, e nunca devem ser colados em chat, issue ou arquivo.
 
-Atualizado em 10/10/2026 (painel v2.9.5).
+Atualizado em 14/10/2026 (seção 0); o restante é de 10/10/2026 (painel v2.9.5).
+
+## 0. Estado em 14/10/2026 (leia antes do resto, que é de 10/10)
+
+Depois de uma auditoria do instalador (13/10), a cadeia "instalar, aparecer, senha automática" foi refeita e **provada em CI com o serviço
+RustDesk de verdade** (instalação no Windows Server 2022 com um agente antigo "sujo", inscrição HTTP 200, senha proposta, aplicada com
+`--password` e confirmada, e atualização por cima preservando ID e credencial). Detalhes por versão em `CHANGELOG.md`
+(2.11.16, 2.12.0, 2.13.0) e em `rdgen/nextec/CHANGELOG.md` (2.3.2, 2.4.0, 2.4.1).
+
+PRs, em ordem de merge (cada um empilhado no anterior; os empilhados não disparam CI porque o gatilho é `pull_request` para `master`:
+retargetar para `master` depois de mesclar o de baixo, ou rodar o workflow manualmente):
+
+1. painel #87 (2.11.16, agente) e rdgen #45 (2.3.2, MSI e teste real)
+2. painel #88 (2.12.0, instalador por cliente, patch 0035) e rdgen #46 (2.4.0)
+3. painel #89 (2.13.0, atualização sem derrubar atendimento, diagnóstico, backup) e rdgen #47 (2.4.1, teste de atualização por cima)
+4. Pull and redeploy do painel e do gerador; instalar o primeiro cliente real e rodar `Diagnostico-Agente-Nextec.ps1`.
+
+Armadilhas aprendidas (não repetir):
+- O agente procura a config do serviço em `ServiceProfiles\LocalService` (o RustDesk como LocalSystem grava ali), não em `systemprofile`.
+- `rustdesk.exe` é GUI: nunca capture saída com `$x = & exe args`; use `Process` com saída redirecionada (`InvocarRustDesk`).
+- O fixture do CI usa o nome `RustDesk` porque `--password` só funciona quando o app instalado é o do binário compilado.
+- Os scripts do agente têm fonte única no painel; o rdgen sincroniza com `nextec/scripts/sincronizar-agente.py` (CI confere).
+- Falha do script do agente nunca desfaz o MSI (`Return="ignore"`); o erro vai para `coordenador.log`.
+
+Pendências que dependem de decisão ou de ambiente real: assinatura Authenticode (certificado de código em HSM/nuvem), build do gerador
+determinístico (hoje baixa componentes de `bryangerlach/rdgen@master`), API como branch no lugar de 35 patches, piloto em VMs de várias
+versões do Windows e no servidor do campo, backup da chave do cofre fora da VPS (`nextec/deploy/BACKUP.md`).
 
 ## 1. O que é
 
