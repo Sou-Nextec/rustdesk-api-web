@@ -1,0 +1,186 @@
+diff --git a/http/controller/api/nextec_genkey.go b/http/controller/api/nextec_genkey.go
+new file mode 100644
+index 0000000..06d1f3e
+--- /dev/null
++++ b/http/controller/api/nextec_genkey.go
+@@ -0,0 +1,48 @@
++package api
++
++import (
++	"crypto/sha256"
++	"crypto/subtle"
++	"net/http"
++	"os"
++
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++)
++
++const genSecretEnv = "NX_RDGEN_SHARED_SECRET"
++
++// GenEnrollKey GET /api/nextec/gen/enroll-key
++// Uso interno: o gerador (rdgen, mesma stack) busca a credencial de inscrição vigente a cada build.
++// Exige o segredo compartilhado no cabeçalho X-Nextec-Gen-Secret e recusa tráfego vindo do túnel
++// (CF-Connecting-IP ou CF-Ray), então a rota não funciona pela internet. A chave nunca vai para log.
++func (a *NextecAgent) GenEnrollKey(c *gin.Context) {
++	c.Header("Cache-Control", "no-store")
++	want := os.Getenv(genSecretEnv)
++	if want == "" {
++		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "gen_secret_not_configured"})
++		return
++	}
++	if c.GetHeader("CF-Connecting-IP") != "" || c.GetHeader("CF-Ray") != "" {
++		c.JSON(http.StatusForbidden, gin.H{"error": "internal_only"})
++		return
++	}
++	fk := "gen-key|" + c.ClientIP()
++	if !service.NextecFailCheck(fk) {
++		c.JSON(http.StatusTooManyRequests, gin.H{"error": "too_many_failures"})
++		return
++	}
++	got := sha256.Sum256([]byte(c.GetHeader("X-Nextec-Gen-Secret")))
++	exp := sha256.Sum256([]byte(want))
++	if subtle.ConstantTimeCompare(got[:], exp[:]) != 1 {
++		service.NextecFailAdd(fk)
++		c.JSON(http.StatusUnauthorized, gin.H{"error": "gen_secret_invalid"})
++		return
++	}
++	key, epoch, _, err := service.NextecEnrollKeyInfo()
++	if err != nil || key == "" {
++		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
++		return
++	}
++	c.JSON(http.StatusOK, gin.H{"enroll_key": key, "epoch": epoch})
++}
+diff --git a/http/controller/api/nextec_genkey_test.go b/http/controller/api/nextec_genkey_test.go
+new file mode 100644
+index 0000000..b4ca80a
+--- /dev/null
++++ b/http/controller/api/nextec_genkey_test.go
+@@ -0,0 +1,100 @@
++package api
++
++import (
++	"bytes"
++	"encoding/base64"
++	"encoding/json"
++	"net/http/httptest"
++	"os"
++	"testing"
++
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++	"gorm.io/driver/sqlite"
++	"gorm.io/gorm"
++	"gorm.io/gorm/logger"
++)
++
++func TestGenEnrollKey(t *testing.T) {
++	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := db.AutoMigrate(&model.Peer{}, &model.DeviceGroup{}, &model.NextecSecretPolicy{}, &model.NextecDeviceSecret{}, &model.NextecSecretAudit{}, &model.NextecAgentBootstrap{}, &model.NextecEnrollBlock{}); err != nil {
++		t.Fatal(err)
++	}
++	sqlDB, _ := db.DB()
++	sqlDB.SetMaxOpenConns(1)
++	oldDB, oldService := service.DB, service.AllService
++	service.DB, service.AllService = db, &service.Service{}
++	t.Setenv("NEXTEC_VAULT_KEY", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x53}, 32)))
++	wd, _ := os.Getwd()
++	if err := os.Chdir(t.TempDir()); err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { _ = os.Chdir(wd); service.DB, service.AllService = oldDB, oldService; sqlDB.Close() })
++
++	r := gin.New()
++	r.GET("/gen", (&NextecAgent{}).GenEnrollKey)
++	call := func(headers map[string]string, remote string) (int, map[string]interface{}, string) {
++		req := httptest.NewRequest("GET", "/gen", nil)
++		req.RemoteAddr = remote + ":1234"
++		for k, v := range headers {
++			req.Header.Set(k, v)
++		}
++		w := httptest.NewRecorder()
++		r.ServeHTTP(w, req)
++		out := map[string]interface{}{}
++		_ = json.Unmarshal(w.Body.Bytes(), &out)
++		return w.Code, out, w.Header().Get("Cache-Control")
++	}
++	const sec = "segredo-compartilhado-de-teste"
++
++	// sem segredo configurado: recusa, mesmo com cabeçalho vazio
++	t.Setenv(genSecretEnv, "")
++	if code, _, _ := call(map[string]string{"X-Nextec-Gen-Secret": ""}, "172.20.0.5"); code != 503 {
++		t.Fatalf("segredo não configurado: %d", code)
++	}
++	t.Setenv(genSecretEnv, sec)
++	// ausente
++	if code, _, _ := call(nil, "172.20.0.5"); code != 401 {
++		t.Fatalf("segredo ausente: %d", code)
++	}
++	// errado
++	if code, out, _ := call(map[string]string{"X-Nextec-Gen-Secret": "errado"}, "172.20.0.5"); code != 401 || out["enroll_key"] != nil {
++		t.Fatalf("segredo errado: %d %v", code, out)
++	}
++	// tráfego do túnel, mesmo com o segredo certo
++	for _, h := range []string{"CF-Connecting-IP", "CF-Ray"} {
++		if code, out, _ := call(map[string]string{"X-Nextec-Gen-Secret": sec, h: "203.0.113.9"}, "172.20.0.5"); code != 403 || out["enroll_key"] != nil {
++			t.Fatalf("túnel via %s: %d %v", h, code, out)
++		}
++	}
++	// ok
++	code, out, cc := call(map[string]string{"X-Nextec-Gen-Secret": sec}, "172.20.0.6")
++	key, _ := out["enroll_key"].(string)
++	if code != 200 || key == "" || cc != "no-store" {
++		t.Fatalf("ok: %d cache=%q", code, cc)
++	}
++	want, _, _, _ := service.NextecEnrollKeyInfo()
++	if key != want {
++		t.Fatal("chave diferente da vigente")
++	}
++	// chave girada: a rota passa a devolver a nova, e a antiga deixa de ser a vigente
++	newKey, newEpoch, _, err := service.NextecEnrollKeyRotate()
++	if err != nil {
++		t.Fatal(err)
++	}
++	code, out, _ = call(map[string]string{"X-Nextec-Gen-Secret": sec}, "172.20.0.6")
++	if code != 200 || out["enroll_key"] != newKey || out["enroll_key"] == key || int(out["epoch"].(float64)) != newEpoch {
++		t.Fatalf("girada: %d epoch=%v", code, out["epoch"])
++	}
++	// limite: muitas tentativas erradas do mesmo IP bloqueiam, até com o segredo certo
++	for i := 0; i < 12; i++ {
++		call(map[string]string{"X-Nextec-Gen-Secret": "x"}, "172.20.0.9")
++	}
++	if code, _, _ := call(map[string]string{"X-Nextec-Gen-Secret": sec}, "172.20.0.9"); code != 429 {
++		t.Fatalf("limite: %d", code)
++	}
++}
+diff --git a/http/router/api.go b/http/router/api.go
+index a4688ef..664d150 100644
+--- a/http/router/api.go
++++ b/http/router/api.go
+@@ -42,6 +42,8 @@ func ApiInit(g *gin.Engine) {
+ 		frg.POST("/nextec/agent/bootstrap", ag.Bootstrap)
+ 		frg.POST("/nextec/agent/enroll", ag.Enroll)
+ 		frg.POST("/nextec/agent/self-enroll", ag.SelfEnroll)
++		// Nextec: o gerador (rdgen, rede interna da stack) busca a credencial de inscrição vigente
++		frg.GET("/nextec/gen/enroll-key", ag.GenEnrollKey)
+ 		frg.POST("/nextec/agent/sync", ag.Sync)
+ 		frg.POST("/nextec/agent/password", ag.Password)
+ 		frg.POST("/nextec/agent/confirm", ag.Confirm)
+diff --git a/service/nextec_genkey.go b/service/nextec_genkey.go
+new file mode 100644
+index 0000000..af6ba69
+--- /dev/null
++++ b/service/nextec_genkey.go
+@@ -0,0 +1,7 @@
++package service
++
++// NextecFailCheck e NextecFailAdd expõem o limite de tentativas inválidas por chave (IP) do cofre
++// para a rota interna do gerador, que fica fora do pacote service.
++func NextecFailCheck(key string) bool { return nextecFailCheck(key) }
++
++func NextecFailAdd(key string) { nextecFailAdd(key) }

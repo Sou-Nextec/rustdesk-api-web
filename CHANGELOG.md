@@ -2,6 +2,11 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.8
+
+- **O gerador obtém a credencial de inscrição sozinho:** a cada build o rdgen busca a credencial vigente no painel pela rede interna da stack (`GET /api/nextec/gen/enroll-key`, protegido pelo segredo compartilhado `GERADOR_SH_SECRET` e recusado quando vem pelo túnel da Cloudflare). Não é mais preciso copiar a credencial para `GERADOR_ENROLL_KEY` no Portainer nem refazer o deploy ao girar: o próximo instalador já sai com a nova. `GERADOR_ENROLL_KEY` virou override opcional (usado só se a busca falhar).
+- Novo patch de backend `0033-gen-enroll-key.patch` (aplicar sobre a série, com a API v2.6.29). **A imagem da API precisa ser reconstruída**; o rdgen precisa da versão com a busca automática.
+- Texto do card "Credencial de inscrição" atualizado: "O gerador usa esta credencial automaticamente". `GERADOR.md` e o cabeçalho da stack também.
 ## 2.11.7
 
 - **Atribuir em um clique:** quando o cliente ainda não tem senha automática, o diálogo de Atribuir já vem com "Senha automática do cliente (ligar agora)". Ao confirmar, o servidor liga a regra do cliente e atribui a máquina na mesma transação (patch 0032, `enable_group_rule` em `POST /api/admin/nextec/secrets/assign`). Intervalo padrão de 3 horas, idempotente e auditado (`client_rule_enable`). Identidade (UUID), aprovação e anti-lixo continuam conferidos como antes, e uma recusa não deixa regra ligada pela metade. Sem a flag a API segue recusando, como no patch 0031.
