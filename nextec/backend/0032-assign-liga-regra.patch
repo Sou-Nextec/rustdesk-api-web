@@ -1,0 +1,334 @@
+diff --git a/http/controller/admin/nextec_enroll.go b/http/controller/admin/nextec_enroll.go
+index 798fdb7..de07636 100644
+--- a/http/controller/admin/nextec_enroll.go
++++ b/http/controller/admin/nextec_enroll.go
+@@ -20,6 +20,9 @@ type nextecAssignForm struct {
+ 	Interval *int   `json:"interval_minutes"` // ausente: padrão; presente: 0 e negativo são recusados
+ 	Move     bool   `json:"move"`
+ 	Uuid     string `json:"uuid"`
++	// EnableGroupRule liga a regra de senha do cliente junto com a atribuição (um clique); GroupInterval é opcional.
++	EnableGroupRule bool `json:"enable_group_rule"`
++	GroupInterval   *int `json:"group_interval_minutes"`
+ }
+ 
+ type nextecRejectForm struct {
+@@ -64,7 +67,6 @@ func (n *NextecEnroll) Assign(c *gin.Context) {
+ 		response.Fail(c, 101, "Pedido inválido.")
+ 		return
+ 	}
+-	u := service.AllService.UserService.CurUser(c)
+ 	interval := 0
+ 	if f.Interval != nil {
+ 		if *f.Interval <= 0 {
+@@ -73,8 +75,17 @@ func (n *NextecEnroll) Assign(c *gin.Context) {
+ 		}
+ 		interval = *f.Interval
+ 	}
+-	opt := service.NextecAssignOptions{PeerID: f.Id, ClientID: f.ClientId, Rule: f.Rule, Interval: interval, Move: f.Move, Uuid: f.Uuid, IP: nextecIP(c)}
+-	if u != nil {
++	groupInterval := 0
++	if f.GroupInterval != nil {
++		if *f.GroupInterval <= 0 {
++			response.Fail(c, 101, "Intervalo fora do limite (15 minutos a 24 horas).")
++			return
++		}
++		groupInterval = *f.GroupInterval
++	}
++	opt := service.NextecAssignOptions{PeerID: f.Id, ClientID: f.ClientId, Rule: f.Rule, Interval: interval, Move: f.Move, Uuid: f.Uuid,
++		EnableGroupRule: f.EnableGroupRule, GroupInterval: groupInterval, IP: nextecIP(c)}
++	if u := service.AllService.UserService.CurUser(c); u != nil {
+ 		opt.UserID, opt.Username = u.Id, u.Username
+ 	}
+ 	res, err := service.NextecEnrollAssign(opt)
+diff --git a/http/controller/admin/nextec_enroll_test.go b/http/controller/admin/nextec_enroll_test.go
+index 35ca666..a0769ad 100644
+--- a/http/controller/admin/nextec_enroll_test.go
++++ b/http/controller/admin/nextec_enroll_test.go
+@@ -1,26 +1,44 @@
+-package admin
++package admin
++
++import (
++	"encoding/json"
++	"net/http/httptest"
++	"strings"
++	"testing"
++
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++)
++
++// Identidade trocada na aprovação usa o código 101 (o 403 do envelope derrubaria a sessão do painel) e diz o motivo.
++func TestEnrollFailIdentityConflictUsesCode101(t *testing.T) {
++	w := httptest.NewRecorder()
++	c, _ := gin.CreateTestContext(w)
++	enrollFail(c, service.ErrNextecIdentityConflict)
++	out := map[string]interface{}{}
++	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
++		t.Fatal(err)
++	}
++	msg, _ := out["message"].(string)
++	if out["code"] != float64(101) || !strings.Contains(msg, "identidade") {
++		t.Fatalf("resposta: %s", w.Body.String())
++	}
++}
+ 
+-import (
+-	"encoding/json"
+-	"net/http/httptest"
+-	"strings"
+-	"testing"
+-
+-	"github.com/gin-gonic/gin"
+-	"github.com/lejianwen/rustdesk-api/v2/service"
+-)
+-
+-// Identidade trocada na aprovação usa o código 101 (o 403 do envelope derrubaria a sessão do painel) e diz o motivo.
+-func TestEnrollFailIdentityConflictUsesCode101(t *testing.T) {
++// Intervalo da regra do cliente fora do limite é recusado antes de qualquer gravação.
++func TestAssignRejectsBadGroupIntervalWithCode101(t *testing.T) {
+ 	w := httptest.NewRecorder()
+ 	c, _ := gin.CreateTestContext(w)
+-	enrollFail(c, service.ErrNextecIdentityConflict)
++	body := `{"id":"123456789","client_id":7,"rule":"group","enable_group_rule":true,"group_interval_minutes":0}`
++	c.Request = httptest.NewRequest("POST", "/api/admin/nextec/secrets/assign", strings.NewReader(body))
++	c.Request.Header.Set("Content-Type", "application/json")
++	(&NextecEnroll{}).Assign(c)
+ 	out := map[string]interface{}{}
+ 	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	msg, _ := out["message"].(string)
+-	if out["code"] != float64(101) || !strings.Contains(msg, "identidade") {
++	if out["code"] != float64(101) || !strings.Contains(msg, "Intervalo") {
+ 		t.Fatalf("resposta: %s", w.Body.String())
+ 	}
+ }
+diff --git a/service/nextec_enroll.go b/service/nextec_enroll.go
+index 4359bed..9744907 100644
+--- a/service/nextec_enroll.go
++++ b/service/nextec_enroll.go
+@@ -315,7 +315,11 @@ type NextecAssignOptions struct {
+ 	Interval int
+ 	Move     bool
+ 	Uuid     string // opcional: identidade vista pelo admin na lista; divergindo da gravada, recusa
+-	UserID   uint
++	// EnableGroupRule: com Rule=group e o cliente sem regra ligada, liga a regra do cliente na MESMA transação
++	// (GroupInterval 0 usa o intervalo da regra existente ou o padrão). Sem a flag, o pedido continua recusado.
++	EnableGroupRule bool
++	GroupInterval   int
++	UserID          uint
+ 	Username string
+ 	IP       string
+ }
+@@ -328,6 +332,8 @@ type NextecAssignResult struct {
+ 	Moved    bool   `json:"moved"`
+ 	Managed  bool   `json:"managed"`
+ 	Interval int    `json:"interval_minutes"`
++	// GroupRuleEnabled: a regra de senha do cliente foi ligada por este pedido.
++	GroupRuleEnabled bool `json:"group_rule_enabled"`
+ }
+ 
+ // nextecIdentityOK confere a identidade gravada na inscrição com a do Peer. seen é o uuid que o admin viu na lista (opcional).
+@@ -401,6 +407,13 @@ func NextecEnrollAssign(o NextecAssignOptions) (*NextecAssignResult, error) {
+ 			return nil, ErrNextecBadInterval
+ 		}
+ 	}
++	groupInterval := 0
++	if o.Rule == "group" && o.EnableGroupRule && o.GroupInterval != 0 {
++		groupInterval = o.GroupInterval
++		if groupInterval < NextecSecretMinInterval || groupInterval > NextecSecretMaxInterval {
++			return nil, ErrNextecBadInterval
++		}
++	}
+ 	var out *NextecAssignResult
+ 	identityFail := false
+ 	err := DB.Transaction(func(tx *gorm.DB) error {
+@@ -427,8 +440,34 @@ func NextecEnrollAssign(o NextecAssignOptions) (*NextecAssignResult, error) {
+ 		clientRef := strconv.FormatUint(uint64(o.ClientID), 10)
+ 		var groupRule model.NextecSecretPolicy
+ 		groupRuleOn := tx.Where("kind = ? AND ref = ? AND enabled = ?", "group", clientRef, true).First(&groupRule).Error == nil
++		ruleEnabledNow := false
+ 		if o.Rule == "group" && !groupRuleOn {
+-			return ErrNextecNoGroupRule
++			if !o.EnableGroupRule {
++				return ErrNextecNoGroupRule
++			}
++			// Liga a regra do cliente aqui dentro: se qualquer passo seguinte falhar, nada fica ligado.
++			iv := groupInterval
++			var existing model.NextecSecretPolicy
++			found := tx.Where("kind = ? AND ref = ?", "group", clientRef).First(&existing).Error == nil
++			if iv == 0 && found && existing.IntervalMinutes >= NextecSecretMinInterval && existing.IntervalMinutes <= NextecSecretMaxInterval {
++				iv = existing.IntervalMinutes
++			}
++			if iv == 0 {
++				iv = NextecSecretDefaultInterval
++			}
++			if found {
++				if err := tx.Model(&model.NextecSecretPolicy{}).Where("id = ?", existing.Id).
++					Updates(map[string]interface{}{"enabled": true, "interval_minutes": iv}).Error; err != nil {
++					return err
++				}
++			} else if err := tx.Create(&model.NextecSecretPolicy{Kind: "group", Ref: clientRef, Enabled: true, IntervalMinutes: iv}).Error; err != nil {
++				return err
++			}
++			if err := tx.Create(&model.NextecSecretAudit{At: time.Now().Unix(), UserId: o.UserID, Username: o.Username, PeerId: o.PeerID,
++				Action: "client_rule_enable", Ip: o.IP, Detail: "cliente " + clientRef + ", regra de senha ligada, " + strconv.Itoa(iv) + " min"}).Error; err != nil {
++				return err
++			}
++			ruleEnabledNow, groupRuleOn = true, true
+ 		}
+ 		var own model.NextecSecretPolicy
+ 		hasOwn := tx.Where("kind = ? AND ref = ?", "peer", o.PeerID).First(&own).Error == nil
+@@ -445,7 +484,7 @@ func NextecEnrollAssign(o NextecAssignOptions) (*NextecAssignResult, error) {
+ 		sameRule := (want == nil && !hasOwn) || (want != nil && hasOwn && own.Enabled == want.Enabled &&
+ 			(!want.Enabled || own.IntervalMinutes == want.IntervalMinutes))
+ 		sameClient := peer.GroupId == o.ClientID
+-		if !d.AwaitingApproval && sameClient && sameRule {
++		if !d.AwaitingApproval && sameClient && sameRule && !ruleEnabledNow {
+ 			enabled, iv := effectivePolicyTx(tx, o.PeerID, o.ClientID)
+ 			if !enabled {
+ 				iv = 0
+@@ -517,7 +556,7 @@ func NextecEnrollAssign(o NextecAssignOptions) (*NextecAssignResult, error) {
+ 		if err := tx.Create(&model.NextecSecretAudit{At: now, UserId: o.UserID, Username: o.Username, PeerId: o.PeerID, Action: action, Ip: o.IP, Detail: detail}).Error; err != nil {
+ 			return err
+ 		}
+-		out = &NextecAssignResult{PeerID: o.PeerID, State: NextecStateAssigned, ClientID: o.ClientID, Moved: moved, Managed: enabled, Interval: iv}
++		out = &NextecAssignResult{PeerID: o.PeerID, State: NextecStateAssigned, ClientID: o.ClientID, Moved: moved, Managed: enabled, Interval: iv, GroupRuleEnabled: ruleEnabledNow}
+ 		return nil
+ 	})
+ 	if err != nil {
+diff --git a/service/nextec_enroll_umclique_test.go b/service/nextec_enroll_umclique_test.go
+new file mode 100644
+index 0000000..323e0bb
+--- /dev/null
++++ b/service/nextec_enroll_umclique_test.go
+@@ -0,0 +1,128 @@
++package service
++
++import (
++	"errors"
++	"testing"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"gorm.io/gorm"
++)
++
++// Atribuir em um clique: Rule=group com EnableGroupRule liga a regra do cliente e atribui na mesma transação.
++
++func groupPolicy(db *gorm.DB, ref string) *model.NextecSecretPolicy {
++	p := &model.NextecSecretPolicy{}
++	if db.Where("kind = ? AND ref = ?", "group", ref).First(p).Error != nil {
++		return nil
++	}
++	return p
++}
++
++func TestAssignEnableGroupRuleOneStep(t *testing.T) {
++	db, _ := enrollPending(t, "10.40.0.1")
++	res, err := NextecEnrollAssign(NextecAssignOptions{PeerID: enrollPeer, ClientID: 7, Rule: "group", EnableGroupRule: true, Uuid: enrollUUID})
++	if err != nil || !res.Managed || !res.GroupRuleEnabled || res.Interval != NextecSecretDefaultInterval {
++		t.Fatalf("assign um clique: %#v %v", res, err)
++	}
++	if gp := groupPolicy(db, "7"); gp == nil || !gp.Enabled || gp.IntervalMinutes != NextecSecretDefaultInterval {
++		t.Fatalf("regra do cliente: %#v", gp)
++	}
++	if peerPolicy(db, enrollPeer) != nil {
++		t.Fatal("criou regra própria sem necessidade")
++	}
++	d := deviceRow(t, db, enrollPeer)
++	if d.AwaitingApproval || !d.ForceRotate {
++		t.Fatalf("estado da máquina: %#v", d)
++	}
++	if peerGroupOf(t, db) != 7 {
++		t.Fatal("não moveu para o cliente")
++	}
++	if auditCount(db, "client_rule_enable") != 1 || auditCount(db, "enroll_assign") != 1 {
++		t.Fatal("auditoria incompleta")
++	}
++}
++
++func TestAssignEnableGroupRuleIsIdempotent(t *testing.T) {
++	db, _ := enrollPending(t, "10.40.0.2")
++	opt := NextecAssignOptions{PeerID: enrollPeer, ClientID: 7, Rule: "group", EnableGroupRule: true, GroupInterval: 60}
++	if _, err := NextecEnrollAssign(opt); err != nil {
++		t.Fatal(err)
++	}
++	res, err := NextecEnrollAssign(opt)
++	if err != nil || !res.Already || res.GroupRuleEnabled || res.Interval != 60 {
++		t.Fatalf("repetição: %#v %v", res, err)
++	}
++	if auditCount(db, "client_rule_enable") != 1 || auditCount(db, "enroll_assign") != 1 {
++		t.Fatal("repetir auditou de novo")
++	}
++}
++
++func TestAssignWithoutFlagStillRefusedAndNothingChanges(t *testing.T) {
++	db, _ := enrollPending(t, "10.40.0.3")
++	_, err := NextecEnrollAssign(NextecAssignOptions{PeerID: enrollPeer, ClientID: 7, Rule: "group"})
++	if !errors.Is(err, ErrNextecNoGroupRule) {
++		t.Fatalf("esperava ErrNextecNoGroupRule: %v", err)
++	}
++	if groupPolicy(db, "7") != nil || !deviceRow(t, db, enrollPeer).AwaitingApproval {
++		t.Fatal("algo mudou sem a flag")
++	}
++}
++
++func TestAssignEnableGroupRuleIsAtomicOnIdentityFailure(t *testing.T) {
++	db, _ := enrollPending(t, "10.40.0.4")
++	_, err := NextecEnrollAssign(NextecAssignOptions{PeerID: enrollPeer, ClientID: 7, Rule: "group", EnableGroupRule: true, Uuid: "uuid-que-o-admin-nao-viu"})
++	if !errors.Is(err, ErrNextecIdentityConflict) {
++		t.Fatalf("esperava conflito de identidade: %v", err)
++	}
++	if groupPolicy(db, "7") != nil {
++		t.Fatal("ligou a regra do cliente apesar da identidade divergente")
++	}
++	if auditCount(db, "client_rule_enable") != 0 || !deviceRow(t, db, enrollPeer).AwaitingApproval {
++		t.Fatal("deixou rastro de um pedido recusado")
++	}
++}
++
++func TestAssignEnableGroupRuleReusesDisabledRuleInterval(t *testing.T) {
++	db, _ := enrollPending(t, "10.40.0.5")
++	if _, err := NextecSecretUpsertPolicy("group", "7", false, 90); err != nil {
++		t.Fatal(err)
++	}
++	res, err := NextecEnrollAssign(NextecAssignOptions{PeerID: enrollPeer, ClientID: 7, Rule: "group", EnableGroupRule: true})
++	if err != nil || !res.Managed || res.Interval != 90 || !res.GroupRuleEnabled {
++		t.Fatalf("regra desligada: %#v %v", res, err)
++	}
++	if gp := groupPolicy(db, "7"); gp == nil || !gp.Enabled || gp.IntervalMinutes != 90 {
++		t.Fatalf("regra do cliente: %#v", gp)
++	}
++}
++
++func TestAssignEnableGroupRuleKeepsExistingRuleAndRejectsBadInterval(t *testing.T) {
++	db, _ := enrollPending(t, "10.40.0.6")
++	if _, err := NextecEnrollAssign(NextecAssignOptions{PeerID: enrollPeer, ClientID: 7, Rule: "group", EnableGroupRule: true, GroupInterval: 5}); !errors.Is(err, ErrNextecBadInterval) {
++		t.Fatalf("intervalo ruim: %v", err)
++	}
++	if groupPolicy(db, "7") != nil {
++		t.Fatal("gravou regra com intervalo inválido")
++	}
++	if _, err := NextecSecretUpsertPolicy("group", "7", true, 45); err != nil {
++		t.Fatal(err)
++	}
++	res, err := NextecEnrollAssign(NextecAssignOptions{PeerID: enrollPeer, ClientID: 7, Rule: "group", EnableGroupRule: true, GroupInterval: 120})
++	if err != nil || res.GroupRuleEnabled || res.Interval != 45 {
++		t.Fatalf("regra já ligada não pode ser sobrescrita: %#v %v", res, err)
++	}
++	if auditCount(db, "client_rule_enable") != 0 {
++		t.Fatal("auditou ligação que não houve")
++	}
++}
++
++func TestAssignEnableFlagIgnoredForOtherRules(t *testing.T) {
++	db, _ := enrollPending(t, "10.40.0.7")
++	res, err := NextecEnrollAssign(NextecAssignOptions{PeerID: enrollPeer, ClientID: 7, Rule: "none", EnableGroupRule: true})
++	if err != nil || res.GroupRuleEnabled || res.Managed {
++		t.Fatalf("none: %#v %v", res, err)
++	}
++	if groupPolicy(db, "7") != nil {
++		t.Fatal("flag ligou regra do cliente fora de Rule=group")
++	}
++}

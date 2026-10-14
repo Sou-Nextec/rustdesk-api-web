@@ -238,3 +238,11 @@ atribua ou rejeite todas antes de voltar.
 - 503 `gen_secret_not_configured` se o segredo da API estiver vazio; 403 `internal_only` se a requisição trouxer `CF-Connecting-IP` ou `CF-Ray` (veio pelo túnel); 401 `gen_secret_invalid` se o segredo faltar ou estiver errado; 429 depois de 10 erros em 10 minutos do mesmo IP.
 - 200 `{"enroll_key": "...", "epoch": N}` com `Cache-Control: no-store`. A chave não é gravada em log.
 - Testes: `http/controller/api/nextec_genkey_test.go`.
+
+## Patch 0032: atribuir liga a regra do cliente
+
+`POST /nextec/secrets/assign` aceita `enable_group_rule:true` (com `rule:"group"`) e `group_interval_minutes` opcional (15 a 1440).
+Se o cliente não tem regra de senha ligada, o servidor a cria ou religa **dentro da mesma transação** da atribuição: intervalo
+informado, senão o da regra desligada existente, senão 180 min. Regra já ligada não é alterada. Qualquer recusa (identidade/UUID,
+cliente de outro dono sem `move`, intervalo inválido) desfaz tudo. Auditoria `client_rule_enable` mais `enroll_assign`; a resposta
+traz `group_rule_enabled`. Sem a flag o comportamento do 0031 (`ErrNextecNoGroupRule`) permanece.

@@ -23,9 +23,16 @@ export function secretActionState(row = {}) {
 
 // Corpo do POST /nextec/secrets/assign: o intervalo só vai com a regra da máquina e o uuid visto na lista segue junto,
 // para a API recusar se a identidade da pendente mudou depois que o admin a viu.
+// 'group-enable' (padrão quando o cliente não tem regra) vira rule 'group' + enable_group_rule: o backend liga a regra
+// do cliente e atribui na mesma transação; o intervalo escolhido vai como group_interval_minutes.
 export function assignPayload(form = {}) {
-  const body = { id: form.peer, client_id: form.client, rule: form.rule, move: Boolean(form.move) }
+  const enable = form.rule === 'group-enable'
+  const body = { id: form.peer, client_id: form.client, rule: enable ? 'group' : form.rule, move: Boolean(form.move) }
   if (form.rule === 'peer') body.interval_minutes = form.interval
+  if (enable) {
+    body.enable_group_rule = true
+    if (Number(form.interval) > 0) body.group_interval_minutes = Number(form.interval)
+  }
   if (form.uuid) body.uuid = form.uuid
   return body
 }
