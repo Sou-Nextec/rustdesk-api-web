@@ -43,6 +43,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Série de patches da API aplica em ordem
+        run: |
+          # barato: só clona a base e aplica; o build completo (Docker) vem depois
+          API_TAG=$(sed -n 's/^ARG API_TAG=//p' nextec/docker/Dockerfile | head -1)
+          git clone -q --depth 1 --branch "$API_TAG" https://github.com/lejianwen/rustdesk-api.git /tmp/api-base
+          cd /tmp/api-base
+          for p in "$GITHUB_WORKSPACE"/nextec/backend/*.patch; do
+            if ! git apply --whitespace=nowarn "$p"; then
+              echo "::error file=nextec/backend/$(basename "$p")::O patch $(basename "$p") não aplica sobre a base $API_TAG com os anteriores aplicados em ordem (confira CRLF e o contexto)"
+              exit 1
+            fi
+          done
+
       - name: Regressão da incorporação do gerador
         run: node --test nextec/testes/generator-frame.test.mjs nextec/testes/generation-catalog.test.mjs nextec/testes/update-status.test.mjs nextec/testes/secret-actions.test.mjs
 
