@@ -12,6 +12,12 @@ Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no p
 - **Segurança da exclusão:** itens em andamento não podem ser excluídos; itens que já foram enviados para Atualizações pedem uma confirmação extra (só os arquivos de download saem; a versão preparada no painel não é afetada). O servidor valida o identificador, apaga somente a pasta do próprio item e registra quem excluiu.
 - **Formulário do gerador mais simples:** o essencial (plataforma, nome do instalador e do app, cliente, versão do pacote, ícone) fica à frente, com os valores Nextec já aplicados e explicados em uma linha. Servidor, segurança, aparência, permissões e modelos ficam em **Avançado**, recolhido. Erros aparecem no próprio campo. **O rdgen precisa ser atualizado** (`feat/gerador-simplificado`) para a exclusão e o novo formulário.
 
+## 2.11.7
+
+- **Atribuir em um clique:** quando o cliente ainda não tem senha automática, o diálogo de Atribuir já vem com "Senha automática do cliente (ligar agora)". Ao confirmar, o servidor liga a regra do cliente e atribui a máquina na mesma transação (patch 0032, `enable_group_rule` em `POST /api/admin/nextec/secrets/assign`). Intervalo padrão de 3 horas, idempotente e auditado (`client_rule_enable`). Identidade (UUID), aprovação e anti-lixo continuam conferidos como antes, e uma recusa não deixa regra ligada pela metade. Sem a flag a API segue recusando, como no patch 0031.
+- **Próxima verificação à vista:** em Máquinas e Pendentes cada linha mostra "Próxima verificação em ~N min" a partir de `last_seen_at` (ciclo de 5 minutos do agente), com aviso quando atrasa ou fica sem contato. A lista se atualiza sozinha a cada minuto, pausa com a aba oculta e o timer é limpo ao sair da tela.
+- Novos testes: backend (`-race`), `agent-cycle`, `assignPayload` e montagem da tela (padrão do diálogo e limpeza do timer). Proposta do botão Assinar com ponte local registrada em `nextec/atualizacao/ASSINATURA.md` (sem implementação).
+
 ## 2.11.6
 
 - **Nome do app livre:** o painel não depende mais de nome fixo (Nextec-Connect, XPTO ou qualquer outro). O `Ativar-Nextec-<ID>.cmd` localiza o agente pelo marcador de instalação (`HKLM\SOFTWARE\Nextec\Agente` {InstallDir, AppName} ou `%ProgramData%\Nextec\Acesso\nextec-marker.json`), depois por entrada de desinstalação, serviço RustDesk e varredura limitada, e lista tudo o que procurou.

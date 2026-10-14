@@ -106,7 +106,7 @@ test('mover para o cliente envia o cadastro completo e exige row_id e cliente v�
 
 test('transições: depois de vincular o cliente a máquina segue para a próxima etapa', () => {
   assert.equal(defaultAssignRule(true), 'group')
-  assert.equal(defaultAssignRule(false), 'none')
+  assert.equal(defaultAssignRule(false), 'group-enable')
   assert.equal(afterClientStep({ ...semCliente, group_id: 7 }).action, 'install-agent')
   assert.equal(afterClientStep({ ...semAgente, enrolled: true }).action, 'enable-rule')
   assert.equal(afterClientStep({ ...semRegra, managed: true }).action, 'connect')

@@ -46,3 +46,19 @@ python -I nextec\atualizacao\assinador\test_assinar_versao.py
 ```
 
 Usam painel falso em `127.0.0.1`, chave RSA descartável e `.deb` sintético, em pasta temporária. Não tocam a chave real, o painel real nem o contador local.
+
+## Proposta (não implementada): botão Assinar com ponte local
+
+Hoje o operador roda `Assinar-Versao.ps1` no terminal. A ideia é um botão **Assinar** na tela de Atualizações do painel, sem a chave
+nem a senha saírem do computador do operador.
+
+- **Ponte local:** um pequeno serviço do assinador escutando só em `127.0.0.1` (porta fixa, ex. 47821), iniciado sob demanda pelo
+  protocolo `nextec-assinar://` ou por um atalho. O painel (HTTPS) chama `http://127.0.0.1` com `fetch`; navegadores tratam
+  localhost como contexto confiável, então não há bloqueio de conteúdo misto.
+- **Segurança:** CORS só para a origem do painel, token aleatório de uso único gerado pela ponte e confirmado numa janela local
+  (o operador digita a senha da chave nessa janela, nunca no navegador). A ponte repete as conferências do assinador (SHA-256,
+  tamanho, produto, versão), mantém o anti-replay e recusa qualquer pedido que não venha do painel configurado.
+- **Fluxo:** botão Assinar, o painel pede a ponte, a ponte baixa o pedido (`sign-request`), assina, envia a assinatura
+  (`updates/signature`) e o painel relê a versão como autorizada.
+- **Pendências antes de implementar:** decidir distribuição da ponte (instalada com o assinador), política de porta ocupada e
+  revisão de segurança (DNS rebinding: validar `Host`, `Origin` e o token).

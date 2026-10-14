@@ -143,4 +143,31 @@ describe('Senhas dos servidores, fluxo guiado', () => {
     expect(host.textContent).toContain('aguarde 1 minuto')
     expect(host.querySelector('.nx-hero-cta').textContent.trim()).toBe('Ver credencial de inscrição')
   })
+
+  it('Pendentes mostra a próxima verificação e o padrão do diálogo é ligar a senha do cliente', async () => {
+    const pend = { peer_id: '555555555', alias: 'srv-novo', state: 'pending', group_id: 0, enrolled: true, managed: false, uuid: 'u1', last_seen_at: Date.now() / 1000 - 90, enrolled_at: Date.now() / 1000 - 60 }
+    await mount([pend])
+    const tabs = [...host.querySelectorAll('.el-tabs__item')]
+    tabs.find(t => t.textContent.includes('Pendentes')).click()
+    for (let i = 0; i < 5; i++) { await nextTick(); await tick() }
+    expect(host.querySelector('.nx-next-check').textContent).toMatch(/Próxima verificação em ~4 min/)
+    host.querySelector('.nx-next').click()
+    for (let i = 0; i < 5; i++) { await nextTick(); await tick() }
+    const radios = [...document.body.querySelectorAll('.nx-radios .el-radio')].map(r => r.textContent.trim())
+    expect(radios).toContain('Senha automática do cliente (ligar agora)')
+    expect(radios).not.toContain('Usar a regra do cliente')
+  })
+
+  it('o timer da atualização automática é limpo ao desmontar a tela', async () => {
+    const setSpy = vi.spyOn(globalThis, 'setInterval')
+    const clearSpy = vi.spyOn(globalThis, 'clearInterval')
+    await mount([pronta])
+    const ours = setSpy.mock.results.map(r => r.value).filter(h => h !== undefined)
+    expect(ours.length).toBeGreaterThan(0)
+    const before = clearSpy.mock.calls.length
+    app.unmount(); app = null
+    const cleared = clearSpy.mock.calls.slice(before).map(c => c[0])
+    expect(ours.some(h => cleared.includes(h))).toBe(true)
+    setSpy.mockRestore(); clearSpy.mockRestore()
+  })
 })
