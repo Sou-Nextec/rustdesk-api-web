@@ -21,7 +21,8 @@ test('o .cmd é ASCII puro, com CRLF, e carrega ID, prazo e código só em base6
   const data = t.match(/rem NXDATA (\S+)/)[1]
   assert.deepEqual(JSON.parse(Buffer.from(data, 'base64').toString('utf8')), bundle)
   assert.ok(!t.includes(bundle.bootstrap), 'o código não aparece em texto puro')
-  assert.ok(!t.includes('uuid') && !t.includes(bundle.uuid))
+  // o preflight compara o uuid pelo nome do campo, então a palavra aparece no script; o VALOR nunca aparece em texto puro
+  assert.ok(!t.includes(bundle.uuid) && !t.includes('"uuid"'), 'o uuid da autorização só existe dentro do NXDATA (base64)')
 })
 
 test('o .cmd usa o coordenador sem diálogo, eleva por UAC, substitui agente antigo e apaga o temporário', async () => {

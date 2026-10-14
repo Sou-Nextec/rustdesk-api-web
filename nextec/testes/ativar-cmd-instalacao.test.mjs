@@ -1,97 +1,20 @@
 // Ativar-Nextec-<ID>.cmd autossuficiente: pacote embutido, instalação em pasta simulada de %ProgramData%, agente antigo,
 // dados sujos do registro/serviços. Roda o PowerShell 5.1 real (só Windows). Sem elevação: a ACL é trocada por uma que
 // inclui o usuário atual (a forma SYSTEM+Administradores é a do Coordenar, coberta por test_coordinator.ps1).
+// Ativar-Nextec-<ID>.cmd autossuficiente: pacote embutido, instalação em pasta simulada de %ProgramData%, agente antigo,
+// dados sujos do registro/serviços. Roda o PowerShell 5.1 real (só Windows). Sem elevação: a ACL é trocada por uma que
+// inclui o usuário atual (a forma SYSTEM+Administradores é a do Coordenar, coberta por test_coordinator.ps1).
+// Os dublês (tarefas, identidade local, coordenador) ficam em ativar-harness.mjs; a atomicidade (preflight e rollback)
+// é coberta em ativar-cmd-atomicidade.test.mjs.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync, rmSync, realpathSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { createHash } from 'node:crypto'
-import { buildActivationCmd, FIND_AGENT_PS, INSTALL_AGENT_PS, MESSAGES, psText } from '../../src/nextec/activation-cmd.mjs'
+import { buildActivationCmd } from '../../src/nextec/activation-cmd.mjs'
 import { buildAgentPackage, readAgentPackage, AGENT_PACKAGE_FILES } from '../../src/nextec/agent-package.mjs'
 import { pacoteReal, lerScripts } from './pacote-agente.mjs'
-
-const PS51 = process.platform === 'win32' ? 'powershell.exe' : null
-const skip = !PS51
-const bundle = { painel: 'https://painel-remoto.nex.tec.br', id: '536822159', uuid: 'uuid-de-teste-1', bootstrap: 'B'.repeat(43) }
-const NOW = Date.UTC(2026, 9, 13, 12, 0, 0)
-const sha = (b) => createHash('sha256').update(b).digest('hex')
-const psq = (s) => "'" + String(s).replace(/'/g, "''") + "'"
-
-const messagesPs = '$M = @{\n' + Object.keys(MESSAGES).map(k => `  '${k}' = (${psText(MESSAGES[k])})`).join('\n') + '\n}'
-
-const HARNESS = `$ErrorActionPreference = 'Stop'
-${FIND_AGENT_PS}
-${INSTALL_AGENT_PS}
-${messagesPs}
-function New-NxAcl {
-  param([switch]$Directory, [switch]$WithOwner)
-  $me = [Security.Principal.WindowsIdentity]::GetCurrent().User
-  if ($Directory) { $acl = [Security.AccessControl.DirectorySecurity]::new() } else { $acl = [Security.AccessControl.FileSecurity]::new() }
-  $acl.SetAccessRuleProtection($true, $false)
-  if ($Directory) { $inh = 'ContainerInherit,ObjectInherit' } else { $inh = 'None' }
-  foreach ($s in @([Security.Principal.SecurityIdentifier]::new('S-1-5-18'), [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'), $me)) {
-    $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($s, 'FullControl', $inh, 'None', 'Allow'))
-  }
-  return $acl
-}
-function Set-Acl { param($LiteralPath, $AclObject) }
-$script:calls = New-Object System.Collections.ArrayList
-$script:taskExists = $false
-function Stop-ScheduledTask { param($TaskName, $ErrorAction) [void]$script:calls.Add('stop:' + $TaskName) }
-function Disable-ScheduledTask { param($TaskName, $ErrorAction) [void]$script:calls.Add('disable:' + $TaskName) }
-function Start-ScheduledTask { param($TaskName, $ErrorAction) [void]$script:calls.Add('start:' + $TaskName) }
-function Get-ScheduledTask { param($TaskName, $ErrorAction) if ($script:taskExists) { return [pscustomobject]@{ TaskName = $TaskName } } return $null }
-$script:runs = New-Object System.Collections.ArrayList
-$script:said = New-Object System.Collections.ArrayList
-$script:payloadSeen = ''
-$script:receberCreates = ''
-$run = {
-  param($script, $argList)
-  $item = [pscustomobject]@{ Script = [IO.Path]::GetFileName($script); Args = (@($argList) -join ' ') }
-  [void]$script:runs.Add($item)
-  if (@($argList) -contains '-Receber') {
-    $i = [Array]::IndexOf(@($argList), '-ArquivoAutorizacao')
-    $f = @($argList)[$i + 1]
-    $script:payloadSeen = [IO.File]::ReadAllText($f)
-    if ($script:receberCreates) { [IO.File]::WriteAllText($script:receberCreates, 'novo') }
-  }
-  [pscustomobject]@{ Code = 0; Out = '' }
-}
-$say = { param($t) [void]$script:said.Add([string]$t) }
-function Out-Result {
-  param($Value)
-  $json = $Value | ConvertTo-Json -Depth 6 -Compress
-  $json = [regex]::Replace($json, '[^\\x00-\\x7F]', { param($m) '\\u' + ([int][char]$m.Value).ToString('x4') })
-  Write-Output ('NXJSON:' + $json)
-}
-`
-
-function runPs(body, extraEnv = {}) {
-  const dir = mkdtempSync(join(realpathSync.native(tmpdir()), 'nxrun-'))
-  try {
-    const file = join(dir, 'h.ps1')
-    writeFileSync(file, '\ufeff' + HARNESS + body, 'utf8')
-    const r = spawnSync(PS51, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', file], { encoding: 'utf8', env: { ...process.env, ...extraEnv } })
-    const line = r.stdout.split(/\r?\n/).find(l => l.startsWith('NXJSON:'))
-    return { status: r.status, stdout: r.stdout, stderr: r.stderr, json: line ? JSON.parse(line.slice(7)) : null }
-  } finally { rmSync(dir, { recursive: true, force: true }) }
-}
-
-async function prepararCmd(dir, opcoes) {
-  const t = buildActivationCmd(bundle, NOW, await pacoteReal(), opcoes)
-  const p = join(dir, 'Ativar-Nextec-536822159.cmd')
-  writeFileSync(p, t, 'latin1')
-  return { text: t, path: p }
-}
-
-const found = (dir) => "([pscustomobject]@{ Script = ''; App = 'Client-Nextec-Connect'; AppPath = '" + dir + "'; Searched = @('x') })"
-
-const withDir = async (fn) => {
-  const d = mkdtempSync(join(realpathSync.native(tmpdir()), 'nxcmd-'))
-  try { return await fn(d) } finally { rmSync(d, { recursive: true, force: true }) }
-}
+import { PS51, skip, bundle, NOW, sha, psq, runPs, prepararCmd, found, withDir } from './ativar-harness.mjs'
 
 // ---------- (a) o script embutido interpreta sem erros ----------
 test('PS 5.1 (a): o script embutido no .cmd passa no ParseInput sem erros', { skip }, async () => {
@@ -251,7 +174,7 @@ test('PS 5.1: scripts já instalados e tarefa registrada não são regravados ne
     const maisNovo = scripts['Coordenar-Agente-Nextec.ps1'] + '\n# versao futura com SubstituirAgenteAntigo\n'
     writeFileSync(join(root, 'Coordenar-Agente-Nextec.ps1'), maisNovo, 'utf8')
     const out = runPs(`
-$script:taskExists = $true
+$script:tasks[$script:coord] = 'Ready'
 $lines = [IO.File]::ReadAllLines(${psq(path)})
 $b64 = ($lines | Where-Object { $_ -like 'rem NXDATA *' } | Select-Object -First 1).Substring(11).Trim()
 $code = Invoke-NxActivation -Root ${psq(root)} -Lines $lines -DataB64 $b64 -Found ${found(d)} -M $M -Run $run -Say $say -WaitSeconds 0
