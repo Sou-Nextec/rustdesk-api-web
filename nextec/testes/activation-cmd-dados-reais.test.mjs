@@ -245,6 +245,8 @@ test('PS 5.1: com os dados reais da máquina (registro, serviços, tarefas, Prog
 // ---------- 4) fumaça do .cmd completo ----------
 // Executa o bloco #PS-BEGIN# como o próprio .cmd faz, trocando só o necessário para não tocar na máquina:
 // administrador simulado, pasta de dados temporária e fontes de busca injetadas (sujas).
+// ATENÇÃO: a troca da linha $root esconde o literal 'Nextec\Acesso' do gerador. O caminho padrão (sem troca e sem override da raiz),
+// o powershell.exe resolvido e as barras invertidas do texto gerado são provados em ativar-cmd-barras.test.mjs.
 async function smoke(d, { dropNxid = false, services = null } = {}) {
   let t = buildActivationCmd(bundle, Date.now(), await pacoteReal())
   if (dropNxid) t = t.replace(/rem NXID \d+\r\n/, '')
