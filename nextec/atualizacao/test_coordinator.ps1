@@ -1,4 +1,4 @@
-#requires -version 5.1
+﻿#requires -version 5.1
 $ErrorActionPreference = 'Stop'
 $source = Join-Path $PSScriptRoot 'Provisionar-Agente-Nextec.ps1'
 $tokens = $null; $errors = $null
@@ -261,6 +261,31 @@ try {
   Assert ($result -eq 'already_configured' -and $script:registerCalls.Count -eq 1) 'Missing password task must be registered'
   Write-Host 'PASS ConfiguredAgent_RegistersTaskOnlyWhenMissing'
 
+  # Migracao para o intervalo unico (1 minuto): a tarefa de senha ja instalada com repeticao de 5 minutos e re-registrada
+  # pelo coordenador (validador completo da tarefa); a de 1 minuto fica como esta. O limite vem de Get-NextecAgentIntervals
+  # no script do agente da pasta de dados, nao de um literal do Provisionar.
+  New-CaseRoot
+  $paths = Get-NextecProvisionPaths -Root $script:root
+  Save-NextecAgentTokenConfig -Path $paths.AgentConfig -Panel $script:NextecPainelFixo -Id '536822159' -Token 'good-token'
+  Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Agente-Senha-Nextec.ps1') -Destination $paths.AgentScript -Force
+  $migrationExe = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  $migrationArgs = '-NoProfile -ExecutionPolicy Bypass -File "' + $paths.AgentScript + '" -Executar'
+  function global:Get-ScheduledTask { param($TaskName, $ErrorAction) $script:migrationTask }
+  foreach ($case in @(@{ Interval = 'PT5M'; Registers = 1; Name = 'tarefa antiga de 5 minutos' }, @{ Interval = 'PT1M'; Registers = 0; Name = 'tarefa de 1 minuto' })) {
+    $script:registerCalls.Clear()
+    $script:migrationTask = [pscustomobject]@{
+      State = 'Ready'
+      Principal = [pscustomobject]@{ UserId = 'SYSTEM'; RunLevel = 'Highest' }
+      Actions = @([pscustomobject]@{ Execute = $migrationExe; Arguments = $migrationArgs })
+      Triggers = @([pscustomobject]@{ Repetition = [pscustomobject]@{ Interval = $case.Interval } })
+    }
+    $result = Invoke-NextecProvisioning -Root $script:root -DiscoverId { '536822159' } -Now $script:current -RegisterAgent { param($path) $script:registerCalls.Add($path) | Out-Null }
+    Assert ($result -eq 'already_configured') "migracao: resultado inesperado ($($case.Name))"
+    Assert ($script:registerCalls.Count -eq $case.Registers) "migracao: $($case.Name) deveria registrar $($case.Registers) vez(es), registrou $($script:registerCalls.Count)"
+  }
+  Remove-Item Function:\Get-ScheduledTask -ErrorAction SilentlyContinue
+  Write-Host 'PASS ConfiguredAgent_FiveMinuteTaskMigratesToSingleInterval'
+
   New-CaseRoot
   $paths = Get-NextecProvisionPaths -Root $script:root
   Add-AuthorizationFile
@@ -334,7 +359,7 @@ try {
   New-CaseRoot
   $script:taskRegistration=$null
   function New-ScheduledTaskAction { param($Execute,$Argument) if ($Argument -match '(?i)bootstrap|proposed_token|secret') { throw 'Secret was placed in task arguments' }; [pscustomobject]@{Execute=$Execute;Argument=$Argument} }
-  function New-ScheduledTaskTrigger { param([DateTime]$At,[TimeSpan]$RepetitionInterval,[TimeSpan]$RepetitionDuration) if ($RepetitionInterval -ne [TimeSpan]::FromMinutes(5)) { throw 'Coordinator interval is not 5 minutes' }; [pscustomobject]@{Interval=$RepetitionInterval} }
+  function New-ScheduledTaskTrigger { param([DateTime]$At,[TimeSpan]$RepetitionInterval,[TimeSpan]$RepetitionDuration) if ($RepetitionInterval -ne [TimeSpan]::FromMinutes((Get-NextecCoordinatorMinutes -AgentScript (Join-Path $PSScriptRoot 'Agente-Senha-Nextec.ps1')))) { throw 'Coordinator interval is not the single configured interval' }; [pscustomobject]@{Interval=$RepetitionInterval} }
   function New-ScheduledTaskSettingsSet { param([switch]$StartWhenAvailable,[switch]$AllowStartIfOnBatteries,[switch]$DontStopIfGoingOnBatteries,$ExecutionTimeLimit,$MultipleInstances) if ($MultipleInstances -ne 'IgnoreNew') { throw 'Concurrent coordinators allowed' }; return @{} }
   function Register-ScheduledTask { param($TaskName,$Action,$Trigger,$Settings,$User,$RunLevel,[switch]$Force) if ($User -ne 'SYSTEM' -or $RunLevel -ne 'Highest' -or -not $Force) { throw 'Coordinator not scheduled as SYSTEM' }; $script:taskRegistration=[pscustomobject]@{TaskName=$TaskName;Action=$Action;Trigger=$Trigger} }
   Register-NextecCoordinatorTask -Root $script:root -SourceRoot $PSScriptRoot | Out-Null

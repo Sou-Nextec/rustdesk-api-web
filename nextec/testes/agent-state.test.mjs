@@ -1,7 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  agentState, agentContact, agentError, lastContactAt, quietFor, AGENT_STATE, ACTIVE_WINDOW_SECONDS, ACTIVE_CYCLES,
+  agentState, agentContact, agentError, lastContactAt, quietFor, activeWindowSeconds, AGENT_STATE,
+  LEGACY_ACTIVE_WINDOW_SECONDS,
 } from '../../src/nextec/agent-state.mjs'
 import { AGENT_CYCLE_SECONDS } from '../../src/nextec/agent-cycle.mjs'
 import { overallSummary, machineStage, nextStep } from '../../src/nextec/secrets-flow.mjs'
@@ -9,9 +10,36 @@ import { overallSummary, machineStage, nextStep } from '../../src/nextec/secrets
 const NOW = 1_800_000_000
 const base = { peer_id: '536822159', group_id: 7, enrolled: true, managed: true }
 
-test('a janela de "ativo" são 3 ciclos do intervalo constante do agente', () => {
-  assert.equal(ACTIVE_CYCLES, 3)
-  assert.equal(ACTIVE_WINDOW_SECONDS, AGENT_CYCLE_SECONDS * 3)
+const ACTIVE_WINDOW_SECONDS = LEGACY_ACTIVE_WINDOW_SECONDS
+
+test('a tela não recalcula a janela: a janela legada (servidor antigo) é a do agente de 5 min, não o ciclo de 1 min', () => {
+  assert.equal(LEGACY_ACTIVE_WINDOW_SECONDS, 900)
+  assert.notEqual(LEGACY_ACTIVE_WINDOW_SECONDS, AGENT_CYCLE_SECONDS * 3)
+  assert.equal(activeWindowSeconds({ active_window_seconds: 180 }), 180)
+  assert.equal(activeWindowSeconds({}), 900)
+})
+
+// Achado P2 do #94: com o ciclo de 60 s a tela usava 180 s e a API 900 s. Agora o servidor decide e a tela só exibe.
+test('fonte única: last_sync_at de 240 s atrás segue o agent_state da API (legado ativo, agente de 60 s parado)', () => {
+  const legado = { ...base, last_sync_at: NOW - 240, agent_state: 'ativo', active_window_seconds: 900 }
+  assert.equal(agentState(legado, NOW), AGENT_STATE.ACTIVE)
+  assert.equal(agentContact(legado, NOW).headline, 'Agente ativo')
+  const novo = { ...base, last_sync_at: NOW - 240, agent_state: 'parado', active_window_seconds: 180, sync_interval_seconds: 60 }
+  assert.equal(agentState(novo, NOW), AGENT_STATE.STALLED)
+  assert.match(agentContact(novo, NOW).headline, /sem contato há 4 min/)
+  // agente de 60 s consultando há 20 s: ativo, como a API diz
+  assert.equal(agentState({ ...base, last_sync_at: NOW - 20, agent_state: 'ativo', active_window_seconds: 180 }, NOW), AGENT_STATE.ACTIVE)
+  // a tela nunca contradiz a API, mesmo que o relógio local discorde
+  assert.equal(agentState({ ...base, last_sync_at: NOW - 5000, agent_state: 'ativo' }, NOW), AGENT_STATE.ACTIVE)
+  assert.equal(agentState({ ...base, last_sync_at: NOW - 5, agent_state: 'parado' }, NOW), AGENT_STATE.STALLED)
+})
+
+test('aguardando a primeira consulta usa a janela da API (agente de 60 s: 3 min)', () => {
+  const d = { ...base, last_sync_at: 0, last_seen_at: NOW - 30, enrolled_at: NOW - 30, agent_state: 'parado', active_window_seconds: 180 }
+  const c = agentContact(d, NOW)
+  assert.equal(c.waitingFirst, true)
+  assert.match(c.detail, /em até 3 min/)
+  assert.equal(agentContact({ ...d, enrolled_at: NOW - 200 }, NOW).waitingFirst, false)
 })
 
 test('cadastro sem consulta é parado, mesmo com last_seen_at de agora (o caso real do servidor sem agente)', () => {

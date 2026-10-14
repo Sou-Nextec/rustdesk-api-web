@@ -1,19 +1,23 @@
-// Feedback do ciclo do agente: o Nextec-Connect consulta o painel a cada ~5 minutos. A partir de `last_seen_at`
-// (segundos, já devolvido pela API) estima quando vem a próxima verificação. Módulo puro, testado em
-// nextec/testes/agent-cycle.test.mjs. É uma estimativa de exibição: nada aqui decide acesso ou senha.
+// Feedback do ciclo do agente: o Nextec-Connect consulta o painel a cada minuto (intervalo único do agente,
+// Get-NextecAgentIntervals em Agente-Senha-Nextec.ps1). A partir de `last_seen_at` (segundos, já devolvido pela API)
+// estima quando vem a próxima verificação. Módulo puro, testado em nextec/testes/agent-cycle.test.mjs. É uma estimativa
+// de exibição: nada aqui decide acesso ou senha.
 
-export const AGENT_CYCLE_SECONDS = 300
-// Depois de tantos ciclos sem contato o agente é tratado como parado (o painel já mostra "sem contato").
-const STALLED_CYCLES = 4
+export const AGENT_CYCLE_SECONDS = 60
+// Agentes ainda no ritmo antigo (5 minutos) até o coordenador migrar a tarefa deles: não são tratados como atrasados.
+export const LEGACY_AGENT_CYCLE_SECONDS = 300
+// Depois de tanto tempo sem contato o agente é tratado como parado (o painel já mostra "sem contato").
+export const AGENT_STALLED_SECONDS = 1200
 
 export function nextCheck(lastSeenAt, nowSec = Date.now() / 1000, cycle = AGENT_CYCLE_SECONDS) {
   const seen = Number(lastSeenAt)
   if (!Number.isFinite(seen) || seen <= 0) return { state: 'unknown', minutes: null, text: 'Ainda sem contato do agente.' }
   const elapsed = Math.max(0, nowSec - seen)
-  if (elapsed >= cycle * STALLED_CYCLES) {
+  if (elapsed >= AGENT_STALLED_SECONDS) {
     return { state: 'stalled', minutes: null, text: 'Sem contato do agente. Confira se a máquina está ligada e com rede.' }
   }
-  if (elapsed >= cycle) return { state: 'due', minutes: 0, text: 'Verificação atrasada, deve ocorrer em instantes.' }
+  if (elapsed >= Math.max(cycle, LEGACY_AGENT_CYCLE_SECONDS)) return { state: 'late', minutes: 0, text: 'Verificação atrasada, deve ocorrer em instantes.' }
+  if (elapsed >= cycle) return { state: 'due', minutes: 0, text: 'Próxima verificação em instantes.' }
   const minutes = Math.max(1, Math.ceil((cycle - elapsed) / 60))
   return { state: 'waiting', minutes, text: `Próxima verificação em ~${minutes} min.` }
 }

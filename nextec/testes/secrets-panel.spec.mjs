@@ -95,6 +95,18 @@ describe('Senhas dos servidores, fluxo guiado', () => {
     expect(host.querySelector('.nx-hero-title').textContent).toContain('Tudo pronto')
   })
 
+  it('Trocar agora promete até 1 minuto (não 5) e a troca pedida aparece na linha', async () => {
+    await mount([{ ...pronta, force_rotate: true }])
+    const row = rowTexts().find(t => t.includes('srv-pronto'))
+    expect(row).toContain('Troca solicitada: começa em até 1 minuto')
+    expect(row).not.toContain('5 minutos')
+    const trocar = [...host.querySelectorAll('button')].find(b => b.textContent.trim() === 'Trocar agora')
+    trocar.click()
+    for (let i = 0; i < 5; i++) { await nextTick(); await tick() }
+    expect(document.body.textContent).toContain('A troca começa em até 1 minuto')
+    expect(document.body.textContent).not.toContain('até 5 minutos')
+  })
+
   it('estado parado, cadastrada sem nenhuma consulta: nunca mostra Tudo pronto nem Aguardando a primeira troca', async () => {
     await mount([cadastradaSemSync])
     const row = rowTexts().find(t => t.includes('srv-fantasma'))
@@ -224,7 +236,7 @@ describe('Senhas dos servidores, fluxo guiado', () => {
     const tabs = [...host.querySelectorAll('.el-tabs__item')]
     tabs.find(t => t.textContent.includes('Pendentes')).click()
     for (let i = 0; i < 5; i++) { await nextTick(); await tick() }
-    expect(host.querySelector('.nx-next-check').textContent).toMatch(/Próxima verificação em ~4 min/)
+    expect(host.querySelector('.nx-next-check').textContent).toMatch(/Próxima verificação em instantes/)
     host.querySelector('.nx-next').click()
     for (let i = 0; i < 5; i++) { await nextTick(); await tick() }
     const radios = [...document.body.querySelectorAll('.nx-radios .el-radio')].map(r => r.textContent.trim())

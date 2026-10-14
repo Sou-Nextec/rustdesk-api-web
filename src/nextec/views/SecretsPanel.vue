@@ -175,6 +175,7 @@
             </div>
             <div v-if="row.has_password" class="nx-small nx-muted">Senha versão {{ row.version }}, trocada {{ ago(row.active_at).toLowerCase() }}<template v-if="row.managed">, próxima {{ until(row.next_rotation_at) }}</template></div>
             <div v-else-if="row.managed && contact(row).state === 'ativo' && !agentError(row)" class="nx-small nx-muted">Aguardando a primeira troca</div>
+            <div v-if="row.force_rotate && row.enrolled" class="nx-small nx-warn-text nx-rotation-pending"><span class="nx-dot is-warn" aria-hidden="true"></span>Troca solicitada: começa em até 1 minuto</div>
           </template>
         </el-table-column>
         <el-table-column label="Ações" width="260" fixed="right">
@@ -417,6 +418,7 @@
   import { getAgentPackage } from '@/nextec/agent-package-sources.js'
   import { connectDevice } from '@/nextec/connect'
   import { nextCheck, createAutoRefresh } from '@/nextec/agent-cycle.mjs'
+  import { createRotationWatch, ROTATION_NOTICE } from '@/nextec/rotation-watch.mjs'
   import { agentContact, agentError, lastContactAt, REMOVE_AGENT_HELP } from '@/nextec/agent-state.mjs'
   import { list as groupList, create as groupCreate } from '@/api/device_group'
   import { list as peerList, update as peerUpdate } from '@/api/peer'
@@ -472,17 +474,27 @@
     }
     if (g) groups.value = normalizeGroups(g)
   }
-  // Ciclo do agente (~5 min): relógio da tela a cada 30 s e lista recarregada a cada 60 s, só com a aba visível.
+  // Ciclo do agente (1 min): relógio da tela a cada 30 s e lista recarregada a cada 60 s, só com a aba visível.
   const nowSec = ref(Math.floor(Date.now() / 1000))
   const refresher = createAutoRefresh({
     onTick: () => { nowSec.value = Math.floor(Date.now() / 1000) },
     onRefresh: () => load(true),
   })
+  // Depois de "Trocar agora" (ou de ligar a senha): recarrega a lista a cada 15 s, só com a aba visível, até a versão da
+  // senha mudar (ou 3 min), para o estado aparecer sozinho. Um único timer para todas as máquinas.
+  const rotationWatch = createRotationWatch({
+    reload: () => load(true),
+    versionOf: (peerId) => (devices.value.find(d => d.peer_id === peerId) || {}).version || 0,
+    onSettled: (peerId) => {
+      const row = devices.value.find(d => d.peer_id === peerId) || {}
+      ElMessage.success(`Senha trocada: ${row.alias || row.hostname || peerId}.`)
+    },
+  })
   const nextCheckText = (row) => nextCheck(lastContactAt(row), nowSec.value).text
   // Situação do agente a partir da última consulta REAL (last_sync_at), nunca do cadastro.
   const contact = (row) => agentContact(row, nowSec.value)
   onMounted(() => { load(); refresher.start() })
-  onBeforeUnmount(() => refresher.stop())
+  onBeforeUnmount(() => { refresher.stop(); rotationWatch.stop() })
   const reloadGroups = async () => {
     const g = await groupList({ page: 1, page_size: 9999 }).catch(() => false)
     if (g) groups.value = normalizeGroups(g)
@@ -521,7 +533,11 @@
   }
   const enableRule = async (row) => {
     const r = await secretsPolicy({ kind: 'peer', ref: row.peer_id, enabled: true, interval_minutes: row.interval_minutes || 180 }).catch(() => false)
-    if (r) { ElMessage.success('Senha automática ligada. A primeira troca acontece na próxima verificação do agente (até 5 minutos).'); load() }
+    if (r) {
+      ElMessage.success('Senha automática ligada. A primeira troca começa em até 1 minuto.')
+      rotationWatch.watch(row.peer_id, row.version || 0)
+      load()
+    }
   }
 
   const groupName = id => (id && groups.value.find(g => g.id === id)?.name) || ''
@@ -566,7 +582,11 @@
   }
   const rotate = async (row) => {
     const r = await secretsRotate(row.peer_id).catch(() => false)
-    if (r) ElMessage.success('A senha será trocada na próxima verificação do agente (até 5 minutos).')
+    if (r) {
+      ElMessage.success(ROTATION_NOTICE)
+      rotationWatch.watch(row.peer_id, row.version || 0)
+      load(true)
+    }
   }
 
   // ---------- regras ----------

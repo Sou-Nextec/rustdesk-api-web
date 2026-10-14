@@ -2,13 +2,14 @@
 // nextec/testes/agent-state.test.mjs. A API devolve `last_sync_at` (última consulta /agent/sync autenticada) e
 // `last_seen_at` (qualquer escrita, inclusive o cadastro). Só `last_sync_at` prova que o agente está vivo.
 //
-// Estados: ativo | parado | pendente_aprovacao | sem_agente. O servidor calcula o mesmo valor em `agent_state`;
-// a tela repete a regra com o relógio dela para o estado envelhecer entre duas atualizações da lista.
+// Estados: ativo | parado | pendente_aprovacao | sem_agente. FONTE ÚNICA: o servidor decide em `agent_state` com a
+// janela do intervalo REAL de cada agente (3 intervalos informados no sync, de 180 a 900 s; agente antigo sem o campo
+// vale 5 min, ou seja, 900 s) e a tela só exibe, sem recalcular janela (a lista é recarregada a cada minuto).
+// Só um servidor anterior ao campo `agent_state` cai na regra local, com a janela legada de 900 s.
 // Nada aqui libera acesso: a autorização de reinstalar é decidida pelo backend.
-import { AGENT_CYCLE_SECONDS } from './agent-cycle.mjs'
 
-export const ACTIVE_CYCLES = 3
-export const ACTIVE_WINDOW_SECONDS = AGENT_CYCLE_SECONDS * ACTIVE_CYCLES
+// Janela legada (agente de 5 minutos x 3), usada apenas quando o servidor não manda agent_state/active_window_seconds.
+export const LEGACY_ACTIVE_WINDOW_SECONDS = 900
 
 export const AGENT_STATE = Object.freeze({
   ACTIVE: 'ativo',
@@ -31,13 +32,19 @@ export function lastContactAt(d = {}) {
   return has(d.last_sync_at) ? seconds(d.last_sync_at) : seconds(d.last_seen_at)
 }
 
+// Janela de "ativo" desta máquina como o servidor a calculou (só para textos de espera, nunca para decidir o estado).
+export function activeWindowSeconds(d) {
+  const w = d && typeof d === 'object' ? seconds(d.active_window_seconds) : 0
+  return w > 0 ? w : LEGACY_ACTIVE_WINDOW_SECONDS
+}
+
 export function agentState(d, now = Date.now() / 1000) {
   if (!d || typeof d !== 'object') return AGENT_STATE.NONE
   if (d.state === 'pending') return AGENT_STATE.PENDING
   if (!d.enrolled) return AGENT_STATE.NONE
-  if (!has(d.last_sync_at) && KNOWN.has(d.agent_state)) return d.agent_state
+  if (KNOWN.has(d.agent_state)) return d.agent_state
   const last = lastContactAt(d)
-  if (last > 0 && now - last < ACTIVE_WINDOW_SECONDS) return AGENT_STATE.ACTIVE
+  if (last > 0 && now - last < LEGACY_ACTIVE_WINDOW_SECONDS) return AGENT_STATE.ACTIVE
   return AGENT_STATE.STALLED
 }
 
@@ -101,13 +108,14 @@ export function agentContact(d, now = Date.now() / 1000) {
     }
     // Cadastrado e nunca consultou. Logo depois do cadastro ainda é normal esperar a primeira consulta.
     const enrolledAt = seconds(d && d.enrolled_at)
-    const waitingFirst = enrolledAt > 0 && now - enrolledAt < ACTIVE_WINDOW_SECONDS
+    const window = activeWindowSeconds(d)
+    const waitingFirst = enrolledAt > 0 && now - enrolledAt < window
     return {
       state, tone: 'warn', lastAt: 0, waitingFirst,
       headline: waitingFirst
         ? 'Agente cadastrado, aguardando a primeira consulta.'
         : 'Agente cadastrado, mas nunca consultou o painel.',
-      detail: waitingFirst ? `Se não consultar em até ${Math.round(ACTIVE_WINDOW_SECONDS / 60)} min, reinstale o agente.` : REINSTALL_HINT,
+      detail: waitingFirst ? `Se não consultar em até ${Math.max(1, Math.round(window / 60))} min, reinstale o agente.` : REINSTALL_HINT,
     }
   }
   if (state === AGENT_STATE.PENDING) {
