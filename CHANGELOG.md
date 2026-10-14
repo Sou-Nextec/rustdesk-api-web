@@ -2,6 +2,12 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.14
+
+- **Trava de CI contra erros repetidos:** novo `nextec/testes/verificar-integridade.mjs` roda em todo PR e barra patch, `.sh`, Dockerfile ou workflow com CRLF, `.ps1` com acento sem BOM UTF-8 e série de patches fora do padrão. `.gitattributes` passou a forçar LF nesses tipos e em `.mjs`, `.js`, `.vue` e `.json`.
+- **Testes de node:** `@vue/compiler-sfc` virou `devDependency` explícita (antes era só transitiva do `vue` e os testes `templates-declarados`, `secrets-view` e `rodape-versao` quebravam sem `npm ci` completo); a verificação acusa o ambiente incompleto com mensagem clara.
+- BOM adicionado a `Manifesto-Connect.ps1` e `atualizador-agendamento.ps1` (tinham acento sem BOM). Sem mudança de comportamento do painel.
+
 ## 2.11.13
 
 - **Corrigido, excluir item já enviado para Atualizações:** o botão **Excluir** estava escondido nesses itens e a confirmação extra nunca aparecia. Agora o botão aparece em todo item que pode ser excluído; nos já enviados, o diálogo mostra o aviso ("já enviado para Atualizações...") e o botão **Excluir mesmo assim**. Em lote, esses itens entram numa única confirmação que lista quais são. Item em andamento continua sem botão. **O rdgen precisa ser atualizado** (`feat/gerador-simplificado`): ele agora separa "pode excluir" de "exige confirmação".

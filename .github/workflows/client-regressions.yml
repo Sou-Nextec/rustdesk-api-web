@@ -24,6 +24,8 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci --no-audit --no-fund
+      - name: Integridade do repositorio (LF em patch/sh/yml, BOM em .ps1, serie de patches, ambiente de testes)
+        run: node nextec/testes/verificar-integridade.mjs
       - name: Validar preparacao autorizada da conexao, nomes do template e rodape da versao
         run: node --test nextec/testes/*.test.mjs
       - name: Navegacao entre telas (monta o painel e percorre as rotas A, B, A, C)

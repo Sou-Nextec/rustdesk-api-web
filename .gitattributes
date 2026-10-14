@@ -1,2 +1,13 @@
-nextec/atualizacao/*.ps1 -text
+# Fim de linha: arquivos que o Linux (git apply, sh, Docker, Actions) le precisam ser LF no repositorio.
+# Verificado no CI por nextec/testes/verificar-integridade.mjs.
+*.patch text eol=lf
 *.sh text eol=lf
+*.yml text eol=lf
+Dockerfile text eol=lf
+*.mjs text eol=lf
+*.js text eol=lf
+*.vue text eol=lf
+*.json text eol=lf
+# .ps1: sem regra global. O git preserva o BOM UTF-8 (so normaliza fim de linha); quem protege o BOM e o verificador.
+# Os de nextec/atualizacao seguem como estavam (-text) para nao mexer em bytes assinados.
+nextec/atualizacao/*.ps1 -text
