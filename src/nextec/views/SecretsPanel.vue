@@ -395,6 +395,7 @@
     movePayload, defaultAssignRule, afterClientStep, friendlyError, NEEDS_CLIENT_NOTICE, AGENT_EMPTY_NOTICE,
   } from '@/nextec/secrets-flow.mjs'
   import { buildActivationCmd, activationFileName, downloadActivationCmd } from '@/nextec/activation-cmd.mjs'
+  import { getAgentPackage } from '@/nextec/agent-package-sources.js'
   import { connectDevice } from '@/nextec/connect'
   import { nextCheck, createAutoRefresh } from '@/nextec/agent-cycle.mjs'
   import { list as groupList, create as groupCreate } from '@/api/device_group'
@@ -721,8 +722,9 @@
       const id = String(agent.peer)
       const r = await secretsBootstrap(id)
       const bundle = activationBundle(r.data, id)
-      downloadActivationCmd(buildActivationCmd(bundle), activationFileName(id))
-      ElMessage.success('Arquivo baixado. Copie para o servidor e dê duplo clique como administrador, em até 15 minutos.')
+      const pkg = await getAgentPackage()
+      downloadActivationCmd(buildActivationCmd(bundle, Date.now(), pkg), activationFileName(id))
+      ElMessage.success('Arquivo baixado. Copie para o servidor e dê duplo clique como administrador, em até 15 minutos. Ele instala o agente sozinho.')
     } catch (e) { agent.error = friendlyError(e, 'Não foi possível autorizar esta máquina. Atualize a lista e tente de novo.') }
     finally { agent.loading = false }
   }

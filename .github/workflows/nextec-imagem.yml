@@ -12,10 +12,10 @@ on:
   push:
     branches: [master]
     tags: ['v*']
+    # nextec/atualizacao NAO e ignorado: os scripts do agente vao embutidos no Ativar-Nextec-<ID>.cmd (build do painel)
     paths-ignore:
       - '**.md'
       - 'nextec/deploy/**'
-      - 'nextec/atualizacao/**'
       - 'nextec/testes/**'
   workflow_dispatch:
     inputs:
