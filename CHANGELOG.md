@@ -2,6 +2,7 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+<<<<<<< HEAD
 ## 2.11.18
 
 - **Ativar-Nextec-<ID>.cmd de um clique, sem gerar nem instalar outro app:** o arquivo agora traz dentro de si o pacote do agente (`Coordenar-Agente-Nextec.ps1`, `Provisionar-Agente-Nextec.ps1` e `Agente-Senha-Nextec.ps1`, os mesmos scripts de `nextec/atualizacao`), comprimido (gzip) e em base64, com o SHA-256 de cada script. Antes de gravar qualquer coisa ele descomprime e confere os hashes; se divergirem, para com mensagem clara. Nada é baixado da internet.
@@ -10,6 +11,18 @@ Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no p
 - **Confirmação e log:** depois de entregar a autorização o .cmd aciona o coordenador e espera o cadastro (até 90 s): "Pronto: máquina ativada" ou erro claro, sem expor token nem código. O detalhe vai para `ativar.log` em `%ProgramData%NextecAcesso`, sem segredos. O arquivo se apaga ao terminar com sucesso.
 - **Nada de alteração persistente com ativação negada (preflight e rollback):** antes de gravar qualquer arquivo em ProgramData, parar ou registrar tarefa, o .cmd faz uma checagem só de leitura: prazo de 15 minutos, administrador, pacote embutido (hash), formato e tamanho do NXDATA, painel igual ao do marcador local, ativação já pendente e, principalmente, o ID e o uuid da autorização contra os da máquina (serviço instalado do RustDesk, `--get-id` e MachineGuid, as mesmas funções que o Provisionar usa, lidas do pacote embutido). Arquivo de outra máquina para na hora com "este arquivo é de outra máquina" e sem alterar nada. Depois do preflight, tudo o que a execução cria ou muda é rastreado (fotografia da pasta de dados, XML da tarefa do coordenador, estado da tarefa de senha) e, se o coordenador ou o painel recusar (identity_conflict, pending_authorization, invalid_*, 401, 409, painel fora do ar, exceção qualquer), o .cmd desfaz: remove scripts, backups, marcador e tarefa criados, reativa a tarefa de senha, recoloca o cadastro antigo byte a byte e a tarefa do coordenador como era. Só o sucesso deixa alterações; o único rastro de uma falha é o `ativar.log` (sem segredos). Rodar de novo com autorização já usada também não deixa nada. Testes novos em `nextec/testes/ativar-cmd-atomicidade.test.mjs` (PowerShell 5.1, raiz de dados temporária e dublês de tarefas, identidade local, coordenador e painel).
 - **Painel:** o botão da tela Senhas dos servidores monta o pacote no navegador (scripts importados no build, `?raw`). O workflow da imagem deixou de ignorar `nextec/atualizacao/**`, porque esses scripts agora fazem parte do build. **Depois do merge o rdgen precisa ressincronizar `Coordenar-Agente-Nextec.ps1` e `Provisionar-Agente-Nextec.ps1`.**
+=======
+## 2.11.17
+
+Achados da revisão do PR do instalador (rdgen #45). Nenhuma mudança de tela; vale para os próximos instaladores gerados.
+
+- **Reinstalação com outro painel:** o instalador sem inscrição de outro painel não herda mais a inscrição nem a credencial do painel anterior (comparação pelo host normalizado, ignorando caixa, porta padrão e barra final); a credencial de outro painel vai para `agente-senha.json.anterior` e o agente nunca a envia ao painel novo. A decisão fica no `coordenador.log`, sem segredos.
+- **Painel do instalador no registro:** além de `nextec-marker.json`, o painel do build é lido do valor `Painel` em `HKLM\SOFTWARE\Nextec\Agente` (https validado), depois dos arquivos e antes do padrão.
+- **Atualizador:** o `-UrlBase` definido no build é preservado; o painel da inscrição só é usado quando nenhum `-UrlBase` é dado.
+- **Tarefa de senha:** só vale com SYSTEM (`S-1-5-18`) e RunLevel Highest, uma única ação com o Windows PowerShell 5.1, `-File` do script esperado com `-Executar` e gatilho periódico de no máximo 5 minutos; qualquer divergência registra a tarefa de novo.
+- **Teste de integração do 401:** o agente real contra um painel falso local (HTTP) recebe 401 três vezes seguidas, descarta a credencial e refaz o cadastro; 1 ou 2 respostas 401 não descartam.
+- **Pendente do painel anterior não bloqueia mais a inscrição:** o cadastro pendente (journal) e o estado de inscrição própria registram o host normalizado do painel em que foram criados. Se o painel atual (marcador, `inscricao.json` ou registro) for outro, o pendente é descartado (só o código vai ao `coordenador.log`) e a inscrição recomeça no painel atual; no mesmo painel a espera continua, mas expira (autorização em 15 minutos, recusa manual em 24 horas) e a máquina se inscreve de novo. Antes o fluxo respondia `identity_conflict` para sempre.
+>>>>>>> origin/fix/fase1-achados-agente
 
 ## 2.11.16
 
