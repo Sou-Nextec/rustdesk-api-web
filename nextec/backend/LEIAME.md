@@ -229,3 +229,11 @@ Testes: `service/nextec_enroll_test.go`, `service/nextec_enroll_review_test.go`,
 `http/controller/api/nextec_enroll_identity_test.go` e `http/controller/admin/nextec_enroll_test.go` (rodam no build da imagem).
 Rollback: remover o patch deixa as colunas novas sem uso; pendentes ficariam com token e sem política de aprovação, então
 atribua ou rejeite todas antes de voltar.
+
+## Patch 0032: atribuir liga a regra do cliente
+
+`POST /nextec/secrets/assign` aceita `enable_group_rule:true` (com `rule:"group"`) e `group_interval_minutes` opcional (15 a 1440).
+Se o cliente não tem regra de senha ligada, o servidor a cria ou religa **dentro da mesma transação** da atribuição: intervalo
+informado, senão o da regra desligada existente, senão 180 min. Regra já ligada não é alterada. Qualquer recusa (identidade/UUID,
+cliente de outro dono sem `move`, intervalo inválido) desfaz tudo. Auditoria `client_rule_enable` mais `enroll_assign`; a resposta
+traz `group_rule_enabled`. Sem a flag o comportamento do 0031 (`ErrNextecNoGroupRule`) permanece.
