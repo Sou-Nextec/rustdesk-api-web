@@ -28,6 +28,10 @@
 .PARAMETER Registrar
   Registra o atualizador incluído no instalador, sem baixar manifesto ou MSI.
   Exige administrador. Funciona offline e mantém o estado de versão e sequência.
+
+.PARAMETER PacoteVersao
+  Com -Registrar: versão (x.y.z) do MSI que acabou de ser instalado. Fica gravada para o atualizador
+  não reinstalar a mesma versão no primeiro ciclo. O MSI do gerador sempre informa.
 #>
 [CmdletBinding()]
 param(
@@ -37,6 +41,7 @@ param(
   [switch]$Forcar,
   [switch]$SoVerificar,
   [switch]$Registrar,
+  [string]$PacoteVersao = '',
   [switch]$Remover,
   [switch]$Silencioso
 )
@@ -186,19 +191,17 @@ function Get-NextecServiceProfileRoot {
     [string]$ProfileRootBase
   )
 
+  # Devolve as pastas Roaming onde o serviço pode guardar a config, na ordem de preferência.
+  # O RustDesk roda como LocalSystem, mas grava em ServiceProfiles\LocalService: o hbb_common troca
+  # 'system32\config\systemprofile' por 'ServiceProfiles\LocalService' (config.rs, função patch).
+  $localService = if ($ProfileRootBase) { Join-Path $ProfileRootBase 'LocalService\AppData\Roaming' } else { Join-Path $WindowsDirectory 'ServiceProfiles\LocalService\AppData\Roaming' }
+  $systemProfile = if ($ProfileRootBase) { Join-Path $ProfileRootBase 'SystemProfile\AppData\Roaming' } else { Join-Path $WindowsDirectory 'System32\config\systemprofile\AppData\Roaming' }
+  $networkService = if ($ProfileRootBase) { Join-Path $ProfileRootBase 'NetworkService\AppData\Roaming' } else { Join-Path $WindowsDirectory 'ServiceProfiles\NetworkService\AppData\Roaming' }
+
   $account = $ServiceAccount.Trim().ToLowerInvariant()
-  if ($account -match '^(localservice|nt authority\\localservice)$') {
-    if ($ProfileRootBase) { return (Join-Path $ProfileRootBase 'LocalService\AppData\Roaming') }
-    return (Join-Path $WindowsDirectory 'ServiceProfiles\LocalService\AppData\Roaming')
-  }
-  if ($account -match '^(localsystem|nt authority\\system|system)$') {
-    if ($ProfileRootBase) { return (Join-Path $ProfileRootBase 'SystemProfile\AppData\Roaming') }
-    return (Join-Path $WindowsDirectory 'System32\config\systemprofile\AppData\Roaming')
-  }
-  if ($account -match '^(networkservice|nt authority\\networkservice)$') {
-    if ($ProfileRootBase) { return (Join-Path $ProfileRootBase 'NetworkService\AppData\Roaming') }
-    return (Join-Path $WindowsDirectory 'ServiceProfiles\NetworkService\AppData\Roaming')
-  }
+  if ($account -match '^(localservice|nt authority\\localservice)$') { return @($localService) }
+  if (-not $account -or $account -match '^(localsystem|nt authority\\system|system|\.\\localsystem)$') { return @($localService, $systemProfile) }
+  if ($account -match '^(networkservice|nt authority\\networkservice)$') { return @($networkService) }
   throw "identity_conflict: conta de serviço não reconhecida ('$ServiceAccount')."
 }
 
@@ -232,56 +235,78 @@ function Get-NextecInstalledClient {
     $Services = @(Get-CimInstance -ClassName Win32_Service -ErrorAction Stop)
   }
 
-  # Marcador de instalação (independente de nome): HKLM\SOFTWARE\Nextec\Agente {AppName} ou nextec-marker.json.
-  # Serve só para desempatar quando há mais de um serviço RustDesk; nenhum nome de app é fixo aqui.
+  # Marcador gravado pelo MSI (HKLM\SOFTWARE\Nextec\Agente {InstallDir, AppName}) ou nextec-marker.json.
+  # Quando existe, decide sozinho qual serviço é o nosso; nenhum nome de app é fixo aqui.
   $markerApp = ''
+  $markerDir = ''
   $markerSource = ''
   if ($null -ne $Marker) {
     $markerApp = [string]$Marker.AppName
+    $markerDir = [string]$Marker.InstallDir
     $markerSource = 'marcador informado'
   } else {
     try {
       $reg = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Nextec\Agente' -ErrorAction Stop
       $markerApp = [string]$reg.AppName
+      $markerDir = [string]$reg.InstallDir
       $markerSource = 'HKLM\SOFTWARE\Nextec\Agente'
-    } catch { $markerApp = '' }
-    if (-not $markerApp) {
+    } catch { $markerApp = ''; $markerDir = '' }
+    if (-not $markerApp -and -not $markerDir) {
       $markerPath = $MarkerFile
       if (-not $markerPath -and $env:ProgramData) { $markerPath = Join-Path $env:ProgramData 'Nextec\Acesso\nextec-marker.json' }
       try {
         if ($markerPath -and (Test-Path -LiteralPath $markerPath -PathType Leaf)) {
           $mj = Get-Content -Raw -LiteralPath $markerPath -ErrorAction Stop | ConvertFrom-Json
-          if ($mj.AppName) { $markerApp = [string]$mj.AppName } elseif ($mj.app_name) { $markerApp = [string]$mj.app_name }
+          if ($mj.AppName) { $markerApp = [string]$mj.AppName } elseif ($mj.app_name) { $markerApp = [string]$mj.app_name } elseif ($mj.app) { $markerApp = [string]$mj.app }
+          if ($mj.InstallDir) { $markerDir = [string]$mj.InstallDir } elseif ($mj.install_dir) { $markerDir = [string]$mj.install_dir }
           $markerSource = $markerPath
         }
-      } catch { $markerApp = '' }
+      } catch { $markerApp = ''; $markerDir = '' }
     }
   }
   if ($markerApp -notmatch '^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$') { $markerApp = '' }
+  $markerDir = ([string]$markerDir).Trim().Trim('"').Trim().TrimEnd('\')
+  if ($markerDir -notmatch '^[A-Za-z]:\\') { $markerDir = '' }
 
-  $candidates = @(
+  $all = @(
     foreach ($service in $Services) {
-      $exePath = Get-NextecServiceExecutablePath -Service $service
-      if (-not $exePath) { continue }
-      $exeName = [IO.Path]::GetFileNameWithoutExtension($exePath)
-      if ([string]$service.Name -ine $exeName) { continue }
-      if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) { continue }
-      $profile = Get-NextecServiceProfileRoot -ServiceAccount ([string]$service.StartName) -WindowsDirectory $WindowsDirectory -ProfileRootBase $ProfileRootBase
-      $configPath = Join-Path (Join-Path $profile $exeName) 'config'
-      if (-not (Test-Path -LiteralPath $configPath -PathType Container)) { continue }
-      if (@(Get-ChildItem -LiteralPath $configPath -File -Filter '*.toml' -ErrorAction SilentlyContinue).Count -eq 0) { continue }
-      [pscustomobject]@{ Service = $service; ExePath = [IO.Path]::GetFullPath($exePath); ConfigRoot = $configPath }
+      try {
+        $exePath = Get-NextecServiceExecutablePath -Service $service
+        if (-not $exePath) { continue }
+        if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) { continue }
+        $exePath = [IO.Path]::GetFullPath($exePath)
+        $exeName = [IO.Path]::GetFileNameWithoutExtension($exePath)
+        $exeDir = [IO.Path]::GetDirectoryName($exePath).TrimEnd('\')
+        $roots = @(Get-NextecServiceProfileRoot -ServiceAccount ([string]$service.StartName) -WindowsDirectory $WindowsDirectory -ProfileRootBase $ProfileRootBase)
+        $configPath = ''
+        foreach ($root in $roots) {
+          $path = Join-Path (Join-Path $root $exeName) 'config'
+          if ((Test-Path -LiteralPath $path -PathType Container) -and
+              @(Get-ChildItem -LiteralPath $path -File -Filter '*.toml' -ErrorAction SilentlyContinue).Count -gt 0) { $configPath = $path; break }
+        }
+        $expectedConfig = Join-Path (Join-Path $roots[0] $exeName) 'config'
+        $byMarker = ($markerDir -and ($exeDir -ieq $markerDir)) -or
+          ($markerApp -and ([string]$service.Name -ieq $markerApp) -and ($exeName -ieq $markerApp))
+        $isRustDesk = ([string]$service.Name -ieq $exeName) -and [bool]$configPath
+        if (-not $byMarker -and -not $isRustDesk) { continue }
+        if (-not $configPath) { $configPath = $expectedConfig }
+        [pscustomobject]@{ Service = $service; ExePath = $exePath; ConfigRoot = $configPath; ByMarker = [bool]$byMarker }
+      } catch { continue }
     }
   )
 
+  # O marcador do instalador vence a heurística; sem marcador, vale serviço com config do RustDesk.
+  $candidates = @($all | Where-Object { $_.ByMarker })
+  if ($candidates.Count -eq 0) { $candidates = @($all) }
+
   if ($candidates.Count -eq 0) {
     $seen = @($Services | Where-Object { $_ }).Count
-    if ($markerApp) { $how = "AppName do marcador: $markerApp ($markerSource)" } else { $how = 'sem marcador (HKLM\SOFTWARE\Nextec\Agente ou nextec-marker.json)' }
-    throw ('identity_conflict: nenhum serviço instalado do RustDesk/Nextec foi encontrado. Procurado: serviço com --service cujo nome é o do executável e pasta config com .toml ({0} serviços vistos; {1}).' -f $seen, $how)
+    if ($markerApp -or $markerDir) { $how = "marcador: app '$markerApp', pasta '$markerDir' ($markerSource)" } else { $how = 'sem marcador (HKLM\SOFTWARE\Nextec\Agente ou nextec-marker.json)' }
+    throw ('identity_conflict: nenhum serviço instalado do RustDesk/Nextec foi encontrado. Procurado: serviço com --service apontando para a pasta do marcador, ou serviço com o nome do executável e config .toml em ServiceProfiles\LocalService ({0} serviços vistos; {1}).' -f $seen, $how)
   }
   if ($candidates.Count -gt 1 -and $markerApp) {
-    $byMarker = @($candidates | Where-Object { [string]$_.Service.Name -ieq $markerApp })
-    if ($byMarker.Count -eq 1) { $candidates = $byMarker }
+    $byName = @($candidates | Where-Object { [string]$_.Service.Name -ieq $markerApp })
+    if ($byName.Count -eq 1) { $candidates = $byName }
   }
   if ($candidates.Count -gt 1) {
     $names = ($candidates | ForEach-Object { [string]$_.Service.Name }) -join ', '
@@ -433,7 +458,15 @@ try {
   }
   # Called by EXE/MSI after installing their trusted, bundled updater.
   # Registration must work offline and never download or install another package.
-  if ($Registrar) { RegistrarAtualizador; return }
+  if ($Registrar) {
+    if ($PacoteVersao -and $PacoteVersao -notmatch '^\d{1,3}\.\d{1,3}\.\d{1,3}$') { throw 'Versão do pacote inválida.' }
+    RegistrarAtualizador
+    if ($PacoteVersao) {
+      New-Item -Path $ChaveReg -Force | Out-Null
+      Set-ItemProperty -Path $ChaveReg -Name Versao -Value $PacoteVersao
+    }
+    return
+  }
 
   # Registra antes de consultar o manifesto, inclusive quando ainda não há versão publicada.
   # SoVerificar permanece sem efeitos na máquina.

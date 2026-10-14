@@ -2,6 +2,16 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.16
+
+Estabilização do agente no cliente (Fase 1). Nenhuma mudança de tela; vale para os próximos instaladores gerados.
+
+- **Corrigido, o agente não achava o serviço do RustDesk em máquina real:** o serviço roda como LocalSystem, mas o RustDesk grava a configuração em `C:\Windows\ServiceProfiles\LocalService` (o `hbb_common` troca `system32\config\systemprofile` por `ServiceProfiles\LocalService`). O agente procurava em `systemprofile`, não achava nada e nenhuma máquina se inscrevia. Agora olha as duas pastas, e o marcador do instalador (`HKLM\SOFTWARE\Nextec\Agente`, pasta de instalação) identifica o serviço mesmo antes de existir configuração. Entradas de serviço quebradas são ignoradas.
+- **Agente antigo com credencial morta se recupera sozinho:** 3 respostas 401 seguidas guardam a credencial em `agente-senha.json.anterior` e o cadastro é refeito automaticamente (antes: 401 a cada 5 minutos para sempre, bloqueando o cadastro novo).
+- **Sem becos sem saída no cadastro:** credencial ilegível ou de outro ID (app reinstalado) vai para `.anterior` e a inscrição recomeça; autorização do painel substitui a credencial velha; autorização inválida ou de outra máquina é descartada em vez de travar as próximas; recusa 401/409 da inscrição tenta de novo a cada 6 horas em vez de parar para sempre.
+- **Instalação por cima de agente antigo:** arquivo do agente anterior com permissão fora do padrão é apagado e copiado de novo (antes: `unsafe_path` e o MSI desfazia a instalação inteira). Erros do coordenador vão para `coordenador.log`.
+- **Menos ruído:** a tarefa de senha só é recriada quando falta (antes: a cada 5 minutos). O atualizador volta a aceitar `-PacoteVersao`, que o MSI do gerador envia.
+
 ## 2.11.15
 
 - **Corrigido, Ativar-Nextec-<ID>.cmd parava em servidor real:** um programa qualquer com `InstallLocation` entre aspas no registro (`"C:\Program Files\X\"`) derrubava o script com "Cannot find drive '"C'". Agora todo caminho vindo de fora (registro de desinstalação 64/32 bits, marcador, serviços, tarefas agendadas, Program Files) passa por uma normalização única: tira espaços e aspas, expande `%VAR%`, remove barra final repetida e só aceita caminho local `X:\` válido. Entrada ruim (UNC, caractere inválido, variável sem valor) é ignorada e anotada; a busca continua e o agente é achado mesmo depois de várias entradas ruins.

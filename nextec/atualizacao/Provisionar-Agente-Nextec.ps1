@@ -188,7 +188,7 @@ function New-NextecProposedToken {
 
 function Write-NextecProvisionLog {
   param([Parameter(Mandatory)][string]$Code, [string]$Root = (Join-Path $env:ProgramData 'Nextec\Acesso'))
-  if ($Code -notmatch '^(pending|complete|network_retry|manual_authorization_required|already_configured|identity_conflict|already_enrolled|registration_retry|invalid_input|invalid_panel|invalid_identity|invalid_bootstrap|protocol_error|unsafe_path|component_missing|self_enrolled|self_backoff|self_blocked|self_manual|peer_not_registered|rate_limited|painel_padrao)$') { $Code = 'protocol_error' }
+  if ($Code -notmatch '^(pending|complete|network_retry|manual_authorization_required|already_configured|identity_conflict|already_enrolled|registration_retry|invalid_input|invalid_panel|invalid_identity|invalid_bootstrap|protocol_error|unsafe_path|component_missing|self_enrolled|self_backoff|self_blocked|self_manual|peer_not_registered|rate_limited|painel_padrao|agent_config_replaced|agent_config_unreadable|identity_changed|bootstrap_discarded)$') { $Code = 'protocol_error' }
   $paths = Get-NextecProvisionPaths -Root $Root
   Assert-NextecProvisionPath -Path $paths.Root
   if (-not (Test-Path -LiteralPath $paths.Root -PathType Container)) { Initialize-NextecProvisionDirectory -Root $paths.Root }
@@ -279,6 +279,35 @@ function Invoke-NextecBootstrapPost {
   $uri = ([Uri]::new($Panel.TrimEnd('/') + '/api/nextec/agent/bootstrap'))
   if ($uri.Scheme -cne 'https' -or $uri.Host -cne ([Uri]$script:NextecPainelFixo).Host -or $uri.UserInfo -or $uri.Query -or $uri.Fragment) { throw 'invalid_panel' }
   Invoke-RestMethod -Uri $uri.AbsoluteUri -Method Post -ContentType 'application/json' -Body ($Body | ConvertTo-Json -Compress) -TimeoutSec 30 -MaximumRedirection 0 -UserAgent 'Nextec-Connect-Agent/1'
+}
+
+# Credencial local que nao serve mais (ID do RustDesk mudou, arquivo ilegivel ou trocada por autorizacao nova):
+# vai para agente-senha.json.anterior e a inscricao recomeca. A maquina nunca fica parada pedindo acao manual.
+function Move-NextecAgentConfigAside {
+  param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$Reason)
+  $paths = Get-NextecProvisionPaths -Root $Root
+  Assert-NextecProvisionPath -Path $paths.AgentConfig
+  if (Test-Path -LiteralPath $paths.AgentConfig -PathType Leaf) {
+    $aside = $paths.AgentConfig + '.anterior'
+    Assert-NextecProvisionPath -Path $aside
+    Remove-Item -LiteralPath $aside -Force -ErrorAction SilentlyContinue
+    Move-Item -LiteralPath $paths.AgentConfig -Destination $aside -Force
+    try { Set-Acl -LiteralPath $aside -AclObject (New-NextecProvisionAcl) } catch { }
+  }
+  Remove-Item -LiteralPath $paths.SelfState -Force -ErrorAction SilentlyContinue
+  Write-NextecProvisionLog $Reason -Root $Root
+}
+
+# A tarefa de senha so e (re)registrada quando falta ou aponta para outro script: recriar a tarefa
+# a cada 5 minutos gera ruido em EDR e no log do Agendador de Tarefas.
+function Test-NextecAgentTaskReady {
+  param([Parameter(Mandatory)][string]$Root)
+  try {
+    $task = Get-ScheduledTask -TaskName 'Nextec Acesso - Senha' -ErrorAction Stop
+    $expected = Join-Path $Root 'Agente-Senha-Nextec.ps1'
+    $arguments = [string]($task.Actions | Select-Object -First 1).Arguments
+    return ($arguments.IndexOf($expected, [StringComparison]::OrdinalIgnoreCase) -ge 0) -and ([string]$task.State -ne 'Disabled')
+  } catch { return $false }
 }
 
 function Invoke-NextecAgentRegistration {
@@ -409,7 +438,7 @@ function Invoke-NextecSelfEnrollment {
   $state = Read-NextecSelfState -Path $paths.SelfState
   if ($state -and $state.chave_sha256 -cne $keyHash) { $state = $null }
 
-  if ($state -and $state.state -eq 'manual') {
+  if ($state -and $state.state -eq 'manual' -and $utc.Ticks -lt $state.next_try_utc) {
     Write-NextecProvisionLog 'self_manual' -Root $Root
     return 'manual_authorization_required'
   }
@@ -451,7 +480,9 @@ function Invoke-NextecSelfEnrollment {
     return 'complete'
   }
   if ($status -eq 401 -or $status -eq 409) {
+    # chave girada, maquina removida ou pendencia antiga: resolvido no painel, a maquina tenta sozinha de novo em 6 h
     $state.state = 'manual'
+    $state.next_try_utc = $utc.AddHours(6).Ticks
     Save-NextecSelfState -Path $paths.SelfState -State $state
     $manualCode = 'manual_authorization_required'
     if ($status -eq 409) { $manualCode = 'already_enrolled' }
@@ -488,7 +519,8 @@ function Invoke-NextecProvisioning {
     [DateTime]$Now = [DateTime]::UtcNow,
     [scriptblock]$NewToken = { New-NextecProposedToken },
     [scriptblock]$PostSelfEnroll = { param($panel,$body) Invoke-NextecSelfEnrollPost -Panel $panel -Body $body },
-    [scriptblock]$GetUuid = { Get-NextecMachineUuid }
+    [scriptblock]$GetUuid = { Get-NextecMachineUuid },
+    [scriptblock]$AgentTaskReady = { param($root) Test-NextecAgentTaskReady -Root $root }
   )
   $paths = Get-NextecProvisionPaths -Root $Root
   Initialize-NextecProvisionDirectory -Root $Root
@@ -502,7 +534,13 @@ function Invoke-NextecProvisioning {
   $input = $null
   if (Test-Path -LiteralPath $paths.Input -PathType Leaf) {
     $raw = Get-Content -LiteralPath $paths.Input -Raw -Encoding UTF8
-    $input = ConvertFrom-NextecStrictBootstrapJson -Json $raw
+    try { $input = ConvertFrom-NextecStrictBootstrapJson -Json $raw }
+    catch {
+      # autorizacao ilegivel ou de outro painel: descarta para nao bloquear as proximas
+      Remove-Item -LiteralPath $paths.Input -Force -ErrorAction SilentlyContinue
+      Write-NextecProvisionLog 'bootstrap_discarded' -Root $Root
+      throw
+    }
     if ($journal) {
       if ($input.id -eq $journal.id -and $input.uuid -ceq $journal.uuid -and $input.bootstrap -ceq $journal.bootstrap) {
         Remove-Item -LiteralPath $paths.Input -Force
@@ -522,8 +560,12 @@ function Invoke-NextecProvisioning {
   }
 
   if (-not $journal -and $input) {
-    if ($input.id -cne $localId) { Write-NextecProvisionLog 'identity_conflict' -Root $Root; throw 'identity_conflict' }
-    if (Test-Path -LiteralPath $paths.AgentConfig -PathType Leaf) { Write-NextecProvisionLog 'already_enrolled' -Root $Root; throw 'already_enrolled' }
+    if ($input.id -cne $localId) {
+      Remove-Item -LiteralPath $paths.Input -Force -ErrorAction SilentlyContinue
+      Write-NextecProvisionLog 'identity_conflict' -Root $Root; throw 'identity_conflict'
+    }
+    # O painel so emite autorizacao para maquina sem agente ativo: a credencial local e velha (ex.: agente antigo com 401).
+    if (Test-Path -LiteralPath $paths.AgentConfig -PathType Leaf) { Move-NextecAgentConfigAside -Root $Root -Reason 'agent_config_replaced' }
     $proposed = [string](& $NewToken)
     if ($proposed -notmatch '^[A-Za-z0-9_-]{43}$') { Write-NextecProvisionLog 'protocol_error' -Root $Root; throw 'protocol_error' }
     $now = $Now.ToUniversalTime()
@@ -537,9 +579,14 @@ function Invoke-NextecProvisioning {
 
   if (-not $journal) {
     if (Test-Path -LiteralPath $paths.AgentConfig -PathType Leaf) {
-      $existing = Read-NextecAgentTokenConfig -Path $paths.AgentConfig
-      if ($existing.id -cne $localId) { Write-NextecProvisionLog 'identity_conflict' -Root $Root; throw 'identity_conflict' }
-      & $RegisterAgent $paths.AgentScript
+      # credencial ilegivel (formato antigo, permissao adulterada) ou de outro ID: sai do caminho e a inscricao recomeca
+      $existing = $null
+      try { $existing = Read-NextecAgentTokenConfig -Path $paths.AgentConfig } catch { $existing = $null }
+      if (-not $existing) { Move-NextecAgentConfigAside -Root $Root -Reason 'agent_config_unreadable' }
+      elseif ($existing.id -cne $localId) { Move-NextecAgentConfigAside -Root $Root -Reason 'identity_changed' }
+    }
+    if (Test-Path -LiteralPath $paths.AgentConfig -PathType Leaf) {
+      if (-not (& $AgentTaskReady $Root)) { & $RegisterAgent $paths.AgentScript }
       if (Test-Path -LiteralPath $paths.SelfState -PathType Leaf) {
         # Inscricao propria concluida mas interrompida antes de limpar o token proposto.
         $selfState = Read-NextecSelfState -Path $paths.SelfState

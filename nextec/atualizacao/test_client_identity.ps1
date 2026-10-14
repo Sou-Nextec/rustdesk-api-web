@@ -130,6 +130,69 @@ try {
     Assert-True ($client.ServiceName -eq 'Nextec-Connect') 'AnyDesk deve ser ignorado pela descoberta RustDesk'
   }
 
+  # Layout real do RustDesk: serviço como LocalSystem, config em ServiceProfiles\LocalService (hbb_common, patch()).
+  function New-RealClient([string]$Root, [string]$AppName, [string]$ConfigUnder = 'LocalService') {
+    $dir = Join-Path $Root ('Program Files\' + $AppName)
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    $exe = Join-Path $dir ($AppName + '.exe')
+    New-Item -ItemType File -Path $exe -Force | Out-Null
+    if ($ConfigUnder) {
+      $config = Join-Path $Root ($ConfigUnder + '\AppData\Roaming\' + $AppName + '\config')
+      New-Item -ItemType Directory -Path $config -Force | Out-Null
+      Set-Content -LiteralPath (Join-Path $config ($AppName + '.toml')) -Value "id = '536822159'" -Encoding UTF8
+    }
+    [pscustomobject]@{ Dir = $dir; Exe = $exe; Service = (New-TestService -Name $AppName -ExePath $exe -Account 'LocalSystem') }
+  }
+
+  Invoke-Test 'Identity_LocalSystemUsesServiceProfilesLocalService' {
+    $base = Join-Path $temp 'real-localsystem'
+    $fixture = New-RealClient -Root $base -AppName 'Client-Nextec-Connect'
+    $client = Get-NextecInstalledClient -Services @($fixture.Service) -ProfileRootBase $base -Marker ([pscustomobject]@{ AppName = '' }) -PeerIdReader { '536822159' }
+    Assert-True ($client.ServiceName -eq 'Client-Nextec-Connect') 'serviço LocalSystem com config em LocalService deveria ser encontrado'
+    Assert-True ($client.ConfigRoot -eq (Join-Path $base 'LocalService\AppData\Roaming\Client-Nextec-Connect\config')) 'config do serviço LocalSystem fica em ServiceProfiles\LocalService'
+    Assert-True ($client.PeerId -eq '536822159') 'PeerId não retornado'
+  }
+
+  Invoke-Test 'Identity_LocalSystemLegacySystemProfileStillWorks' {
+    $base = Join-Path $temp 'real-systemprofile'
+    $fixture = New-RealClient -Root $base -AppName 'Nextec-Connect' -ConfigUnder 'SystemProfile'
+    $client = Get-NextecInstalledClient -Services @($fixture.Service) -ProfileRootBase $base -Marker ([pscustomobject]@{ AppName = '' }) -PeerIdReader { '812345678' }
+    Assert-True ($client.ConfigRoot -eq (Join-Path $base 'SystemProfile\AppData\Roaming\Nextec-Connect\config')) 'config em systemprofile continua aceita'
+  }
+
+  Invoke-Test 'Identity_FreshInstallFoundByMarkerInstallDir' {
+    $base = Join-Path $temp 'real-fresh'
+    $fixture = New-RealClient -Root $base -AppName 'XPTO' -ConfigUnder ''
+    $failure = ''
+    try { Get-NextecInstalledClient -Services @($fixture.Service) -ProfileRootBase $base -Marker ([pscustomobject]@{ AppName = '' }) -PeerIdReader { '812345678' } | Out-Null } catch { $failure = $_.Exception.Message }
+    Assert-True ($failure -match '^identity_conflict: nenhum serviço') 'sem marcador e sem config o serviço não é reconhecido'
+    $client = Get-NextecInstalledClient -Services @($fixture.Service) -ProfileRootBase $base -Marker ([pscustomobject]@{ AppName = 'XPTO'; InstallDir = $fixture.Dir }) -PeerIdReader { '812345678' }
+    Assert-True ($client.ServiceName -eq 'XPTO') 'instalação nova (sem config ainda) é achada pela pasta do marcador'
+    Assert-True ($client.ConfigRoot -eq (Join-Path $base 'LocalService\AppData\Roaming\XPTO\config')) 'config esperada aponta para ServiceProfiles\LocalService'
+  }
+
+  Invoke-Test 'Identity_MarkerInstallDirBeatsOtherRustDesk' {
+    $base = Join-Path $temp 'real-two'
+    $mine = New-RealClient -Root $base -AppName 'Client-Nextec-Connect'
+    $other = New-RealClient -Root $base -AppName 'RustDesk'
+    $marker = [pscustomobject]@{ AppName = ''; InstallDir = ('"' + $mine.Dir + '\" ') }
+    $client = Get-NextecInstalledClient -Services @($other.Service, $mine.Service) -ProfileRootBase $base -Marker $marker -PeerIdReader { '711111111' }
+    Assert-True ($client.ServiceName -eq 'Client-Nextec-Connect') 'pasta do marcador (com aspas e barra final) escolhe o serviço certo'
+  }
+
+  Invoke-Test 'Identity_BrokenServiceEntriesAreIgnored' {
+    $base = Join-Path $temp 'real-dirty'
+    $fixture = New-RealClient -Root $base -AppName 'Nextec-Connect'
+    $broken = @(
+      [pscustomobject]@{ Name = 'Quebrado1'; PathName = '"Z:\nao\existe\x.exe" --service'; StartName = 'LocalSystem' },
+      [pscustomobject]@{ Name = 'Quebrado2'; PathName = $null; StartName = $null },
+      [pscustomobject]@{ Name = 'Quebrado3'; PathName = '"C:\a<b>\x.exe" --service'; StartName = 'LocalSystem' },
+      [pscustomobject]@{ Name = 'Estranho'; PathName = ('"' + $fixture.Exe + '" --service'); StartName = 'DOMINIO\usuario' }
+    )
+    $client = Get-NextecInstalledClient -Services (@($broken) + @($fixture.Service)) -ProfileRootBase $base -Marker ([pscustomobject]@{ AppName = '' }) -PeerIdReader { '812345678' }
+    Assert-True ($client.ServiceName -eq 'Nextec-Connect') 'entradas de serviço quebradas não podem derrubar a descoberta'
+  }
+
   Invoke-Test 'Identity_PeerIdCliOutput' {
     $mock = Join-Path $temp 'peer-valid.cmd'
     @('@echo off', 'echo 812345678', 'exit /b 0') | Set-Content -LiteralPath $mock -Encoding ASCII

@@ -36,7 +36,7 @@ test('o .cmd usa o coordenador instalado sem diálogo, eleva por UAC e apaga o t
 
 test('as mensagens em português viram [char] e não dependem da página de código', () => {
   const t = buildActivationCmd(bundle, NOW)
-  assert.match(psText(MESSAGES.ok), /^'Pronto: m'\+\[char\]0xE1\+'quina ativada\. Pode fechar\.'$/)
+  assert.match(psText(MESSAGES.ok), /^'Pronto: autoriza'\+\[char\]0xE7\+\[char\]0xE3\+'o entregue e cadastro iniciado\. A m'\+\[char\]0xE1\+'quina aparece/)
   assert.match(t, /\[char\]0xE1/)
   assert.equal(psText("it's"), "'it''s'")
   assert.equal(psText(''), "''")

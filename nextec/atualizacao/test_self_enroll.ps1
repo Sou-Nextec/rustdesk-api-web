@@ -104,14 +104,18 @@ try {
   }
   Write-Host 'PASS SelfEnroll_404And429RetryWithBackoff'
 
-  # 401 e 409: autorizacao manual; nao insiste, a chave nova reabilita.
+  # 401 e 409: espera 6 h sem insistir; depois tenta sozinha (o admin pode ter resolvido no painel). Chave nova reabilita na hora.
   foreach ($status in @(401, 409)) {
     New-CaseRoot; Add-Enrollment
     $result = Invoke-Case -Statuses @($status)
     Assert ($result -eq 'manual_authorization_required') "HTTP $status was not manual"
     Assert (-not (Test-Path (Get-NextecProvisionPaths -Root $script:root).AgentConfig)) 'Token saved after refusal'
     $again = Invoke-Case -Statuses @(200) -Now $script:t0.AddHours(3)
-    Assert ($again -eq 'manual_authorization_required' -and $script:posts.Count -eq 1) "HTTP $status was retried automatically"
+    Assert ($again -eq 'manual_authorization_required' -and $script:posts.Count -eq 1) "HTTP $status was retried before 6 hours"
+    $later = Invoke-Case -Statuses @(200) -Now $script:t0.AddHours(7)
+    Assert ($later -eq 'complete' -and $script:posts.Count -eq 2) "HTTP $status never retried by itself (machine stuck forever)"
+    New-CaseRoot; Add-Enrollment
+    [void](Invoke-Case -Statuses @($status))
   }
   Add-Enrollment -Key 'OutraChaveGlobalDeTeste9876543210'
   Assert ((Invoke-Case -Statuses @(200) -Now $script:t0.AddHours(4)) -eq 'complete') 'A replaced enrollment key did not re-enable the attempt'
