@@ -2,6 +2,8 @@
 // Módulo puro (sem Vue nem rede), testado em nextec/testes/secrets-flow.test.mjs.
 // Etapas: 1 Cliente, 2 Agente, 3 Senha automática. Nada aqui libera acesso: aprovação, identidade (UUID) e regras
 // continuam sendo decididas pelo backend; este módulo só escolhe o texto e o botão certos para cada estado.
+// A etapa 2 só conta como concluída com CONTATO REAL do agente (agent-state.mjs): cadastro sem consulta é "parado".
+import { agentState, AGENT_STATE, ACTIVE_AGENT_NOTICE } from './agent-state.mjs'
 
 export const STEPS = [
   { key: 'client', label: 'Cliente' },
@@ -14,24 +16,32 @@ export const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, 
 export const hasClient = (d = {}) => Number(d.group_id) > 0
 export const isPending = (d = {}) => d.state === 'pending'
 
-// Etapa atual: 'client' | 'agent' | 'rule' | 'ready'.
-export function machineStage(d = {}) {
+const nowSeconds = () => Date.now() / 1000
+
+// Etapa atual: 'client' | 'agent' | 'rule' | 'ready'. Agente parado volta à etapa 2; "ready" exige consulta real.
+export function machineStage(d = {}, now = nowSeconds()) {
   if (isPending(d) || !hasClient(d)) return 'client'
-  if (!d.enrolled) return 'agent'
+  const st = agentState(d, now)
+  if (st === AGENT_STATE.PENDING) return 'client'
+  if (st !== AGENT_STATE.ACTIVE) return 'agent'
   if (!d.managed) return 'rule'
   return 'ready'
 }
 
+export const isStalled = (d = {}, now = nowSeconds()) => agentState(d, now) === AGENT_STATE.STALLED
+
 // Três etapas com estado 'done' | 'current' | 'todo' e o rótulo da etapa atual para o stepper compacto.
-export function machineSteps(d = {}) {
-  const stage = machineStage(d)
+export function machineSteps(d = {}, now = nowSeconds()) {
+  const stage = machineStage(d, now)
   const at = stage === 'ready' ? STEPS.length : STEPS.findIndex(s => s.key === stage)
   const steps = STEPS.map((s, i) => ({ ...s, number: i + 1, status: i < at ? 'done' : i === at ? 'current' : 'todo' }))
   const current = steps.find(s => s.status === 'current')
   return {
     stage,
     steps,
-    caption: current ? `Etapa ${current.number} de ${STEPS.length}: ${current.label}` : 'Tudo pronto',
+    caption: current
+      ? `Etapa ${current.number} de ${STEPS.length}: ${current.label}${stage === 'agent' && isStalled(d, now) ? ' parado' : ''}`
+      : 'Tudo pronto',
     doneCount: steps.filter(s => s.status === 'done').length,
   }
 }
@@ -43,19 +53,30 @@ const NEXT = {
   ready: { action: 'connect', label: 'Conectar', hint: 'Pronta. Conecte sem digitar a senha.' },
 }
 
+const NEXT_STALLED = {
+  action: 'reinstall-agent',
+  label: 'Reinstalar agente',
+  hint: 'O agente está cadastrado, mas parou de consultar o painel. Reinstale com o mesmo arquivo de ativação.',
+}
+
 // Um único botão primário por máquina. Pronta: Conectar, com "Trocar agora" como ação secundária.
-export function nextStep(d = {}) {
-  const stage = machineStage(d)
-  const base = { stage, ...NEXT[stage] }
+export function nextStep(d = {}, now = nowSeconds()) {
+  const stage = machineStage(d, now)
+  const base = { stage, ...(stage === 'agent' && isStalled(d, now) ? NEXT_STALLED : NEXT[stage]) }
   if (stage === 'ready') return { ...base, secondary: { action: 'rotate', label: 'Trocar agora' } }
   return { ...base, secondary: null }
 }
 
 // Resumo da lista inteira: contagens por etapa e um único CTA contextual para o topo da tela.
-export function overallSummary(devices = []) {
+export function overallSummary(devices = [], now = nowSeconds()) {
   const rows = devices.filter(d => d && typeof d === 'object')
   const c = { client: 0, agent: 0, rule: 0, ready: 0 }
-  for (const d of rows) c[machineStage(d)]++
+  let stalled = 0
+  for (const d of rows) {
+    const stage = machineStage(d, now)
+    c[stage]++
+    if (stage === 'agent' && isStalled(d, now)) stalled++
+  }
   const total = rows.length
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`
   let cta = null
@@ -66,6 +87,9 @@ export function overallSummary(devices = []) {
   } else if (c.client) {
     text = `Você tem ${plural(c.client, 'máquina sem cliente', 'máquinas sem cliente')}.`
     cta = { action: 'choose-client', label: 'Escolher cliente' }
+  } else if (stalled) {
+    text = `${plural(stalled, 'máquina com agente parado', 'máquinas com agente parado')}. Reinstale o agente.`
+    cta = { action: 'reinstall-agent', label: 'Reinstalar agente' }
   } else if (c.agent) {
     text = `${plural(c.agent, 'máquina precisa', 'máquinas precisam')} do agente.`
     cta = { action: 'install-agent', label: 'Instalar agente' }
@@ -75,29 +99,38 @@ export function overallSummary(devices = []) {
   } else {
     text = `Tudo pronto: ${plural(c.ready, 'máquina troca', 'máquinas trocam')} a senha sozinha.`
   }
-  return { total, counts: c, text, cta }
+  return { total, counts: c, stalled, text, cta }
 }
 
 // Primeira máquina que ainda precisa da etapa pedida (ordem da lista recebida), para o CTA do topo.
-export function firstNeeding(devices = [], stage) {
-  return devices.find(d => d && machineStage(d) === stage) || null
+// stage 'stalled' pede a primeira máquina com agente cadastrado porém parado.
+export function firstNeeding(devices = [], stage, now = nowSeconds()) {
+  if (stage === 'stalled') return devices.find(d => d && machineStage(d, now) === 'agent' && isStalled(d, now)) || null
+  return devices.find(d => d && machineStage(d, now) === stage) || null
 }
 
 export const NEEDS_CLIENT_NOTICE = 'Esta máquina ainda não tem cliente. Escolha o cliente para continuar.'
 export const AGENT_EMPTY_NOTICE = 'Nenhuma máquina encontrada. Instale o app gerado pelo painel na máquina e aguarde 1 minuto.'
 
 // Autorização individual: lista TODAS as máquinas. As sem cliente aparecem com selo e levam a "Escolher cliente agora".
-export function agentOptions(devices = []) {
+// Agente ATIVO não precisa de novo arquivo (o backend recusa): a tela explica em vez de oferecer o download.
+export function agentOptions(devices = [], now = nowSeconds()) {
   return devices
     .filter(d => d && d.peer_id)
     .map(d => {
-      const needsClient = machineStage(d) === 'client'
+      const needsClient = machineStage(d, now) === 'client'
+      const st = agentState(d, now)
+      const active = !needsClient && st === AGENT_STATE.ACTIVE
+      const stalled = !needsClient && st === AGENT_STATE.STALLED
       return {
         peer_id: d.peer_id,
         name: d.alias || d.hostname || 'Máquina',
         needsClient,
-        badge: needsClient ? 'sem cliente' : d.enrolled ? 'agente cadastrado' : '',
-        canAuthorize: !needsClient,
+        agentActive: active,
+        agentStalled: stalled,
+        badge: needsClient ? 'sem cliente' : active ? 'agente ativo' : stalled ? 'agente parado' : '',
+        canAuthorize: !needsClient && !active,
+        notice: active ? ACTIVE_AGENT_NOTICE : '',
       }
     })
     .sort((a, b) => Number(b.needsClient) - Number(a.needsClient) || a.name.localeCompare(b.name, 'pt-BR'))

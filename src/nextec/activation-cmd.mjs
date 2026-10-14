@@ -889,6 +889,8 @@ function Invoke-NxActivation {
       catch { $left = @('desfazer') }
       if ($left.Count -eq 0) {
         Write-NxLog $Root 'rollback_ok'
+        # o cadastro no painel (se o coordenador chegou a rodar) fica sem consulta e vira Parado sozinho em ate 15 min
+        if ($state.CoordStarted) { Write-NxLog $Root 'painel_sem_consulta_ficara_parado' }
         $null = & $Say $M.rolledBack
       } else {
         Write-NxLog $Root ('rollback_incompleto ' + ($left -join ','))
@@ -918,7 +920,7 @@ export const MESSAGES = {
   receivedPending: 'Autorização recebida. A ativação termina sozinha em até 5 minutos; confira em Senhas dos servidores no painel.',
   failed: 'Não foi possível ativar. Gere uma nova autorização no painel e tente de novo. Detalhes em ativar.log.',
   ok: 'Pronto: máquina ativada. Pode fechar.',
-  rolledBack: 'Nada foi mantido nesta máquina: o que esta execução instalou foi desfeito e o agente anterior (se havia) voltou ao que era.',
+  rolledBack: 'Nada foi mantido nesta máquina: o que esta execução instalou foi desfeito e o agente anterior (se havia) voltou ao que era. Se o painel chegou a registrar esta tentativa, ele passa a mostrar Agente cadastrado, mas sem contato em até 15 minutos; gere uma nova autorização e use Reinstalar agente.',
   rollbackIncomplete: 'Não foi possível desfazer tudo o que esta execução instalou. Não repita; contate o suporte Nextec. Detalhes em ativar.log.',
 }
 
