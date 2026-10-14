@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  agentState, agentContact, lastContactAt, quietFor, AGENT_STATE, ACTIVE_WINDOW_SECONDS, ACTIVE_CYCLES,
+  agentState, agentContact, agentError, lastContactAt, quietFor, AGENT_STATE, ACTIVE_WINDOW_SECONDS, ACTIVE_CYCLES,
 } from '../../src/nextec/agent-state.mjs'
 import { AGENT_CYCLE_SECONDS } from '../../src/nextec/agent-cycle.mjs'
 import { overallSummary, machineStage, nextStep } from '../../src/nextec/secrets-flow.mjs'
@@ -71,6 +71,19 @@ test('o resumo conta agentes parados e leva ao Reinstalar; nunca diz Tudo pronto
   assert.match(s.text, /1 máquina com agente parado/)
   assert.doesNotMatch(overallSummary([parado], NOW).text, /Tudo pronto/)
   assert.match(overallSummary([ativo], NOW).text, /Tudo pronto/)
+})
+
+test('último erro do agente vira mensagem clara com a ação sugerida', () => {
+  assert.equal(agentError({ ...base, last_error: '' }), null)
+  assert.equal(agentError(base), null)
+  const e = agentError({ ...base, last_error: 'client_settings_locked', last_error_at: NOW })
+  assert.match(e.text, /^A troca de senha está falhando: /)
+  assert.equal(e.action, 'Gere o instalador de novo e instale por cima.')
+  assert.match(agentError({ last_error: 'exe_not_found' }).text, /não encontrou o app/)
+  assert.match(agentError({ last_error: 'password_apply_failed' }).text, /recusou aplicar/)
+  const x = agentError({ last_error: 'algo_novo' })
+  assert.match(x.text, /algo_novo/)
+  assert.match(x.action, /Nextec\\Acesso/)
 })
 
 test('tempo sem contato legível', () => {

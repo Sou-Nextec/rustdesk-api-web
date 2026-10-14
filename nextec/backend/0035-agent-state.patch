@@ -1,8 +1,9 @@
-Estado do agente derivado de contato real (last_sync_at)
+Estado do agente derivado de contato real (last_sync_at) e ultimo erro do agente
 
-Nextec 0035: coluna aditiva last_sync_at (so a consulta /agent/sync autenticada preenche), agent_state
-(ativo, parado, pendente_aprovacao, sem_agente) na lista do cofre e autorizacao individual permitida
-para agente parado (rotaciona o token, auditoria agent_replaced_stale). Agente ativo continua recusado.
+Nextec 0035: colunas aditivas last_sync_at (so a consulta /agent/sync autenticada preenche), last_error e
+last_error_at (codigo estavel enviado pelo agente no sync; sync sem erro ou troca confirmada limpam),
+agent_state (ativo, parado, pendente_aprovacao, sem_agente) na lista do cofre e autorizacao individual
+permitida para agente parado (rotaciona o token, auditoria agent_replaced_stale). Agente ativo continua recusado.
 
 diff --git a/http/controller/admin/nextec_bootstrap.go b/http/controller/admin/nextec_bootstrap.go
 index 396cc02..b08a30b 100644
@@ -28,29 +29,114 @@ index 396cc02..b08a30b 100644
  	if err != nil {
  		c.JSON(http.StatusConflict, gin.H{"error": "bootstrap denied"})
  		return
+diff --git a/http/controller/api/nextec_agent.go b/http/controller/api/nextec_agent.go
+index db33828..f7c3b69 100644
+--- a/http/controller/api/nextec_agent.go
++++ b/http/controller/api/nextec_agent.go
+@@ -19,6 +19,8 @@ type nextecAgentForm struct {
+ 	Capabilities   []string `json:"capabilities"`
+ 	OperationID    string   `json:"operation_id"`
+ 	PendingVersion int      `json:"pending_version"`
++	// LastError: código estável da última tentativa do agente (opcional, só no sync).
++	LastError string `json:"last_error"`
+ }
+ 
+ func agentIP(c *gin.Context) string {
+@@ -71,7 +73,7 @@ func (a *NextecAgent) Sync(c *gin.Context) {
+ 		c.JSON(http.StatusBadRequest, gin.H{"error": "bad request"})
+ 		return
+ 	}
+-	s, err := service.NextecAgentSyncStateWithCapabilities(agentIP(c), f.Id, f.Token, f.Capabilities)
++	s, err := service.NextecAgentSyncReport(agentIP(c), f.Id, f.Token, f.Capabilities, f.LastError)
+ 	if err != nil {
+ 		agentFail(c, err)
+ 		return
 diff --git a/model/nextec_secret.go b/model/nextec_secret.go
-index 4defe92..e274e3f 100644
+index 4defe92..454be56 100644
 --- a/model/nextec_secret.go
 +++ b/model/nextec_secret.go
-@@ -27,6 +27,9 @@ type NextecDeviceSecret struct {
+@@ -27,6 +27,13 @@ type NextecDeviceSecret struct {
  	NextRotationAt   int64  `gorm:"not null;default:0" json:"next_rotation_at"`
  	ForceRotate      bool   `gorm:"not null;default:false" json:"force_rotate"`
  	LastSeenAt       int64  `gorm:"not null;default:0" json:"last_seen_at"`
 +	// LastSyncAt é a última consulta REAL do agente (/agent/sync autenticada). Cadastro e inscrição não preenchem:
 +	// LastSeenAt marca qualquer escrita, LastSyncAt só prova que o agente está vivo. Linhas anteriores ficam em 0.
 +	LastSyncAt int64 `gorm:"not null;default:0" json:"last_sync_at"`
++	// LastError é o código estável da última tentativa do agente (ex.: client_settings_locked), enviado no sync.
++	// Vazio quando a última rodada não falhou; a troca confirmada também limpa.
++	LastError   string `gorm:"not null;default:''" json:"last_error"`
++	LastErrorAt int64  `gorm:"not null;default:0" json:"last_error_at"`
  	// Inscrição global: false por padrão, então as linhas anteriores continuam aprovadas.
  	AwaitingApproval bool   `gorm:"not null;default:false;index" json:"awaiting_approval"`
  	EnrolledVia      string `gorm:"not null;default:''" json:"enrolled_via"` // self | bootstrap | legacy ("" = linha anterior, tratada como legacy)
-diff --git a/service/nextec_agent_state.go b/service/nextec_agent_state.go
+diff --git a/service/nextec_agent_error_test.go b/service/nextec_agent_error_test.go
 new file mode 100644
-index 0000000..af31b7a
+index 0000000..1e63fe9
 --- /dev/null
-+++ b/service/nextec_agent_state.go
-@@ -0,0 +1,43 @@
++++ b/service/nextec_agent_error_test.go
+@@ -0,0 +1,51 @@
 +package service
 +
 +import (
++	"testing"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++)
++
++func TestAgentSyncLastErrorIsStoredListedAndClearedOnSuccess(t *testing.T) {
++	db, token := stateEnrolled(t)
++	if err := db.Create(&model.NextecSecretPolicy{Kind: "peer", Ref: enrollPeer, Enabled: true, IntervalMinutes: 180}).Error; err != nil {
++		t.Fatal(err)
++	}
++	// rodada que falhou: o agente manda o código estável
++	s, err := NextecAgentSyncReport(stateSyncIP, enrollPeer, token, stateCaps, "client_settings_locked")
++	if err != nil || s.Operation == nil {
++		t.Fatalf("sync com erro: %#v %v", s, err)
++	}
++	d := stateDevice(t)
++	if d.LastError != "client_settings_locked" || d.LastErrorAt == 0 || d.AgentState != NextecAgentStateActive {
++		t.Fatalf("erro não aparece na lista: %#v", d)
++	}
++	// texto livre do cliente nunca é gravado
++	if _, err := NextecAgentSyncReport(stateSyncIP, enrollPeer, token, stateCaps, "Settings are disabled!"); err != nil {
++		t.Fatal(err)
++	}
++	if got := stateDevice(t).LastError; got != "unknown_error" {
++		t.Fatalf("código fora do formato: %q", got)
++	}
++	// rodada sem erro limpa
++	if _, err := NextecAgentSyncReport(stateSyncIP, enrollPeer, token, stateCaps, ""); err != nil {
++		t.Fatal(err)
++	}
++	if d := stateDevice(t); d.LastError != "" || d.LastErrorAt != 0 {
++		t.Fatalf("sync sem erro não limpou: %#v", d)
++	}
++	// troca confirmada também limpa
++	s, err = NextecAgentSyncReport(stateSyncIP, enrollPeer, token, stateCaps, "password_apply_failed")
++	if err != nil || s.Operation == nil {
++		t.Fatalf("sync: %#v %v", s, err)
++	}
++	if err := NextecAgentProposeTransaction(stateSyncIP, enrollPeer, token, s.Operation.OperationID, s.Operation.PendingVersion, "SenhaNova1234567890ab"); err != nil {
++		t.Fatalf("propose: %v", err)
++	}
++	if err := NextecAgentConfirmTransaction(stateSyncIP, enrollPeer, token, s.Operation.OperationID, s.Operation.PendingVersion); err != nil {
++		t.Fatalf("confirm: %v", err)
++	}
++	if d := stateDevice(t); d.LastError != "" || !d.HasPassword {
++		t.Fatalf("troca confirmada não limpou o erro: %#v", d)
++	}
++}
+diff --git a/service/nextec_agent_state.go b/service/nextec_agent_state.go
+new file mode 100644
+index 0000000..7aacc6c
+--- /dev/null
++++ b/service/nextec_agent_state.go
+@@ -0,0 +1,60 @@
++package service
++
++import (
++	"regexp"
++	"strings"
 +	"time"
 +
 +	"github.com/lejianwen/rustdesk-api/v2/model"
@@ -68,6 +154,21 @@ index 0000000..af31b7a
 +	NextecAgentStatePendingApproval = "pendente_aprovacao"
 +	NextecAgentStateNone            = "sem_agente"
 +)
++
++var nextecAgentErrorPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,47}$`)
++
++// NextecAgentErrorCode normaliza o código de erro que o agente manda no sync. Vazio = última tentativa sem falha.
++// Fora do formato vira "unknown_error" (nunca grava texto livre do cliente).
++func NextecAgentErrorCode(raw string) string {
++	raw = strings.TrimSpace(raw)
++	if raw == "" {
++		return ""
++	}
++	if !nextecAgentErrorPattern.MatchString(raw) {
++		return "unknown_error"
++	}
++	return raw
++}
 +
 +// NextecAgentStaleAfterSeconds é a janela (em segundos) em que uma consulta ainda conta como "ativo".
 +func NextecAgentStaleAfterSeconds() int64 {
@@ -93,10 +194,10 @@ index 0000000..af31b7a
 +}
 diff --git a/service/nextec_agent_state_test.go b/service/nextec_agent_state_test.go
 new file mode 100644
-index 0000000..e0435b4
+index 0000000..e2e2a21
 --- /dev/null
 +++ b/service/nextec_agent_state_test.go
-@@ -0,0 +1,247 @@
+@@ -0,0 +1,251 @@
 +package service
 +
 +import (
@@ -321,8 +422,10 @@ index 0000000..e0435b4
 +func TestLastSyncAtMigrationIsAdditiveAndLegacyRowsAreStalled(t *testing.T) {
 +	db := enrollSetup(t)
 +	// tabela como a versão anterior criava: sem last_sync_at
-+	if err := db.Migrator().DropColumn(&model.NextecDeviceSecret{}, "last_sync_at"); err != nil {
-+		t.Fatal(err)
++	for _, col := range []string{"last_sync_at", "last_error", "last_error_at"} {
++		if err := db.Migrator().DropColumn(&model.NextecDeviceSecret{}, col); err != nil {
++			t.Fatal(err)
++		}
 +	}
 +	if err := db.Exec("INSERT INTO nextec_device_secrets (peer_id, token_hash, last_seen_at) VALUES (?, ?, ?)", "legacy-1", "hash", time.Now().Unix()).Error; err != nil {
 +		t.Fatal(err)
@@ -330,8 +433,10 @@ index 0000000..e0435b4
 +	if err := db.AutoMigrate(&model.NextecDeviceSecret{}); err != nil {
 +		t.Fatalf("migração aditiva: %v", err)
 +	}
-+	if !db.Migrator().HasColumn(&model.NextecDeviceSecret{}, "last_sync_at") {
-+		t.Fatal("coluna last_sync_at não criada")
++	for _, col := range []string{"last_sync_at", "last_error", "last_error_at"} {
++		if !db.Migrator().HasColumn(&model.NextecDeviceSecret{}, col) {
++			t.Fatalf("coluna %s não criada", col)
++		}
 +	}
 +	var row model.NextecDeviceSecret
 +	if err := db.Where("peer_id = ?", "legacy-1").First(&row).Error; err != nil {
@@ -455,19 +560,62 @@ index ff73e40..cded724 100644
  		t.Fatalf("active enrollment allowed a new bootstrap: %v", err)
  	}
 diff --git a/service/nextec_secret.go b/service/nextec_secret.go
-index 27cdea8..b3d56f9 100644
+index 27cdea8..fcd3e47 100644
 --- a/service/nextec_secret.go
 +++ b/service/nextec_secret.go
-@@ -370,7 +370,7 @@ func NextecAgentSyncStateWithCapabilities(ip, peerID, token string, capabilities
+@@ -363,6 +363,11 @@ func NextecAgentSyncState(ip, peerID, token string) (*NextecAgentSync, error) {
+ 
+ // NextecAgentSyncStateWithCapabilities não faz downgrade do protocolo negociado por dispositivo.
+ func NextecAgentSyncStateWithCapabilities(ip, peerID, token string, capabilities []string) (*NextecAgentSync, error) {
++	return NextecAgentSyncReport(ip, peerID, token, capabilities, "")
++}
++
++// NextecAgentSyncReport é o sync com o código de erro da última tentativa do agente (lastError vazio limpa o erro).
++func NextecAgentSyncReport(ip, peerID, token string, capabilities []string, lastError string) (*NextecAgentSync, error) {
+ 	d, err := agentAuth(ip, peerID, token)
+ 	if err != nil {
+ 		return nil, err
+@@ -370,7 +375,7 @@ func NextecAgentSyncStateWithCapabilities(ip, peerID, token string, capabilities
  	now := time.Now().Unix()
  	seen := DB.Model(&model.NextecDeviceSecret{}).
  		Where("id = ? AND peer_id = ? AND token_hash = ?", d.Id, peerID, d.TokenHash).
 -		Update("last_seen_at", now)
-+		Updates(map[string]interface{}{"last_seen_at": now, "last_sync_at": now})
++		Updates(nextecSyncSeen(now, lastError))
  	if seen.Error != nil {
  		return nil, seen.Error
  	}
-@@ -700,7 +700,10 @@ type NextecSecretDevice struct {
+@@ -405,6 +410,14 @@ func NextecAgentSyncStateWithCapabilities(ip, peerID, token string, capabilities
+ 	return nextecAgentSyncTransaction(d.Id, peerID, d.TokenHash, enabled, interval)
+ }
+ 
++func nextecSyncSeen(now int64, lastError string) map[string]interface{} {
++	seen := map[string]interface{}{"last_seen_at": now, "last_sync_at": now, "last_error": "", "last_error_at": 0}
++	if code := NextecAgentErrorCode(lastError); code != "" {
++		seen["last_error"], seen["last_error_at"] = code, now
++	}
++	return seen
++}
++
+ func hasNextecCapability(capabilities []string, name string) bool {
+ 	for _, capability := range capabilities {
+ 		if capability == name {
+@@ -616,6 +629,7 @@ func NextecAgentConfirm(ip, peerID, token string) error {
+ 		Updates(map[string]interface{}{
+ 			"active_enc": d.PendingEnc, "pending_enc": "", "version": d.Version + 1,
+ 			"active_at": now, "next_rotation_at": now + int64(interval)*60, "force_rotate": false,
++			"last_error": "", "last_error_at": 0,
+ 		})
+ 	if res.Error != nil {
+ 		return res.Error
+@@ -663,6 +677,7 @@ func NextecAgentConfirmTransaction(ip, peerID, token, operationID string, pendin
+ 		"active_enc": d.PendingEnc, "pending_enc": "", "version": pendingVersion,
+ 		"pending_operation": "", "pending_version": 0, "last_operation_id": operationID,
+ 		"active_at": now, "next_rotation_at": now + int64(interval)*60, "force_rotate": false,
++		"last_error": "", "last_error_at": 0,
+ 	}
+ 	res := DB.Model(&model.NextecDeviceSecret{}).
+ 		Where("id = ? AND peer_id = ? AND token_hash = ? AND awaiting_approval = ? AND protocol_version = 1 AND version = ? AND pending_operation = ? AND pending_version = ? AND pending_enc = ?", d.Id, peerID, d.TokenHash, false, pendingVersion-1, operationID, pendingVersion, d.PendingEnc).
+@@ -700,7 +715,12 @@ type NextecSecretDevice struct {
  	ActiveAt       int64  `json:"active_at"`
  	NextRotationAt int64  `json:"next_rotation_at"`
  	LastSeenAt     int64  `json:"last_seen_at"`
@@ -475,11 +623,13 @@ index 27cdea8..b3d56f9 100644
 +	LastSyncAt     int64  `json:"last_sync_at"`
 +	// AgentState: ativo | parado | pendente_aprovacao | sem_agente, calculado do último /agent/sync real.
 +	AgentState  string `json:"agent_state"`
++	LastError   string `json:"last_error,omitempty"`
++	LastErrorAt int64  `json:"last_error_at,omitempty"`
 +	ForceRotate bool   `json:"force_rotate"`
  	// Inscrição global
  	State       string `json:"state,omitempty"` // pending | assigned (vazio: máquina sem agente)
  	StaleKey    bool   `json:"stale_key,omitempty"` // pendente inscrita com credencial já girada
-@@ -762,7 +765,7 @@ func NextecSecretDevices() []*NextecSecretDevice {
+@@ -762,7 +782,7 @@ func NextecSecretDevices() []*NextecSecretDevice {
  		}
  		seen[peerID] = true
  		enabled, interval := effectivePolicy(peerID, groupID)
@@ -488,13 +638,14 @@ index 27cdea8..b3d56f9 100644
  		if peer != nil {
  			dv.LastIp, dv.Os, dv.Username = peer.LastOnlineIp, peer.Os, peer.Username
  		}
-@@ -784,7 +787,8 @@ func NextecSecretDevices() []*NextecSecretDevice {
+@@ -784,7 +804,9 @@ func NextecSecretDevices() []*NextecSecretDevice {
  			dv.HasPassword = s.ActiveEnc != ""
  			dv.Pending = s.PendingEnc != ""
  			dv.Version, dv.ActiveAt, dv.NextRotationAt = s.Version, s.ActiveAt, s.NextRotationAt
 -			dv.LastSeenAt, dv.ForceRotate = s.LastSeenAt, s.ForceRotate
 +			dv.LastSeenAt, dv.LastSyncAt, dv.ForceRotate = s.LastSeenAt, s.LastSyncAt, s.ForceRotate
 +			dv.AgentState = NextecAgentStateAt(s, time.Now().Unix())
++			dv.LastError, dv.LastErrorAt = s.LastError, s.LastErrorAt
  		}
  		out = append(out, dv)
  	}

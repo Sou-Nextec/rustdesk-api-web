@@ -276,7 +276,11 @@ era desfeita depois (rollback do `.cmd`), o painel mostrava "Tudo pronto" sem ag
   o código), mantém senhas e versões, zera `last_sync_at` e audita `agent_replaced_stale`. Agente `ativo` ou `pendente_aprovacao`
   continua recusado (409 `agent active` no emitir; no usar o código não é gasto). ID, uuid, hash, prazo de 15 minutos e https
   seguem como antes.
-- **Série:** 0001..0035 aplicam limpas em ordem sobre `v2.6.29`; o 0036 (PR do app por máquina) também aplica depois deste.
-  Toca `model/nextec_secret.go`, `service/nextec_secret.go`, `service/nextec_bootstrap.go`,
-  `http/controller/admin/nextec_bootstrap.go` e cria `service/nextec_agent_state.go` (+ teste).
+- **Último erro do agente:** colunas aditivas `last_error` e `last_error_at`. `POST /api/nextec/agent/sync` aceita `last_error`
+  (opcional; código `^[a-z][a-z0-9_]{0,47}$`, fora disso grava `unknown_error`). Sync sem o campo, ou com ele vazio, limpa;
+  a confirmação da troca também limpa. `GET /nextec/secrets` devolve `devices[].last_error` e `last_error_at`.
+- **Série:** 0001..0035 aplicam limpas em ordem sobre `v2.6.29`. Toca `model/nextec_secret.go`, `service/nextec_secret.go`,
+  `service/nextec_bootstrap.go`, `http/controller/admin/nextec_bootstrap.go`, `http/controller/api/nextec_agent.go` e cria
+  `service/nextec_agent_state.go` (+ testes). O 0036 do PR #92 também muda a chamada do sync em `nextec_agent.go`: quem entrar
+  por último precisa regenerar o patch juntando `app_name` e `last_error` na mesma chamada.
 - Testes: `go test -race ./service ...` (a imagem roda a lista do Dockerfile).

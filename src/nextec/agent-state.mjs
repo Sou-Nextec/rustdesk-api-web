@@ -56,6 +56,34 @@ export const REINSTALL_HINT = 'Reinstale o agente.'
 export const ACTIVE_AGENT_NOTICE = 'O agente desta máquina está ativo e consultando o painel. Não é preciso reinstalar. Para trocá-lo, use Remover agente e gere uma nova autorização.'
 export const REMOVE_AGENT_HELP = 'Remover agente apaga o cadastro e as senhas guardadas desta máquina. A senha que está nela continua valendo até você trocá-la ou reinstalar o agente.'
 
+// Último erro do agente (`last_error`, código estável que o agente manda no sync). O servidor limpa quando uma rodada
+// termina sem erro ou a troca é confirmada. Código desconhecido ainda aparece, com orientação genérica.
+export const AGENT_ERRORS = Object.freeze({
+  client_settings_locked: {
+    message: 'as configurações do app nesta máquina estão bloqueadas, então o agente não consegue gravar a senha.',
+    action: 'Gere o instalador de novo e instale por cima.',
+  },
+  password_apply_failed: {
+    message: 'o app recusou aplicar a senha nova.',
+    action: 'Confira se o app está instalado e em execução. Se continuar, reinstale o agente.',
+  },
+  exe_not_found: {
+    message: 'o agente não encontrou o app instalado nesta máquina.',
+    action: 'Instale de novo o app gerado pelo painel.',
+  },
+})
+
+export function agentError(d) {
+  const code = d && typeof d.last_error === 'string' ? d.last_error.trim() : ''
+  if (!code) return null
+  const known = AGENT_ERRORS[code]
+  const info = known || {
+    message: `o agente informou o erro ${code}.`,
+    action: 'Veja o log do agente na máquina, em %ProgramData%\\Nextec\\Acesso.',
+  }
+  return { code, at: seconds(d.last_error_at), text: `A troca de senha está falhando: ${info.message}`, ...info }
+}
+
 // Texto de situação de uma máquina, pronto para a tela.
 // { state, tone: 'ok' | 'warn' | 'off', headline, detail, lastAt, waitingFirst }
 export function agentContact(d, now = Date.now() / 1000) {

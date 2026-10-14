@@ -152,6 +152,20 @@ describe('Senhas dos servidores, fluxo guiado', () => {
     expect(row).toContain('Agente ativo')
   })
 
+  it('troca falhando: mostra o erro do agente com a ação, no lugar de Aguardando a primeira troca', async () => {
+    await mount([{ ...pronta, has_password: false, version: 0, last_error: 'client_settings_locked', last_error_at: Date.now() / 1000 - 60 }])
+    const row = rowTexts().find(t => t.includes('srv-pronto'))
+    expect(row).toContain('A troca de senha está falhando: as configurações do app nesta máquina estão bloqueadas')
+    expect(row).toContain('Gere o instalador de novo e instale por cima.')
+    expect(row).not.toContain('Aguardando a primeira troca')
+    app.unmount(); host.remove(); document.body.innerHTML = ''
+    // sucesso: o servidor limpa last_error e a tela volta ao normal
+    await mount([{ ...pronta, has_password: false, version: 0, last_error: '' }])
+    const ok = rowTexts().find(t => t.includes('srv-pronto'))
+    expect(ok).toContain('Aguardando a primeira troca')
+    expect(ok).not.toContain('está falhando')
+  })
+
   it('o stepper é acessível: lista com etapa atual marcada e texto para leitor de tela', async () => {
     await mount([semAgente])
     const steps = host.querySelectorAll('.nx-steps-list .nx-step')

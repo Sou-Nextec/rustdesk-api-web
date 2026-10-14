@@ -168,8 +168,13 @@
             <div v-else-if="row.managed && contact(row).state === 'parado'" class="nx-small nx-warn-text"><span class="nx-dot is-warn" aria-hidden="true"></span>Regra pronta, mas o agente está parado</div>
             <div v-else-if="row.managed" class="nx-small nx-warn-text"><span class="nx-dot is-warn" aria-hidden="true"></span>Regra pronta, falta o agente</div>
             <div v-else class="nx-small nx-muted"><span class="nx-dot is-off" aria-hidden="true"></span>Senha automática desligada</div>
+            <div v-if="agentError(row) && contact(row).state !== 'sem_agente'" class="nx-agent-error nx-small" role="alert">
+              <span class="nx-dot is-warn" aria-hidden="true"></span>
+              <span class="nx-warn-text">{{ agentError(row).text }}</span>
+              <div>{{ agentError(row).action }}</div>
+            </div>
             <div v-if="row.has_password" class="nx-small nx-muted">Senha versão {{ row.version }}, trocada {{ ago(row.active_at).toLowerCase() }}<template v-if="row.managed">, próxima {{ until(row.next_rotation_at) }}</template></div>
-            <div v-else-if="row.managed && contact(row).state === 'ativo'" class="nx-small nx-muted">Aguardando a primeira troca</div>
+            <div v-else-if="row.managed && contact(row).state === 'ativo' && !agentError(row)" class="nx-small nx-muted">Aguardando a primeira troca</div>
           </template>
         </el-table-column>
         <el-table-column label="Ações" width="260" fixed="right">
@@ -412,7 +417,7 @@
   import { getAgentPackage } from '@/nextec/agent-package-sources.js'
   import { connectDevice } from '@/nextec/connect'
   import { nextCheck, createAutoRefresh } from '@/nextec/agent-cycle.mjs'
-  import { agentContact, lastContactAt, REMOVE_AGENT_HELP } from '@/nextec/agent-state.mjs'
+  import { agentContact, agentError, lastContactAt, REMOVE_AGENT_HELP } from '@/nextec/agent-state.mjs'
   import { list as groupList, create as groupCreate } from '@/api/device_group'
   import { list as peerList, update as peerUpdate } from '@/api/peer'
   import MachineSteps from './MachineSteps.vue'
