@@ -16,4 +16,11 @@ O instalador global traz `inscricao.json` (`{v,painel,chave}`) ao lado dos scrip
 
 O `uuid` é o mesmo que o RustDesk 1.5.0 informa no heartbeat e no sysinfo: base64 padrão (com preenchimento) do `MachineGuid` (Windows, visão de 64 bits do registro) ou de `/var/lib/dbus/machine-id`, com fallback para `/etc/machine-id` (Linux), sem espaços nas pontas.
 
-Respostas: 200 grava o token e registra a tarefa; 404 e 429 repetem com recuo de 5, 10, 20, 40 e 60 minutos usando o mesmo token proposto; 401 e 409 exigem autorização manual (o fluxo com `bootstrap.json` continua valendo, e uma chave nova no MSI reabilita a tentativa); 403 para por 24 horas. Enquanto `/agent/sync` devolver `pending_approval` sem `managed`, o agente só registra "aguardando atribuição" e nunca rotaciona.
+Respostas: 200 grava o token e registra a tarefa; 404 e 429 repetem com recuo de 5, 10, 20, 40 e 60 minutos usando o mesmo token proposto; 401 e 409 esperam 6 horas e tentam de novo sozinhos (o fluxo com `bootstrap.json` continua valendo, e uma chave nova no MSI reabilita na hora); 403 para por 24 horas. Enquanto `/agent/sync` devolver `pending_approval` sem `managed`, o agente só registra "aguardando atribuição" e nunca rotaciona.
+
+## Recuperação automática (2.11.16)
+
+- Credencial local ilegível, de outro ID (app reinstalado) ou substituída por autorização nova do painel vai para `agente-senha.json.anterior`, e a inscrição recomeça. O log registra `agent_config_unreadable`, `identity_changed` ou `agent_config_replaced`.
+- O agente de senha que recebe 401 em 3 ciclos seguidos aposenta a própria credencial do mesmo jeito. Um 401 isolado não muda nada.
+- Autorização (`bootstrap.json`) inválida ou de outra máquina é descartada (`bootstrap_discarded`, `identity_conflict`) em vez de ficar presa.
+- O serviço é localizado pelo marcador do instalador (`HKLM\SOFTWARE\Nextec\Agente`, `InstallDir`) ou pela configuração em `ServiceProfiles\LocalService` (onde o RustDesk grava quando roda como LocalSystem).
