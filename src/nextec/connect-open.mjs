@@ -2,6 +2,7 @@
 // Módulo puro (sem Vue nem rede; o DOM entra por injeção), testado em nextec/testes/connect-open.test.mjs.
 // Nada aqui libera acesso: autorização, senha e protocolo da máquina vêm do servidor (/my/connect-link).
 import { nextCheck } from './agent-cycle.mjs'
+import { lastContactAt } from './agent-state.mjs'
 
 // Mesmas regras do servidor (service/nextec_appname.go): nome do app e protocolo.
 export const APP_NAME_RE = /^[A-Za-z0-9-]{1,64}$/
@@ -74,10 +75,12 @@ export function decideOpen ({ remembered = false, agentActive = false } = {}) {
 // Agente ativo, regra ligada e a primeira senha ainda não aplicada: o app abriria pedindo a senha sem explicar.
 export function passwordNotice (link = {}, nowSec = Date.now() / 1000) {
   if (!link || link.password_state !== 'waiting_first' || !link.agent_active) return null
-  const next = nextCheck(link.last_seen_at, nowSec)
+  // Última consulta REAL (last_sync_at, 0035); servidor anterior ao campo cai em last_seen_at.
+  const next = nextCheck(lastContactAt(link), nowSec)
   let when = ''
   if (next.state === 'waiting') when = ` (próxima verificação em ~${next.minutes} min)`
-  else if (next.state === 'due') when = ' (a verificação está atrasada e deve ocorrer em instantes)'
+  else if (next.state === 'due') when = ' (próxima verificação em instantes)'
+  else if (next.state === 'late') when = ' (a verificação está atrasada e deve ocorrer em instantes)'
   return {
     minutes: next.minutes,
     state: next.state,

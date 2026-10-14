@@ -4,6 +4,13 @@ $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot
 $fn=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Register-NextecPasswordTask'},$true)
 if(!$fn){throw 'Registration helper missing'}
 . ([scriptblock]::Create($fn.Extent.Text))
+# o intervalo vem da fonte unica (Get-NextecAgentIntervals), nunca de um literal na funcao de registro
+foreach($name in 'Get-NextecAgentIntervals','Get-NextecPasswordTaskInterval'){
+  $dependency=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name},$true)
+  if(!$dependency){throw "Interval source missing: $name"}
+  . ([scriptblock]::Create($dependency.Extent.Text))
+}
+$expectedMinutes=[int](Get-NextecAgentIntervals).PasswordMinutes
 $PastaDados='C:\ProgramData\Nextec\Acesso'; $env:SystemRoot='C:\Windows'; $Exe=''; $Tarefa='Nextec Acesso - Senha'
 $script:copies=0; $script:checked=@(); $script:task=$null
 function Assert-NextecNoReparsePoints($Path){$script:checked+= $Path; if($Path -eq $script:badPath){throw 'unsafe_path'}}
@@ -15,7 +22,7 @@ function New-ScheduledTaskTrigger {param([switch]$Once,$At,$RepetitionInterval,$
 function New-ScheduledTaskSettingsSet {param([switch]$StartWhenAvailable,[switch]$AllowStartIfOnBatteries,[switch]$DontStopIfGoingOnBatteries,$ExecutionTimeLimit,$MultipleInstances) [pscustomobject]@{Instances=$MultipleInstances}}
 function Register-ScheduledTask {param($TaskName,$Action,$Trigger,$Settings,$User,$RunLevel,[switch]$Force) $script:task=[pscustomobject]@{Name=$TaskName;Action=$Action;Trigger=$Trigger;Settings=$Settings;User=$User;RunLevel=$RunLevel}}
 Register-NextecPasswordTask -Source 'C:\Program Files\Nextec-Connect\Agente-Senha-Nextec.ps1'
-if($task.User -ne 'SYSTEM' -or $task.Settings.Instances -ne 'IgnoreNew' -or $task.Trigger.Interval.TotalMinutes -ne 5){throw 'Unsafe task registration'}
+if($task.User -ne 'SYSTEM' -or $task.Settings.Instances -ne 'IgnoreNew' -or $task.Trigger.Interval.TotalMinutes -ne $expectedMinutes){throw 'Unsafe task registration'}
 if($task.Action.Argument -notmatch '-Executar' -or $task.Action.Argument -match 'token|bootstrap|ChaveAgente'){throw 'Credential in task arguments'}
 $script:badPath=Join-Path $PastaDados 'Agente-Senha-Nextec.ps1'; $script:copies=0
 try {Register-NextecPasswordTask -Source 'C:\Program Files\Nextec-Connect\Agente-Senha-Nextec.ps1'; throw 'expected refusal'} catch {if($_.Exception.Message -ne 'unsafe_path'){throw}}

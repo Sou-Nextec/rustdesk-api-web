@@ -4,19 +4,22 @@ import { nextCheck, createAutoRefresh, AGENT_CYCLE_SECONDS } from '../../src/nex
 
 const NOW = 1_800_000_000
 
-test('nextCheck: contagem regressiva dentro do ciclo de 5 minutos', () => {
-  assert.equal(AGENT_CYCLE_SECONDS, 300)
-  assert.deepEqual(nextCheck(NOW - 10, NOW), { state: 'waiting', minutes: 5, text: 'Próxima verificação em ~5 min.' })
-  assert.equal(nextCheck(NOW - 130, NOW).minutes, 3)
-  assert.equal(nextCheck(NOW - 299, NOW).minutes, 1)
+test('nextCheck: contagem regressiva dentro do ciclo de 1 minuto', () => {
+  assert.equal(AGENT_CYCLE_SECONDS, 60)
+  assert.deepEqual(nextCheck(NOW - 10, NOW), { state: 'waiting', minutes: 1, text: 'Próxima verificação em ~1 min.' })
+  assert.equal(nextCheck(NOW - 59, NOW).minutes, 1)
+  assert.equal(nextCheck(NOW + 50, NOW).minutes, 1)
 })
 
-test('nextCheck: atrasada, parada e sem contato', () => {
-  assert.equal(nextCheck(NOW - 301, NOW).state, 'due')
-  assert.equal(nextCheck(NOW - 1199, NOW).state, 'due')
+test('nextCheck: em instantes, atrasada (passou do ritmo antigo), parada e sem contato', () => {
+  assert.equal(nextCheck(NOW - 61, NOW).state, 'due')
+  assert.equal(nextCheck(NOW - 61, NOW).text, 'Próxima verificação em instantes.')
+  // agente ainda no ritmo antigo de 5 minutos não aparece como atrasado
+  assert.equal(nextCheck(NOW - 299, NOW).state, 'due')
+  assert.equal(nextCheck(NOW - 301, NOW).state, 'late')
+  assert.equal(nextCheck(NOW - 1199, NOW).state, 'late')
   assert.equal(nextCheck(NOW - 1200, NOW).state, 'stalled')
   for (const v of [0, null, undefined, 'x', -5]) assert.equal(nextCheck(v, NOW).state, 'unknown')
-  assert.equal(nextCheck(NOW + 50, NOW).minutes, 5)
 })
 
 function fakeEnv (visible = true) {

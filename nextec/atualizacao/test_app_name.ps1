@@ -17,6 +17,7 @@ function Import-Funcao([string]$nome) {
   return $f.Extent.Text
 }
 . ([scriptblock]::Create((Import-Funcao 'Get-NextecAppName')))
+foreach ($nome in @('Get-NextecAgentIntervals', 'Get-NextecPasswordTaskInterval', 'Get-NextecSyncIntervalSeconds')) { . ([scriptblock]::Create((Import-Funcao $nome))) }
 $cicloTexto = Import-Funcao 'Invoke-NextecPasswordCycle'
 
 try {
@@ -57,6 +58,8 @@ try {
   try { Invoke-NextecPasswordCycle $cfg | Out-Null } catch { Assert ($_.Exception.Message -ceq 'PARADA_DO_TESTE') ('erro inesperado: ' + $_.Exception.Message) }
   Assert ($script:caminhoVisto -ceq '/api/nextec/agent/sync') 'o primeiro pedido nao e o sync'
   Assert ($script:corpoVisto.app_name -ceq 'Client-Nextec-Connect') 'sync sem app_name'
+  # mesmo corpo do sync com interval_seconds (0036): app_name e intervalo vao juntos
+  Assert ([int]$script:corpoVisto.interval_seconds -eq 60) 'sync sem interval_seconds junto do app_name'
   Assert ($script:corpoVisto.id -ceq '123456789' -and $script:corpoVisto.token -ceq 'token-de-teste' -and @($script:corpoVisto.capabilities) -contains 'transaction_v1') 'campos antigos do sync mudaram'
 
   Remove-Item -LiteralPath $marcador -Force

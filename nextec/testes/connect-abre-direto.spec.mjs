@@ -140,7 +140,7 @@ describe('Conectar abre o app direto', () => {
 
 describe('Senha automática ainda não aplicada', () => {
   const aguardando = { ...pronta, has_password: false }
-  const link = () => linkOf({ password_state: 'waiting_first', auto_password: false, url: 'client-nextec-connect://536822159', last_seen_at: Date.now() / 1000 - 120 })
+  const link = () => linkOf({ password_state: 'waiting_first', auto_password: false, url: 'client-nextec-connect://536822159', last_seen_at: Date.now() / 1000 - 20 })
 
   it('avisa com o tempo da próxima verificação e nunca abre antes de a pessoa escolher', async () => {
     state.devices = [aguardando]
@@ -149,7 +149,7 @@ describe('Senha automática ainda não aplicada', () => {
     await connectNow()
     await waitFor(() => dialog(), 'aviso')
     const t = dialog().textContent.replace(/\s+/g, ' ')
-    expect(t).toContain('A senha automática ainda não foi aplicada nesta máquina (próxima verificação em ~3 min).')
+    expect(t).toContain('A senha automática ainda não foi aplicada nesta máquina (próxima verificação em ~1 min).')
     expect(t).toContain('Você pode conectar e digitar a senha, ou aguardar.')
     expect(dialogButtons()).toEqual(expect.arrayContaining(['Conectar mesmo assim']))
     expect(dialogButtons()).not.toContain('Trocar agora')

@@ -74,9 +74,13 @@ test('decisão: lembrado ou agente ativo abre direto; primeira vez mostra o diá
 test('aviso de senha: só com agente ativo e primeira senha não aplicada, com a espera em minutos', () => {
   const now = 10000
   const base = { password_state: 'waiting_first', agent_active: true }
-  const n = passwordNotice({ ...base, last_seen_at: now - 120 }, now)
-  assert.equal(n.minutes, 3)
-  assert.equal(n.text, 'A senha automática ainda não foi aplicada nesta máquina (próxima verificação em ~3 min). Você pode conectar e digitar a senha, ou aguardar.')
+  // agente de 1 minuto (2.11.22): 20 s depois da última consulta, a próxima vem em ~1 min
+  const n = passwordNotice({ ...base, last_seen_at: now - 20 }, now)
+  assert.equal(n.minutes, 1)
+  assert.equal(n.text, 'A senha automática ainda não foi aplicada nesta máquina (próxima verificação em ~1 min). Você pode conectar e digitar a senha, ou aguardar.')
+  assert.match(passwordNotice({ ...base, last_seen_at: now - 120 }, now).text, /próxima verificação em instantes/)
+  // a última consulta REAL (last_sync_at) vale mais que last_seen_at
+  assert.match(passwordNotice({ ...base, last_seen_at: now - 5, last_sync_at: now - 400 }, now).text, /atrasada/)
   const atrasado = passwordNotice({ ...base, last_seen_at: now - 400 }, now)
   assert.match(atrasado.text, /atrasada e deve ocorrer em instantes/)
   for (const link of [
