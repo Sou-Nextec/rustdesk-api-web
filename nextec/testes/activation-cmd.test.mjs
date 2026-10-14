@@ -91,7 +91,7 @@ test('PS 5.1: app Client-Nextec-Connect sem agente é achado pelo registro e diz
   const d = mkdtempSync(join(realpathSync.native(tmpdir()), 'nxfind-'))
   try {
     const pf = join(d, 'PF'); mkdirSync(join(pf, 'Client-Nextec-Connect'), { recursive: true })
-    const out = runFind(`$r = Find-NextecAgent -DataRoot '${join(d, 'PD', 'Nextec', 'Acesso')}' -ProgramRoots @('${pf}') -Entries @([pscustomobject]@{DisplayName='Client-Nextec-Connect';InstallLocation='${join(pf, 'Client-Nextec-Connect')}'}) -TaskArgs @()
+    const out = runFind(`$r = Find-NextecAgent -DataRoot '${join(d, 'PD', 'Nextec', 'Acesso')}' -ProgramRoots @('${pf}') -Entries @() -TaskArgs @() -Services @() -Marker ([pscustomobject]@{InstallDir='${join(pf, 'Client-Nextec-Connect')}';AppName='Client-Nextec-Connect'})
       'script=[' + $r.Script + '] app=[' + $r.App + '] n=' + $r.Searched.Count`)
     assert.match(out, /script=\[\] app=\[Client-Nextec-Connect\] n=3/)
   } finally { rmSync(d, { recursive: true, force: true }) }
@@ -102,18 +102,55 @@ test('PS 5.1: acha o coordenador na pasta fixa, na instalação do app e por var
   try {
     const data = join(d, 'PD', 'Nextec', 'Acesso'); mkdirSync(data, { recursive: true })
     writeFileSync(join(data, 'Coordenar-Agente-Nextec.ps1'), '#')
-    let out = runFind(`(Find-NextecAgent -DataRoot '${data}' -ProgramRoots @() -Entries @() -TaskArgs @()).Script`)
+    let out = runFind(`(Find-NextecAgent -DataRoot '${data}' -ProgramRoots @() -Entries @() -TaskArgs @() -Marker $nm -Services @()).Script`)
     assert.equal(out, join(data, 'Coordenar-Agente-Nextec.ps1'))
 
     const app = join(d, 'PF', 'Client-Nextec-Connect'); mkdirSync(app, { recursive: true })
     writeFileSync(join(app, 'Coordenar-Agente-Nextec.ps1'), '#')
-    out = runFind(`(Find-NextecAgent -DataRoot '${join(d, 'vazio')}' -ProgramRoots @() -Entries @([pscustomobject]@{DisplayName='Client-Nextec-Connect';InstallLocation='${app}'}) -TaskArgs @()).Script`)
+    out = runFind(`(Find-NextecAgent -DataRoot '${join(d, 'vazio')}' -ProgramRoots @() -Entries @([pscustomobject]@{DisplayName='Client-Nextec-Connect';InstallLocation='${app}'}) -TaskArgs @() -Marker $nm -Services @()).Script`)
     assert.equal(out, join(app, 'Coordenar-Agente-Nextec.ps1'))
 
-    out = runFind(`(Find-NextecAgent -DataRoot '${join(d, 'vazio')}' -ProgramRoots @('${join(d, 'PF')}') -Entries @() -TaskArgs @()).Script`)
+    out = runFind(`(Find-NextecAgent -DataRoot '${join(d, 'vazio')}' -ProgramRoots @('${join(d, 'PF')}') -Entries @() -TaskArgs @() -Marker $nm -Services @()).Script`)
     assert.equal(out, join(app, 'Coordenar-Agente-Nextec.ps1'))
 
-    out = runFind(`(Find-NextecAgent -DataRoot '${join(d, 'vazio')}' -ProgramRoots @() -Entries @() -TaskArgs @('-NoProfile -File "${join(app, 'Outro.ps1')}" -Executar')).Script`)
+    out = runFind(`(Find-NextecAgent -DataRoot '${join(d, 'vazio')}' -ProgramRoots @() -Entries @() -TaskArgs @('-NoProfile -File "${join(app, 'Outro.ps1')}" -Executar') -Marker $nm -Services @()).Script`)
     assert.equal(out, join(app, 'Coordenar-Agente-Nextec.ps1'))
   } finally { rmSync(d, { recursive: true, force: true }) }
 })
+
+// --- nome livre: qualquer nome de app (XPTO, Nextec-Connect, Client-Nextec-Connect) é achado pelo marcador e por pistas não nominais ---
+for (const appName of ['XPTO', 'Nextec-Connect', 'Client-Nextec-Connect']) {
+  test(`PS 5.1: app "${appName}" é achado por marcador (registro/arquivo), entrada, serviço e varredura`, { skip: !PS51 }, () => {
+    const d = mkdtempSync(join(realpathSync.native(tmpdir()), 'nxfind-'))
+    try {
+      const vazio = join(d, 'vazio')
+      const app = join(d, 'PF', appName); mkdirSync(app, { recursive: true })
+      writeFileSync(join(app, 'Coordenar-Agente-Nextec.ps1'), '#')
+      const want = join(app, 'Coordenar-Agente-Nextec.ps1')
+      // 1) marcador (InstallDir + AppName), sem qualquer outra pista
+      let out = runFind(`$r = Find-NextecAgent -DataRoot '${vazio}' -ProgramRoots @() -Entries @() -TaskArgs @() -Services @() -Marker ([pscustomobject]@{InstallDir='${app}';AppName='${appName}'})
+        $r.Script + '|' + $r.App`)
+      assert.equal(out, `${want}|${appName}`)
+      // 2) marcador em arquivo nextec-marker.json (chaves AppName/InstallDir e app_name/install_dir)
+      const data = join(d, 'PD'); mkdirSync(data, { recursive: true })
+      writeFileSync(join(data, 'nextec-marker.json'), JSON.stringify({ app_name: appName, install_dir: app }))
+      out = runFind(`$r = Find-NextecAgent -DataRoot '${data}' -ProgramRoots @() -Entries @() -TaskArgs @() -Services @() -MarkerFile '${join(data, 'nextec-marker.json')}'
+        $r.Script + '|' + $r.App`)
+      assert.equal(out, `${want}|${appName}`)
+      // 3) entrada de desinstalação com DisplayName qualquer (só a presença do script conta)
+      out = runFind(`(Find-NextecAgent -DataRoot '${vazio}' -ProgramRoots @() -Entries @([pscustomobject]@{DisplayName='Qualquer Coisa';InstallLocation='${app}'}) -TaskArgs @() -Marker $nm -Services @()).Script`)
+      assert.equal(out, want)
+      // 4) serviço RustDesk (--service) cujo exe vizinho tem o coordenador
+      out = runFind(`$r = Find-NextecAgent -DataRoot '${vazio}' -ProgramRoots @() -Entries @() -TaskArgs @() -Marker $nm -Services @([pscustomobject]@{Name='${appName}';PathName='"${join(app, appName + '.exe')}" --service'})
+        $r.Script + '|' + $r.App`)
+      assert.equal(out, `${want}|${appName}`)
+      // 5) varredura limitada de Program Files, sem 'Nextec' obrigatório no nome
+      out = runFind(`(Find-NextecAgent -DataRoot '${vazio}' -ProgramRoots @('${join(d, 'PF')}') -Entries @() -TaskArgs @() -Marker $nm -Services @()).Script`)
+      assert.equal(out, want)
+      // 6) nada encontrado: a mensagem do .cmd lista o que foi procurado
+      out = runFind(`$r = Find-NextecAgent -DataRoot '${vazio}' -ProgramRoots @('${join(d, 'nada')}') -Entries @() -TaskArgs @() -Marker $nm -Services @()
+        'script=[' + $r.Script + '] n=' + $r.Searched.Count`)
+      assert.match(out, /script=\[\] n=1/)
+    } finally { rmSync(d, { recursive: true, force: true }) }
+  })
+}
