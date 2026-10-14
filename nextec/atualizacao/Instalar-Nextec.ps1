@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Instala e mantém atualizado o app de acesso remoto da Nextec (RustDesk personalizado).
 
