@@ -7,8 +7,8 @@
 name: Imagem Nextec
 
 on:
+  # PR para qualquer branch (inclusive PRs empilhados); nada e publicado em PR
   pull_request:
-    branches: [master]
   push:
     branches: [master]
     tags: ['v*']
