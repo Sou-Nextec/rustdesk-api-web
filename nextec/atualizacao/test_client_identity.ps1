@@ -160,6 +160,40 @@ try {
     Assert-True ($client.ConfigRoot -eq (Join-Path $base 'SystemProfile\AppData\Roaming\Nextec-Connect\config')) 'config em systemprofile continua aceita'
   }
 
+  # Revisao #86 P1: layout REAL do Windows (WindowsDirectory), sem ProfileRootBase. O serviço RustDesk roda como
+  # LocalSystem ou LocalService e a config fica em <Windows>\ServiceProfiles\LocalService\AppData\Roaming\<App>\config
+  # (ou, em instalação antiga, <Windows>\System32\config\systemprofile\AppData\Roaming\<App>\config).
+  function New-WindowsLayoutClient([string]$Win, [string]$AppName, [string]$Account, [string]$ProfileRel) {
+    $dir = Join-Path $Win ('Program Files\' + $AppName)
+    New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    $exe = Join-Path $dir ($AppName + '.exe')
+    New-Item -ItemType File -Path $exe -Force | Out-Null
+    $config = Join-Path $Win ($ProfileRel + '\AppData\Roaming\' + $AppName + '\config')
+    New-Item -ItemType Directory -Path $config -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $config ($AppName + '.toml')) -Value "id = '536822159'" -Encoding UTF8
+    [pscustomobject]@{ Dir = $dir; Service = (New-TestService -Name $AppName -ExePath $exe -Account $Account); Config = $config }
+  }
+  Invoke-Test 'Identity_RealWindowsLayout_LocalServiceProfile' {
+    foreach ($account in @('LocalSystem', 'NT AUTHORITY\LocalService')) {
+      $win = Join-Path $temp ('win-ls-' + ($account -replace '[^A-Za-z]', ''))
+      $fixture = New-WindowsLayoutClient -Win $win -AppName 'Client-Nextec-Connect' -Account $account -ProfileRel 'ServiceProfiles\LocalService'
+      $client = Get-NextecInstalledClient -Services @($fixture.Service) -WindowsDirectory $win -Marker ([pscustomobject]@{ AppName = '' }) -PeerIdReader { '536822159' }
+      Assert-True ($client.ConfigRoot -eq $fixture.Config) "layout real ($account): config esperada em ServiceProfiles\LocalService"
+      Assert-True ($client.PeerId -eq '536822159' -and $client.ServiceAccount -eq $account) "layout real ($account): identidade do serviço"
+    }
+  }
+  Invoke-Test 'Identity_RealWindowsLayout_SystemProfileFallback' {
+    $win = Join-Path $temp 'win-sys'
+    $fixture = New-WindowsLayoutClient -Win $win -AppName 'Nextec-Connect' -Account 'LocalSystem' -ProfileRel 'System32\config\systemprofile'
+    $client = Get-NextecInstalledClient -Services @($fixture.Service) -WindowsDirectory $win -Marker ([pscustomobject]@{ AppName = '' }) -PeerIdReader { '812345678' }
+    Assert-True ($client.ConfigRoot -eq $fixture.Config) 'layout real: config em system32\config\systemprofile continua aceita para LocalSystem'
+    # LocalService nunca olha o systemprofile: sem marcador o serviço não é reconhecido (não confunde com outro app)
+    $ls = New-TestService -Name 'Nextec-Connect' -ExePath (Join-Path $win 'Program Files\Nextec-Connect\Nextec-Connect.exe') -Account 'NT AUTHORITY\LocalService'
+    $failure = ''
+    try { Get-NextecInstalledClient -Services @($ls) -WindowsDirectory $win -Marker ([pscustomobject]@{ AppName = '' }) -PeerIdReader { '812345678' } | Out-Null } catch { $failure = $_.Exception.Message }
+    Assert-True ($failure -match '^identity_conflict') 'LocalService sem config em ServiceProfiles\LocalService não é reconhecido sem marcador'
+  }
+
   Invoke-Test 'Identity_FreshInstallFoundByMarkerInstallDir' {
     $base = Join-Path $temp 'real-fresh'
     $fixture = New-RealClient -Root $base -AppName 'XPTO' -ConfigUnder ''

@@ -164,15 +164,13 @@ Out-Result @{ code = $code; runs = @($script:runs); calls = @($script:calls); sa
   })
 })
 
-test('PS 5.1: scripts já instalados e tarefa registrada não são regravados nem registrados de novo; versão mais nova é mantida', { skip }, async () => {
+test('PS 5.1: scripts idênticos ao embutido e tarefa registrada não são regravados nem registrados de novo', { skip }, async () => {
   await withDir(async (d) => {
     const { path } = await prepararCmd(d)
     const root = join(d, 'PD', 'Nextec', 'Acesso')
     mkdirSync(root, { recursive: true })
     const scripts = lerScripts()
     for (const n of AGENT_PACKAGE_FILES) writeFileSync(join(root, n), scripts[n], 'utf8')
-    const maisNovo = scripts['Coordenar-Agente-Nextec.ps1'] + '\n# versao futura com SubstituirAgenteAntigo\n'
-    writeFileSync(join(root, 'Coordenar-Agente-Nextec.ps1'), maisNovo, 'utf8')
     const out = runPs(`
 $script:tasks[$script:coord] = 'Ready'
 $lines = [IO.File]::ReadAllLines(${psq(path)})
@@ -182,8 +180,32 @@ Out-Result @{ code = $code; runs = @($script:runs); said = @($script:said) }`)
     assert.equal(out.status, 0, out.stderr + out.stdout)
     assert.equal(out.json.runs.length, 1, 'só entrega a autorização')
     assert.match(out.json.runs[0].Args, /^-Receber /)
-    assert.equal(readFileSync(join(root, 'Coordenar-Agente-Nextec.ps1'), 'utf8'), maisNovo)
+    for (const n of AGENT_PACKAGE_FILES) assert.equal(readFileSync(join(root, n), 'utf8'), scripts[n])
     assert.ok(!readdirSync(root).some(f => f.includes('.antigo-')))
+  })
+})
+
+test('PS 5.1: script divergente do embutido (mesmo com o texto do recurso novo) é substituído e o anterior fica em cópia', { skip }, async () => {
+  await withDir(async (d) => {
+    const { path } = await prepararCmd(d)
+    const root = join(d, 'PD', 'Nextec', 'Acesso')
+    mkdirSync(root, { recursive: true })
+    const scripts = lerScripts()
+    for (const n of AGENT_PACKAGE_FILES) writeFileSync(join(root, n), scripts[n], 'utf8')
+    const divergente = scripts['Coordenar-Agente-Nextec.ps1'] + '\n# versao futura com SubstituirAgenteAntigo\n'
+    writeFileSync(join(root, 'Coordenar-Agente-Nextec.ps1'), divergente, 'utf8')
+    const out = runPs(`
+$script:tasks[$script:coord] = 'Ready'
+$lines = [IO.File]::ReadAllLines(${psq(path)})
+$b64 = ($lines | Where-Object { $_ -like 'rem NXDATA *' } | Select-Object -First 1).Substring(11).Trim()
+$code = Invoke-NxActivation -Root ${psq(root)} -Lines $lines -DataB64 $b64 -Found ${found(d)} -M $M -Run $run -Say $say -WaitSeconds 0
+Out-Result @{ code = $code; runs = @($script:runs); said = @($script:said) }`)
+    assert.equal(out.status, 0, out.stderr + out.stdout)
+    assert.equal(readFileSync(join(root, 'Coordenar-Agente-Nextec.ps1'), 'utf8'), scripts['Coordenar-Agente-Nextec.ps1'], 'voltou ao embutido')
+    const copias = readdirSync(root).filter(f => f.includes('.antigo-'))
+    assert.equal(copias.length, 1)
+    assert.equal(readFileSync(join(root, copias[0]), 'utf8'), divergente, 'a cópia guarda o que estava antes')
+    assert.ok(out.json.runs.some(r => /^-Registrar /.test(r.Args)), 'coordenador registrado de novo com o script novo')
   })
 })
 

@@ -99,3 +99,24 @@ export async function readAgentPackage(cmdText) {
   }
   return out
 }
+
+// Confere que o pacote embutido (partes + hashes) é, byte a byte, o conteúdo dos scripts da árvore do painel.
+// files: { 'Nome.ps1': 'texto' } (a fonte oficial). Lança Error se faltar, divergir ou não decodificar.
+export async function verifyAgentPackage(pkg, files, names = AGENT_PACKAGE_FILES) {
+  const lines = [
+    ...names.map(n => `rem NXSHA ${n} ${pkg && pkg.shas && pkg.shas[n]}`),
+    ...((pkg && pkg.parts) || []).map(p => `rem NXPKG ${p}`),
+  ]
+  let embedded
+  try { embedded = await readAgentPackage(lines.join(String.fromCharCode(10))) } catch (e) { throw new Error(`Pacote do agente não confere: ${e.message}`) }
+  for (const name of names) {
+    const text = files && files[name]
+    if (typeof text !== 'string') throw new Error(`Script do agente ausente na árvore do painel: ${name}.`)
+    const want = encoder.encode(text)
+    const got = embedded[name]
+    if (!got || got.length !== want.length || !got.every((b, i) => b === want[i])) {
+      throw new Error(`Pacote do agente diverge do script do painel: ${name}.`)
+    }
+  }
+  return true
+}

@@ -405,40 +405,51 @@ function Get-NxBytesHash {
   try { return ([BitConverter]::ToString($sha.ComputeHash($Bytes)) -replace '-', '').ToLowerInvariant() } finally { $sha.Dispose() }
 }
 function Get-NxInstallPlan {
-  # Quais scripts gravar: ausentes, ou diferentes do embutido e sem o recurso novo (versao antiga). Versao com o
-  # recurso e mantida (pode ser mais nova que a embutida). OldAgentScript = Agente-Senha antigo no disco.
+  # Quais scripts gravar: os ausentes e os DIFERENTES do embutido (tamanho e SHA-256 dos bytes). Arquivo vazio, truncado,
+  # corrompido ou de versao antiga diverge e e substituido; so o identico fica (nao e regravado). O pacote embutido e
+  # sempre o da arvore do painel, entao "diferente" nunca e "mais novo". OldAgentScript = Agente-Senha do disco diferente.
   param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)]$Files)
-  $markers = [ordered]@{ 'Coordenar-Agente-Nextec.ps1' = 'SubstituirAgenteAntigo'; 'Provisionar-Agente-Nextec.ps1' = 'SubstituirAgenteAntigo'; 'Agente-Senha-Nextec.ps1' = 'Get-NextecInstalledClient' }
   $todo = @()
   $oldScript = $false
-  foreach ($name in $markers.Keys) {
+  foreach ($name in @('Coordenar-Agente-Nextec.ps1', 'Provisionar-Agente-Nextec.ps1', 'Agente-Senha-Nextec.ps1')) {
     $dest = [IO.Path]::Combine($Root, $name)
     if (-not [IO.File]::Exists($dest)) { $todo += $name; continue }
-    $cur = [IO.File]::ReadAllBytes($dest)
-    if ((Get-NxBytesHash $cur) -ceq (Get-NxBytesHash $Files[$name])) { continue }
-    $text = [Text.Encoding]::UTF8.GetString($cur)
-    if ($text.Contains($markers[$name])) { continue }
+    $same = $false
+    try {
+      $want = [byte[]]$Files[$name]
+      if (([IO.FileInfo]::new($dest)).Length -eq $want.Length) {
+        $same = ((Get-NxBytesHash ([IO.File]::ReadAllBytes($dest))) -ceq (Get-NxBytesHash $want))
+      }
+    } catch { $same = $false }
+    if ($same) { continue }
     $todo += $name
     if ($name -ceq 'Agente-Senha-Nextec.ps1') { $oldScript = $true }
   }
   return [pscustomobject]@{ Install = $todo; OldAgentScript = $oldScript }
 }
 function Set-NxScript {
-  # Grava via arquivo temporario CreateNew com ACL protegida; o anterior vai para <nome>.antigo-<data> (nao se apaga).
+  # Troca atomica: grava em temporario na MESMA pasta (CreateNew, ACL protegida), le de volta e confere tamanho e
+  # SHA-256, copia o anterior para <nome>.antigo-<data> e so entao troca. Qualquer falha antes da troca deixa o
+  # arquivo anterior intacto e remove o temporario.
   param([Parameter(Mandatory)][string]$Root, [Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][byte[]]$Bytes, [Parameter(Mandatory)][string]$Stamp)
   $dest = [IO.Path]::Combine($Root, $Name)
   $tmp = [IO.Path]::Combine($Root, '.nx-' + [Guid]::NewGuid().ToString('N') + '.tmp')
   Assert-NxSafePath -Path $dest
+  $bak = ''
+  $done = $false
   try {
     New-NxProtectedFile -Path $tmp -Bytes $Bytes
+    $back = [IO.File]::ReadAllBytes($tmp)
+    if ($back.Length -ne $Bytes.Length -or (Get-NxBytesHash $back) -cne (Get-NxBytesHash $Bytes)) { throw 'script_gravacao_invalida' }
     if ([IO.File]::Exists($dest)) {
-      $bak = $dest + '.antigo-' + $Stamp
-      $n = 1
-      while ([IO.File]::Exists($bak)) { $n++; $bak = $dest + '.antigo-' + $Stamp + '-' + $n }
-      [IO.File]::Move($dest, $bak)
-    }
-    [IO.File]::Move($tmp, $dest)
-  } finally { if ([IO.File]::Exists($tmp)) { [IO.File]::Delete($tmp) } }
+      $bak = Backup-NxFile -Path $dest -Stamp $Stamp
+      [IO.File]::Replace($tmp, $dest, [NullString]::Value)
+    } else { [IO.File]::Move($tmp, $dest) }
+    $done = $true
+  } finally {
+    if ([IO.File]::Exists($tmp)) { [IO.File]::Delete($tmp) }
+    if (-not $done -and $bak -and [IO.File]::Exists($bak)) { [IO.File]::Delete($bak) }
+  }
 }
 function Backup-NxFile {
   # Copia protegida (o original fica; quem decide trocar e o coordenador, depois de o painel recusar o token).
@@ -533,6 +544,7 @@ function Read-NxLocalIdentity {
     [string]$PanelDefault,
     [object[]]$Services,
     [string]$ProfileRootBase,
+    [string]$WindowsDirectory,
     [scriptblock]$PeerIdReader,
     [scriptblock]$GuidReader
   )
@@ -541,14 +553,15 @@ function Read-NxLocalIdentity {
     $markerFile = ''
     if ($Root) { $markerFile = [IO.Path]::Combine($Root, 'nextec-marker.json') }
     $client = & $mod {
-      param($svc, $base, $reader, $marker)
+      param($svc, $base, $reader, $marker, $win)
       $a = @{}
       if ($null -ne $svc) { $a['Services'] = $svc }
       if ($base) { $a['ProfileRootBase'] = $base }
+      if ($win) { $a['WindowsDirectory'] = $win }
       if ($reader) { $a['PeerIdReader'] = $reader }
       if ($marker) { $a['MarkerFile'] = $marker }
       Get-NextecInstalledClient @a
-    } $Services $ProfileRootBase $PeerIdReader $markerFile
+    } $Services $ProfileRootBase $PeerIdReader $markerFile $WindowsDirectory
     $uuid = & $mod {
       param($g)
       if ($g) { Get-NextecMachineUuid -GuidReader $g } else { Get-NextecMachineUuid }
@@ -565,7 +578,9 @@ function Get-NxLocalIdentity {
   param([Parameter(Mandatory)]$Files, [string]$Root, [string]$PanelDefault)
   $h = $script:NxIdHooks
   if ($null -eq $h) { return (Read-NxLocalIdentity -Files $Files -Root $Root -PanelDefault $PanelDefault) }
-  return (Read-NxLocalIdentity -Files $Files -Root $Root -PanelDefault $PanelDefault -Services $h.Services -ProfileRootBase $h.ProfileRootBase -PeerIdReader $h.PeerIdReader -GuidReader $h.GuidReader)
+  $win = ''
+  if ($h.ContainsKey('WindowsDirectory')) { $win = [string]$h.WindowsDirectory }
+  return (Read-NxLocalIdentity -Files $Files -Root $Root -PanelDefault $PanelDefault -Services $h.Services -ProfileRootBase $h.ProfileRootBase -WindowsDirectory $win -PeerIdReader $h.PeerIdReader -GuidReader $h.GuidReader)
 }
 function Invoke-NxPreflight {
   # Tudo que pode recusar a ativacao, sem nenhum efeito colateral: nao grava em ProgramData, nao para nem registra tarefa.
@@ -789,7 +804,7 @@ function Invoke-NxActivation {
     # 3) instala o que faltar (Coordenar, Provisionar, Agente-Senha) e registra a tarefa do coordenador
     foreach ($name in @($plan.Install)) { Set-NxScript -Root $Root -Name $name -Bytes $files[$name] -Stamp $stamp }
     Write-NxLog $Root ('instalado=' + (@($plan.Install) -join ',') + ' substituir=' + $replace)
-    # scripts que ja estavam la (versao igual ou mais nova) tambem ficam com dono e ACL do coordenador
+    # scripts que ja estavam la (identicos ao embutido) tambem ficam com dono e ACL do coordenador
     foreach ($name in @('Coordenar-Agente-Nextec.ps1', 'Provisionar-Agente-Nextec.ps1', 'Agente-Senha-Nextec.ps1')) {
       $path = [IO.Path]::Combine($Root, $name)
       if ([IO.File]::Exists($path)) { try { Set-Acl -LiteralPath $path -AclObject (New-NxAcl -WithOwner) } catch { } }
