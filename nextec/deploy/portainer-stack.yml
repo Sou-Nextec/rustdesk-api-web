@@ -3,7 +3,8 @@
 # Variáveis (Portainer > Environment variables):
 #   TUNNEL_TOKEN  obrigatória (token do túnel da Cloudflare)
 #   DOMINIO       padrão remoto.nex.tec.br
-#   URL_PAINEL    padrão https://painel-remoto.nex.tec.br
+#   URL_PAINEL    padrão https://painel-remoto.nex.tec.br (a API emite autorização e instalação com este endereço;
+#                 https, sem porta, caminho, credencial ou IP. Vazia na API, ela deriva do domínio acessado)
 #   PASTA_DADOS   padrão /opt/rustdesk-nextec (guarda data/ e api/ no disco da VPS)
 # Gerador de clientes (rdgen), em ${URL_PAINEL}/gerador. Variáveis do serviço "rdgen":
 #   GERADOR_GH_USER      usuário do GitHub dono do repositório rdgen (padrão Sou-Nextec)
@@ -11,7 +12,7 @@
 #   GERADOR_ZIP_SENHA    obrigatória para o gerador (a MESMA do segredo ZIP_PASSWORD do repositório rdgen)
 #   GERADOR_SECRET_KEY   opcional (se vazia, o gerador cria uma chave aleatória e guarda no volume)
 #   GERADOR_SH_SECRET    obrigatória para o gerador (senha da API do gerador; qualquer texto longo)
-#   GERADOR_ENROLL_KEY   credencial de inscrição (card "Credencial de inscrição" em Segurança > Senhas dos servidores). Sem ela o instalador sai sem a chave e a máquina não se inscreve; o build continua e avisa
+#   GERADOR_ENROLL_KEY   OPCIONAL. O gerador busca a credencial de inscrição sozinho no painel (rede interna, com GERADOR_SH_SECRET) a cada build. Só defina para forçar um valor fixo (tem prioridade só quando a busca falha)
 #   GERADOR_EMAILS_AUTORIZADOS  e-mails que podem gerar clientes, separados por vírgula (vazio = quem passa pelo Access)
 # Os nomes originais do rdgen (GHBEARER, GHUSER, ZIP_PASSWORD, SECRET_KEY, SH_SECRET, GENURL) tambem sao aceitos no Portainer;
 # se os dois existirem, vale o GERADOR_*.
@@ -61,6 +62,8 @@ services:
       - RUSTDESK_API_RUSTDESK_ID_SERVER=${DOMINIO:-remoto.nex.tec.br}:21116
       - RUSTDESK_API_RUSTDESK_RELAY_SERVER=${DOMINIO:-remoto.nex.tec.br}:21117
       - RUSTDESK_API_RUSTDESK_API_SERVER=${URL_PAINEL:-https://painel-remoto.nex.tec.br}
+      # endereço emitido nas autorizações do agente; vazio = a API deriva do domínio acessado (https)
+      - NEXTEC_PANEL_URL=${URL_PAINEL:-}
       - NX_RDGEN_INTERNAL_URL=http://rdgen:8000
       - NX_RDGEN_SHARED_SECRET=${GERADOR_SH_SECRET:-${SH_SECRET:-}}
       - RUSTDESK_API_KEY_FILE=/data/id_ed25519.pub
@@ -103,8 +106,10 @@ services:
       # só estas pessoas geram clientes (além do login do Access); vazio = quem passa pelo Access
       - NX_ALLOWED_EMAILS=${GERADOR_EMAILS_AUTORIZADOS:-}
       - NX_APP_NAME=Nextec-Connect
-      # credencial de inscrição embutida no instalador (vazia = build segue e avisa). Não aparece em healthcheck nem em comando
+      # credencial de inscrição: o gerador a busca no painel (http://rustdesk:21114) a cada build. NX_ENROLL_KEY é só o override
+      # opcional usado quando a busca falha. Não aparece em healthcheck nem em comando
       - NX_ENROLL_KEY=${GERADOR_ENROLL_KEY:-}
+      - NX_PANEL_INTERNAL_URL=http://rustdesk:21114
     volumes:
       # só a chave pública do servidor (a privada não entra neste contêiner)
       - ${PASTA_DADOS:-/opt/rustdesk-nextec}/data/id_ed25519.pub:/chave/id_ed25519.pub:ro

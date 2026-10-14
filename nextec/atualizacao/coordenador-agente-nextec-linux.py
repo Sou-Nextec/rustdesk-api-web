@@ -12,11 +12,14 @@ import secrets
 import stat
 import subprocess
 import sys
+import urllib.parse
 from pathlib import Path
 
 
-PANEL = "https://painel-remoto.nex.tec.br"
-PANEL_HOST = "painel-remoto.nex.tec.br"
+# Compatibilidade com instalacoes antigas: so vale quando nao ha inscricao.json valido.
+DEFAULT_PANEL = "https://painel-remoto.nex.tec.br"
+PANEL = DEFAULT_PANEL
+PANEL_SOURCE = "padrao"
 BOOTSTRAP_PATH = Path("/var/lib/nextec-connect/bootstrap.json")
 JOURNAL_PATH = Path("/var/lib/nextec-connect/provisionamento-agente.json")
 CONFIG_PATH = Path("/var/lib/nextec-connect/agent-config.json")
@@ -26,6 +29,51 @@ AGENT_PATH = Path(__file__).resolve().with_name("agente-senha-linux.py")
 INSCRICAO_SOURCE = Path(__file__).resolve().with_name("inscricao.json")
 INSCRICAO_PATH = Path("/var/lib/nextec-connect/inscricao.json")
 SELF_STATE_PATH = Path("/var/lib/nextec-connect/inscricao-estado.json")
+
+_PANEL_HOST_RE = re.compile(r"^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$")
+
+
+def normalize_panel(value):
+    """Accept only https://host (no credentials, port, path, IP literal or bare name)."""
+    if not isinstance(value, str) or not value or len(value) > 253 or re.search(r"[\s\\@]", value):
+        return None
+    try:
+        parts = urllib.parse.urlsplit(value.strip())
+        port = parts.port
+    except ValueError:
+        return None
+    if (parts.scheme != "https" or parts.username or parts.password or parts.query or parts.fragment
+            or parts.path not in ("", "/") or port is not None):
+        return None
+    host = parts.hostname or ""
+    if not _PANEL_HOST_RE.fullmatch(host):
+        return None
+    return "https://" + host
+
+
+def resolve_panel(candidates=None, default=DEFAULT_PANEL, expected_uid=0):
+    """Panel host comes only from the local inscricao.json (never from the network).
+
+    Returns (panel, source) where source is the file used or "padrao" (legacy fallback).
+    """
+    for path in (candidates if candidates is not None else (INSCRICAO_PATH, INSCRICAO_SOURCE)):
+        try:
+            path = Path(path)
+            info = os.lstat(str(path))
+            if not stat.S_ISREG(info.st_mode) or info.st_size > 4096:
+                continue
+            if expected_uid is not None and (info.st_uid != expected_uid or info.st_mode & 0o022):
+                continue
+            value = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, UnicodeDecodeError):
+            continue
+        panel = normalize_panel(value.get("painel")) if isinstance(value, dict) else None
+        if panel:
+            return panel, str(path)
+    return default, "padrao"
+
+
+PANEL, PANEL_SOURCE = resolve_panel()
 MACHINE_ID_PATHS = (Path("/var/lib/dbus/machine-id"), Path("/etc/machine-id"))
 ENROLL_KEY_RE = re.compile(r"^[\x21-\x7e]{16,256}$")
 SELF_STATE_FIELDS = {"state", "chave_sha256", "proposed_token", "attempts", "next_try_utc", "blocked_until_utc"}
@@ -536,6 +584,9 @@ def main(cycle=run_cycle, runner=subprocess.run):
     if not hasattr(os, "geteuid") or os.geteuid() != 0:
         print("Nextec Connect coordinator: root_required", file=sys.stderr)
         return 1
+    if PANEL_SOURCE == "padrao":
+        print("Nextec Connect coordinator: aviso inscricao.json ausente; usando painel padrao (compat)",
+              file=sys.stderr)
     try:
         status = cycle()
         if status in ("complete", "already_configured"):

@@ -1,8 +1,24 @@
 const reject = () => { throw new Error('O pedido recebido não corresponde à máquina ou ao pacote escolhido.') }
 const exactKeys = (value, allowed) => value && typeof value === 'object' && !Array.isArray(value) && Object.keys(value).every(key => allowed.includes(key))
 
-export function activationBundle(value, expectedId) {
- if (!value || value.painel !== 'https://painel-remoto.nex.tec.br' || value.id !== expectedId || !/^\d{6,64}$/.test(value.id) ||
+// Painel padrao: usado so quando a pagina nao informa a propria origem (compat).
+export const PAINEL_PADRAO = 'https://painel-remoto.nex.tec.br'
+
+// Aceita somente https://host (sem credencial, porta, caminho, consulta, IP literal ou host sem dominio).
+export function normalizePainel(value) {
+ if (typeof value !== 'string' || !value || value.length > 253 || /[\s\\@]/.test(value)) return null
+ let url
+ try { url = new URL(value.trim()) } catch { return null }
+ if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash || url.port || (url.pathname !== '/' && url.pathname !== '')) return null
+ if (!/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(url.hostname)) return null
+ return 'https://' + url.hostname
+}
+
+// O painel esperado vem da origem da propria pagina (nada fixo e nunca da resposta da rede).
+export function activationBundle(value, expectedId, expectedPainel) {
+ const origem = expectedPainel ?? (typeof location !== 'undefined' && location.origin && location.origin !== 'null' ? location.origin : PAINEL_PADRAO)
+ const painel = normalizePainel(origem)
+ if (!painel || !value || value.painel !== painel || value.id !== expectedId || !/^\d{6,64}$/.test(value.id) ||
      typeof value.uuid !== 'string' || !value.uuid.trim() || value.uuid.length > 128 || !/^[A-Za-z0-9_-]{43}$/.test(value.bootstrap)) reject()
  return {painel:value.painel,id:value.id,uuid:value.uuid,bootstrap:value.bootstrap}
 }
