@@ -14,8 +14,8 @@
   import { computed } from 'vue'
   import { machineSteps } from '@/nextec/secrets-flow.mjs'
 
-  const props = defineProps({ device: { type: Object, default: () => ({}) } })
-  const info = computed(() => machineSteps(props.device))
+  const props = defineProps({ device: { type: Object, default: () => ({}) }, now: { type: Number, default: 0 } })
+  const info = computed(() => machineSteps(props.device, props.now || undefined))
   const statusText = { done: 'concluída', current: 'etapa atual', todo: 'pendente' }
 </script>
 

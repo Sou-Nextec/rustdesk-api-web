@@ -258,3 +258,30 @@ o 0033 toca `http/router/api.go` e cria arquivos novos em `api/` e `service/`, s
 tinha fim de linha CRLF e o `git apply` do Linux o rejeitava ("patch failed ... nextec_bootstrap.go:52"); os `.patch` devem ser LF.
 O workflow `Imagem Nextec` agora aplica toda a série em ordem antes do build e aponta qual patch não aplica.
 
+
+
+## Patch 0035: estado do agente derivado de contato real
+
+O cadastro (bootstrap ou inscrição) gravava `last_seen_at = agora` e o painel o tratava como "agente ativo". Se a instalação local
+era desfeita depois (rollback do `.cmd`), o painel mostrava "Tudo pronto" sem agente nenhum e recusava uma autorização nova.
+
+- **Coluna aditiva** `nextec_device_secrets.last_sync_at` (`AutoMigrate`, padrão 0, sem migração de dados). Só a consulta
+  `POST /api/nextec/agent/sync` autenticada a preenche; `last_seen_at` continua sendo "qualquer escrita". Rollback: remover o patch
+  deixa a coluna sem uso. Linha anterior à coluna: `last_sync_at = 0`, ou seja, `parado` se cadastrada, até o próximo sync.
+- **Estado:** `NextecAgentStateAt` devolve `ativo` (sync há menos de `NextecAgentActiveCycles` x `NextecAgentSyncCycle` = 3 x 5 min),
+  `parado` (cadastrado e sem sync recente ou sem sync nenhum), `pendente_aprovacao` ou `sem_agente`. `GET /nextec/secrets` ganhou
+  `devices[].agent_state` e `devices[].last_sync_at`.
+- **Autorização individual sobre agente parado:** `POST /nextec/secrets/bootstrap` e o consumo do código aceitam máquina cadastrada
+  cujo agente está `parado`. O consumo troca o token (compare-and-swap por `token_hash` e `last_sync_at`, na mesma transação que gasta
+  o código), mantém senhas e versões, zera `last_sync_at` e audita `agent_replaced_stale`. Agente `ativo` ou `pendente_aprovacao`
+  continua recusado (409 `agent active` no emitir; no usar o código não é gasto). ID, uuid, hash, prazo de 15 minutos e https
+  seguem como antes.
+- **Último erro do agente:** colunas aditivas `last_error` e `last_error_at`. `POST /api/nextec/agent/sync` aceita `last_error`
+  (opcional; código `^[a-z][a-z0-9_]{0,47}$`, fora disso grava `unknown_error`). Sync sem o campo, ou com ele vazio, limpa;
+  a confirmação da troca também limpa. `GET /nextec/secrets` devolve `devices[].last_error` e `last_error_at`.
+- **Sondagem da reinstalação:** `POST /api/nextec/agent/sync` com `probe:true` só confere o token e responde `{probe:true, agent_state, last_sync_at}`. Não grava `last_sync_at` nem `last_seen_at`, não limpa `last_error`, não entrega operação e audita `agent_probe` (detalhe `agent_state=...`, sem segredos). Token inválido continua 401 e conta no anti-lixo do IP. O provisionador usa a sondagem para escolher entre reparar a instalação local (token válido) e o bootstrap de substituição (401 ou `parado`).
+- **Série:** 0001..0035 aplicam limpas em ordem sobre `v2.6.29`. Toca `model/nextec_secret.go`, `service/nextec_secret.go`,
+  `service/nextec_bootstrap.go`, `http/controller/admin/nextec_bootstrap.go`, `http/controller/api/nextec_agent.go` e cria
+  `service/nextec_agent_state.go` (+ testes). O 0036 do PR #92 também muda a chamada do sync em `nextec_agent.go`: quem entrar
+  por último precisa regenerar o patch juntando `app_name` e `last_error` na mesma chamada.
+- Testes: `go test -race ./service ...` (a imagem roda a lista do Dockerfile).

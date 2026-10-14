@@ -734,19 +734,33 @@ function Invoke-NextecProvisioning {
 }
 
 function Invoke-NextecAgentTokenProbe {
-  # Pergunta ao painel se ele ainda reconhece o token local (a mesma chamada /sync que o agente faz a cada ciclo).
-  # Devolve so o status HTTP (0 = sem resposta). Nunca lanca e nunca devolve nem registra o token.
+  # Pergunta ao painel se ele ainda reconhece o token local: /agent/sync com probe:true, que so confere o token e NAO
+  # conta como consulta (nao grava last_sync_at nem last_seen_at). Assim a sondagem nunca faz um agente parado parecer
+  # ativo e o painel continua aceitando a autorizacao de reinstalacao. Devolve status HTTP (0 = sem resposta) e o
+  # agent_state calculado pelo painel ('' em painel anterior). Nunca lanca e nunca devolve nem registra o token.
   param([Parameter(Mandatory)][string]$Panel, [Parameter(Mandatory)][string]$Id, [Parameter(Mandatory)][string]$Token)
   try {
-    $uri = [Uri]::new($Panel.TrimEnd('/') + '/api/nextec/agent/sync')
-    if ($uri.Scheme -cne 'https' -or $uri.Host -cne ([Uri]$script:NextecPainelFixo).Host -or $uri.UserInfo -or $uri.Query -or $uri.Fragment) { return 0 }
-    Invoke-RestMethod -Uri $uri.AbsoluteUri -Method Post -ContentType 'application/json' -Body (@{ id = $Id; token = $Token } | ConvertTo-Json -Compress) -TimeoutSec 30 -MaximumRedirection 0 -UserAgent 'Nextec-Connect-Agent/1' | Out-Null
-    return 200
+    # So o painel configurado, em HTTPS na raiz (ConvertTo-NextecPainelUrl), recebe o token.
+    $base = ConvertTo-NextecPainelUrl $Panel
+    if (-not $base -or ([Uri]$base).Host -cne ([Uri]$script:NextecPainelFixo).Host) { return [pscustomobject]@{ status = 0; agent_state = '' } }
+    $uri = [Uri]::new($base.TrimEnd('/') + '/api/nextec/agent/sync')
+    $r = Invoke-RestMethod -Uri $uri.AbsoluteUri -Method Post -ContentType 'application/json' -Body (@{ id = $Id; token = $Token; probe = $true } | ConvertTo-Json -Compress) -TimeoutSec 30 -MaximumRedirection 0 -UserAgent 'Nextec-Connect-Agent/1'
+    $state = ''
+    if ($r -and $r.PSObject.Properties['agent_state']) { $state = [string]$r.agent_state }
+    return [pscustomobject]@{ status = 200; agent_state = $state }
   } catch {
     $status = 0
     try { if ($_.Exception.Response -and $_.Exception.Response.StatusCode) { $status = [int]$_.Exception.Response.StatusCode } } catch { $status = 0 }
-    return $status
+    return [pscustomobject]@{ status = $status; agent_state = '' }
   }
+}
+
+# Instalacao local do agente: script presente e tarefa de senha no formato esperado.
+function Test-NextecAgentInstallHealthy {
+  param([Parameter(Mandatory)][string]$Root, [scriptblock]$AgentTaskReady = { param($root) Test-NextecAgentTaskReady -Root $root })
+  $paths = Get-NextecProvisionPaths -Root $Root
+  if (-not (Test-Path -LiteralPath $paths.AgentScript -PathType Leaf)) { return $false }
+  try { return [bool](& $AgentTaskReady $Root) } catch { return $false }
 }
 
 function Move-NextecProvisionFileAside {
@@ -777,15 +791,22 @@ function Move-NextecProvisionFileAside {
 }
 
 # Agente antigo ou quebrado (so com -SubstituirAgenteAntigo, passado pelo Ativar-Nextec-<ID>.cmd baixado do painel por um
-# administrador autenticado): o cadastro local sai do caminho SOMENTE se estiver em formato que o fluxo novo nao le, for de
-# outro ID ou o painel recusar o token (HTTP 401). Painel que reconhece o token (ou nao responde) mantem o cadastro e o uso
-# normal continua recusando cadastro duplicado (already_enrolled).
-function Move-NextecOldAgentAside {
+# administrador autenticado). Decide entre reparar a instalacao local e pedir a substituicao do cadastro:
+#   - credencial valida (sondagem 200) e instalacao local quebrada (tarefa ausente ou invalida, script faltando): REPARA,
+#     registrando a tarefa com a credencial que ja existe. Sem cadastro novo e sem recusar ('repaired').
+#   - credencial ilegivel, de outro ID, recusada (401) ou painel dizendo "parado": substituicao pelo bootstrap.
+#   - credencial valida, instalacao boa e agente ativo (ou painel sem agent_state): mantem, already_enrolled.
+#   - painel sem resposta: panel_unreachable, nada muda.
+# A credencial antiga NUNCA sai do lugar aqui: Invoke-NextecProvisioning so a troca (com backup em .anterior) depois de
+# o painel aceitar o token novo. Recusa, autorizacao vencida ou falha de rede deixam a maquina com o que ja tinha.
+function Resolve-NextecOldAgent {
   [CmdletBinding()]
   param(
     [Parameter(Mandatory)][string]$Root,
     [Parameter(Mandatory)][string]$LocalId,
     [scriptblock]$Probe = { param($panel, $id, $token) Invoke-NextecAgentTokenProbe -Panel $panel -Id $id -Token $token },
+    [scriptblock]$AgentTaskReady = { param($root) Test-NextecAgentTaskReady -Root $root },
+    [scriptblock]$RegisterAgent = { param($path) Invoke-NextecAgentRegistration -ScriptPath $path },
     [DateTime]$Now = [DateTime]::UtcNow
   )
   $paths = Get-NextecProvisionPaths -Root $Root
@@ -796,17 +817,29 @@ function Move-NextecOldAgentAside {
   if (-not $reason) {
     if ($config.id -cne $LocalId) { $reason = 'outro_id' }
     else {
-      $status = 0
-      try { $status = [int](& $Probe $config.painel $config.id $config.token) } catch { $status = 0 }
+      $status = 0; $state = ''
+      try {
+        $answer = & $Probe $config.painel $config.id $config.token
+        if ($answer -and $answer.PSObject.Properties['status']) { $status = [int]$answer.status; $state = [string]$answer.agent_state }
+        else { $status = [int]$answer }
+      } catch { $status = 0 }
       if ($status -eq 401) { $reason = 'token_recusado' }
       elseif ($status -eq 0) { Write-NextecProvisionLog 'panel_unreachable' -Root $Root; throw 'panel_unreachable' }
+      elseif ($status -eq 200 -and -not (Test-NextecAgentInstallHealthy -Root $Root -AgentTaskReady $AgentTaskReady)) {
+        try { & $RegisterAgent $paths.AgentScript }
+        catch { Write-NextecProvisionLog 'registration_retry' -Root $Root; throw 'registration_retry' }
+        Write-NextecProvisionLog 'agent_repaired' -Root $Root
+        return 'repaired'
+      }
+      elseif ($status -eq 200 -and $state -ceq 'parado') { $reason = 'agente_parado' }
       else { Write-NextecProvisionLog 'old_agent_kept' -Root $Root; throw 'already_enrolled' }
     }
   }
-  $stamp = $Now.ToUniversalTime().ToString('yyyyMMdd-HHmmss')
-  [void](Move-NextecProvisionFileAside -Path $paths.AgentConfig -Stamp $stamp)
-  if (Test-Path -LiteralPath $paths.Journal -PathType Leaf) { [void](Move-NextecProvisionFileAside -Path $paths.Journal -Stamp $stamp) }
-  Write-NextecProvisionLog 'old_agent_replaced' -Root $Root
+  # Pendencia antiga (journal) sairia na frente da autorizacao nova: vai para backup protegido. A credencial fica.
+  if (Test-Path -LiteralPath $paths.Journal -PathType Leaf) {
+    [void](Move-NextecProvisionFileAside -Path $paths.Journal -Stamp ($Now.ToUniversalTime().ToString('yyyyMMdd-HHmmss')))
+  }
+  Write-NextecProvisionLog ('old_agent_replace_' + $reason) -Root $Root
   return $reason
 }
 
@@ -816,7 +849,9 @@ function Receive-NextecBootstrapAuthorization {
     [scriptblock]$ReadInput = { Read-NextecSecureInput },
     [scriptblock]$DiscoverId = { Get-NextecProvisionLocalId },
     [switch]$SubstituirAgenteAntigo,
-    [scriptblock]$ProbeToken
+    [scriptblock]$ProbeToken,
+    [scriptblock]$AgentTaskReady,
+    [scriptblock]$RegisterAgent
   )
   Initialize-NextecProvisionDirectory -Root $Root
   $paths = Get-NextecProvisionPaths -Root $Root
@@ -826,8 +861,14 @@ function Receive-NextecBootstrapAuthorization {
   if ($payload.id -cne $localId) { throw 'identity_conflict' }
   if ($SubstituirAgenteAntigo) {
     # Depois de validar formato, painel e ID: um arquivo invalido nunca mexe no cadastro existente.
-    if ($ProbeToken) { [void](Move-NextecOldAgentAside -Root $Root -LocalId $localId -Probe $ProbeToken) }
-    else { [void](Move-NextecOldAgentAside -Root $Root -LocalId $localId) }
+    $resolveArgs = @{ Root = $Root; LocalId = $localId }
+    if ($ProbeToken) { $resolveArgs.Probe = $ProbeToken }
+    if ($AgentTaskReady) { $resolveArgs.AgentTaskReady = $AgentTaskReady }
+    if ($RegisterAgent) { $resolveArgs.RegisterAgent = $RegisterAgent }
+    if ((Resolve-NextecOldAgent @resolveArgs) -eq 'repaired') {
+      # Credencial valida: a instalacao local foi refeita com ela. A autorizacao nao e usada (nenhum cadastro novo).
+      return 'Agente reparado com o cadastro existente; nenhuma autorização nova foi necessária.'
+    }
   }
   Write-NextecProtectedJson -Path $paths.Input -Value $payload
   Assert-NextecProvisionPath -Path $paths.Input
