@@ -1,0 +1,119 @@
+{
+  "delete_imported_without_confirm": {
+    "code": "imported",
+    "deleted": [],
+    "error": "Este instalador já foi enviado para Atualizações. Excluir remove só os arquivos de download; a versão preparada no painel não é afetada. Confirme para excluir mesmo assim."
+  },
+  "failed_uuid": "cccccccc-3333-3333-3333-333333333333",
+  "imported_uuid": "aaaaaaaa-1111-1111-1111-111111111111",
+  "in_progress_uuid": "bbbbbbbb-2222-2222-2222-222222222222",
+  "listing": {
+    "count": 3,
+    "page": 1,
+    "page_size": 20,
+    "results": [
+      {
+        "client_name": "",
+        "created_at": "2026-10-14T00:03:41.768064+00:00",
+        "created_by": "",
+        "deletable": true,
+        "delete_blocked_reason": "",
+        "delete_confirmation": null,
+        "delete_confirmation_message": "",
+        "delete_requires_confirmation": false,
+        "filename": "Cliente",
+        "files": [
+          {
+            "name": "Cliente.exe",
+            "url": "download?uuid=cccccccc-3333-3333-3333-333333333333&filename=Cliente.exe"
+          },
+          {
+            "name": "Cliente.msi",
+            "url": "download?uuid=cccccccc-3333-3333-3333-333333333333&filename=Cliente.msi"
+          }
+        ],
+        "generator_version": "",
+        "imported": false,
+        "log_url": "",
+        "missing_files": [],
+        "notes": "",
+        "package_version": "",
+        "platform": "windows",
+        "profile": "",
+        "progress": null,
+        "rustdesk_version": "",
+        "status": "failure",
+        "submission_error": "",
+        "uuid": "cccccccc-3333-3333-3333-333333333333"
+      },
+      {
+        "client_name": "",
+        "created_at": "2026-10-14T00:03:41.756320+00:00",
+        "created_by": "",
+        "deletable": false,
+        "delete_blocked_reason": "A geração ainda está em andamento. Aguarde terminar ou falhar para excluir.",
+        "delete_confirmation": null,
+        "delete_confirmation_message": "",
+        "delete_requires_confirmation": false,
+        "filename": "Cliente",
+        "files": [
+          {
+            "name": "Cliente.exe",
+            "url": "download?uuid=bbbbbbbb-2222-2222-2222-222222222222&filename=Cliente.exe"
+          },
+          {
+            "name": "Cliente.msi",
+            "url": "download?uuid=bbbbbbbb-2222-2222-2222-222222222222&filename=Cliente.msi"
+          }
+        ],
+        "generator_version": "",
+        "imported": false,
+        "log_url": "https://github.com//rdgen/actions/runs/1",
+        "missing_files": [],
+        "notes": "",
+        "package_version": "",
+        "platform": "windows",
+        "profile": "",
+        "progress": null,
+        "rustdesk_version": "",
+        "status": "in_progress",
+        "submission_error": "",
+        "uuid": "bbbbbbbb-2222-2222-2222-222222222222"
+      },
+      {
+        "client_name": "",
+        "created_at": "2026-10-14T00:03:41.742804+00:00",
+        "created_by": "",
+        "deletable": true,
+        "delete_blocked_reason": "",
+        "delete_confirmation": "imported",
+        "delete_confirmation_message": "Este instalador já foi enviado para Atualizações. Excluir remove só os arquivos de download; a versão preparada no painel não é afetada. Confirme para excluir mesmo assim.",
+        "delete_requires_confirmation": true,
+        "filename": "Cliente",
+        "files": [
+          {
+            "name": "Cliente.exe",
+            "url": "download?uuid=aaaaaaaa-1111-1111-1111-111111111111&filename=Cliente.exe"
+          },
+          {
+            "name": "Cliente.msi",
+            "url": "download?uuid=aaaaaaaa-1111-1111-1111-111111111111&filename=Cliente.msi"
+          }
+        ],
+        "generator_version": "",
+        "imported": true,
+        "log_url": "",
+        "missing_files": [],
+        "notes": "",
+        "package_version": "",
+        "platform": "windows",
+        "profile": "",
+        "progress": null,
+        "rustdesk_version": "",
+        "status": "success",
+        "submission_error": "",
+        "uuid": "aaaaaaaa-1111-1111-1111-111111111111"
+      }
+    ]
+  }
+}

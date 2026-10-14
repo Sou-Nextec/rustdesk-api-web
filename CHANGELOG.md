@@ -2,6 +2,10 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.10
+
+- **Corrigido, excluir item já enviado para Atualizações:** o botão **Excluir** estava escondido nesses itens e a confirmação extra nunca aparecia. Agora o botão aparece em todo item que pode ser excluído; nos já enviados, o diálogo mostra o aviso ("já enviado para Atualizações...") e o botão **Excluir mesmo assim**. Em lote, esses itens entram numa única confirmação que lista quais são. Item em andamento continua sem botão. **O rdgen precisa ser atualizado** (`feat/gerador-simplificado`): ele agora separa "pode excluir" de "exige confirmação".
+
 ## 2.11.9
 
 - **Itens gerados, excluir o que não serve:** cada item pronto ou com erro tem o botão **Excluir** (confirmação curta). Há seleção múltipla com **Excluir selecionados** e o botão **Limpar falhas**, que remove de uma vez tudo o que falhou, ficou incompleto ou parou sem terminar.

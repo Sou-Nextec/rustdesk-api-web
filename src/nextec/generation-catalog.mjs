@@ -23,8 +23,19 @@ export function generationState(row) {
 const FAILED_STATUS = ['failure', 'submission_failed', 'cancelled', 'timed_out', 'skipped', 'action_required', 'submission_unknown', 'incomplete']
 // Item que deu erro e não precisa ficar na lista.
 export const failedGeneration = row => !!row && (!!row.submission_error || FAILED_STATUS.includes(row.status))
-// O servidor decide (deletable); aqui só evita pedir o que sabemos que será recusado.
+// O servidor decide (deletable = a exclusão é possível, mesmo que peça confirmação); aqui só evita pedir o que será recusado.
 export const deletableGeneration = row => !!row && validGenerationId(row.uuid) && !activeGeneration(row) && row.deletable !== false
+// Item que pode ser excluído, mas só depois de uma confirmação explícita (ex.: já enviado para Atualizações).
+export const deleteNeedsConfirmation = row => deletableGeneration(row) && row.delete_requires_confirmation === true
+const IMPORTED_TEXT = 'Este instalador já foi enviado para Atualizações. Excluir remove só os arquivos de download; a versão preparada no painel não é afetada.'
+// Texto e botão do diálogo de exclusão de um item. confirmImported só é true quando o aviso foi exibido.
+export function deletionPrompt(row) {
+  const name = row.client_name || row.filename || 'este item'
+  if (deleteNeedsConfirmation(row)) {
+    return { title: 'Item já enviado para Atualizações', message: `${name}: ${row.delete_confirmation_message || IMPORTED_TEXT}`, confirmText: 'Excluir mesmo assim', confirmImported: true }
+  }
+  return { title: 'Excluir item', message: `Excluir ${name}? Os arquivos gerados também serão apagados.`, confirmText: 'Excluir', confirmImported: false }
+}
 const HEADERS = { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Nextec-Acao': 'excluir' }
 async function send(url, init, fetchImpl) {
   const response = await fetchImpl(url, { credentials: 'same-origin', ...init, headers: HEADERS })

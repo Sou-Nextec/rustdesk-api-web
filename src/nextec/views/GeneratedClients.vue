@@ -117,7 +117,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { generationDownload, generationState, activeGeneration, validGenerationId, failedGeneration, deletableGeneration, deleteGeneration, deleteGenerations } from '@/nextec/generation-catalog.mjs'
+import { generationDownload, generationState, activeGeneration, validGenerationId, failedGeneration, deletableGeneration, deletionPrompt, deleteGeneration, deleteGenerations } from '@/nextec/generation-catalog.mjs'
 import { importGeneratedRelease } from '@/nextec/api'
 defineEmits(['create'])
 const rows = ref([]), count = ref(0), page = ref(1), loading = ref(false), error = ref(''), importing = ref('')
@@ -193,19 +193,20 @@ function afterDelete(ids) {
   if (!rows.value.length && page.value > 1) page.value -= 1
   if (!rows.value.length) load()
 }
-async function confirmDelete(message, title = 'Excluir item') {
-  try { await ElMessageBox.confirm(message, title, { confirmButtonText: 'Excluir', cancelButtonText: 'Cancelar', type: 'warning', confirmButtonClass: 'el-button--danger' }); return true }
+async function confirmDelete(message, title = 'Excluir item', confirmButtonText = 'Excluir') {
+  try { await ElMessageBox.confirm(message, title, { confirmButtonText, cancelButtonText: 'Cancelar', type: 'warning', confirmButtonClass: 'el-button--danger' }); return true }
   catch { return false }
 }
 async function removeOne(row) {
-  const name = row.client_name || row.filename || 'este item'
-  if (!await confirmDelete(`Excluir ${name}? Os arquivos gerados também serão apagados.`)) return
+  const prompt = deletionPrompt(row)
+  if (!await confirmDelete(prompt.message, prompt.title, prompt.confirmText)) return
   deleting.value = row.uuid
   try {
-    try { await deleteGeneration(row.uuid) }
+    try { await deleteGeneration(row.uuid, { confirmImported: prompt.confirmImported }) }
     catch (e) {
-      if (e.code !== 'imported') throw e
-      if (!await confirmDelete(e.message, 'Item já enviado para Atualizações')) return
+      // Lista desatualizada: o servidor ainda pede a confirmação extra. Mostra o aviso dele antes de repetir.
+      if (e.code !== 'imported' || prompt.confirmImported) throw e
+      if (!await confirmDelete(e.message, 'Item já enviado para Atualizações', 'Excluir mesmo assim')) return
       await deleteGeneration(row.uuid, { confirmImported: true })
     }
     ElMessage.success('Item excluído.'); afterDelete([row.uuid])
@@ -217,7 +218,8 @@ async function bulk(payload, label) {
   try {
     let result = await deleteGenerations(payload)
     const imported = (result.blocked || []).filter(item => item.code === 'imported')
-    if (imported.length && await confirmDelete(`${imported.length === 1 ? '1 item já foi enviado' : imported.length + ' itens já foram enviados'} para Atualizações. Excluir remove só os arquivos de download. Excluir mesmo assim?`, 'Itens enviados para Atualizações')) {
+    const names = imported.map(item => { const row = rows.value.find(r => r.uuid === item.uuid); return row?.client_name || row?.filename || item.uuid.slice(0, 8) })
+    if (imported.length && await confirmDelete(`${imported.length === 1 ? '1 item já foi enviado' : imported.length + ' itens já foram enviados'} para Atualizações (${names.join(', ')}). Excluir remove só os arquivos de download; a versão preparada no painel não é afetada. Excluir mesmo assim?`, 'Itens enviados para Atualizações', 'Excluir mesmo assim')) {
       const more = await deleteGenerations({ uuids: imported.map(item => item.uuid), confirmImported: true })
       result = { deleted: [...result.deleted, ...more.deleted], blocked: [...(result.blocked || []).filter(item => item.code !== 'imported'), ...more.blocked] }
     }

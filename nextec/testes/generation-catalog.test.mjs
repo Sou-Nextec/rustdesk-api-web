@@ -68,3 +68,18 @@ test('path traversal identifiers are refused before any request', async () => {
   await assert.rejects(deleteGenerations({ uuids: [], fetchImpl: f }), e => e.code === 'invalid')
   assert.equal(calls.length, 0)
 })
+
+import { deleteNeedsConfirmation, deletionPrompt } from '../../src/nextec/generation-catalog.mjs'
+test('imported item is deletable but asks explicit confirmation; in-progress is not deletable', () => {
+  const imported = { uuid, status: 'success', client_name: 'Cobraq', deletable: true, delete_requires_confirmation: true, delete_confirmation_message: 'Já enviado para Atualizações.' }
+  assert.equal(deletableGeneration(imported), true)
+  assert.equal(deleteNeedsConfirmation(imported), true)
+  const prompt = deletionPrompt(imported)
+  assert.equal(prompt.confirmImported, true)
+  assert.match(prompt.message, /Já enviado para Atualizações/)
+  const plain = { uuid, status: 'failure', deletable: true, delete_requires_confirmation: false }
+  assert.equal(deletionPrompt(plain).confirmImported, false)
+  assert.equal(deleteNeedsConfirmation(plain), false)
+  assert.equal(deletableGeneration({ uuid, status: 'in_progress', deletable: false }), false)
+  assert.equal(deleteNeedsConfirmation({ uuid, status: 'in_progress', deletable: false, delete_requires_confirmation: true }), false)
+})
