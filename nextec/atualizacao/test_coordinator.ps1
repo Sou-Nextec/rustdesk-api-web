@@ -50,7 +50,7 @@ function Write-NextecProvisionLog { param($Code,$Root) $script:logs.Add([string]
 function New-NextecProposedToken { return 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' }
 function Invoke-NextecBootstrapPost { param($Panel,$Body) throw 'mock is injected through parameter' }
 function Invoke-NextecAgentRegistration { param($ScriptPath) throw 'mock is injected through parameter' }
-function Invoke-RestMethod { param($Uri,$Method,$ContentType,$Body,$TimeoutSec,$MaximumRedirection,$UserAgent) $script:httpCall=[pscustomobject]@{Uri=$Uri;Method=$Method;MaximumRedirection=$MaximumRedirection;UserAgent=$UserAgent}; return [pscustomobject]@{token='token-ack'} }
+function Invoke-RestMethod { param($Uri,$Method,$ContentType,$Body,$TimeoutSec,$MaximumRedirection,$UserAgent) $script:httpCall=[pscustomobject]@{Uri=$Uri;Method=$Method;MaximumRedirection=$MaximumRedirection;UserAgent=$UserAgent;Body=$Body}; return [pscustomobject]@{token='token-ack'} }
 function Add-Content { param($LiteralPath,$Value,$Encoding) $script:addContentCalls++; $script:loggedValues += [string]$Value }
 
 $script:root = Join-Path ([IO.Path]::GetTempPath()) ('nextec-coordinator-' + [Guid]::NewGuid().ToString('N'))
@@ -548,33 +548,87 @@ try {
   Save-NextecAgentTokenConfig -Path $paths.AgentConfig -Panel $script:NextecPainelFixo -Id '536822159' -Token 'token-antigo-secreto'
   Set-Content -LiteralPath $paths.Journal -Value '{"formato":"antigo"}' -Encoding UTF8
   $script:probeCalls = 0; $script:probeToken = ''
-  Receive-NextecBootstrapAuthorization -Root $script:root -ReadInput { $script:json } -DiscoverId { '536822159' } -SubstituirAgenteAntigo -ProbeToken { param($p,$i,$t) $script:probeCalls++; $script:probeToken = $t; 401 } | Out-Null
+  Receive-NextecBootstrapAuthorization -Root $script:root -ReadInput { $script:json } -DiscoverId { '536822159' } -SubstituirAgenteAntigo -ProbeToken { param($p,$i,$t) $script:probeCalls++; $script:probeToken = $t; [pscustomobject]@{ status = 401; agent_state = '' } } | Out-Null
   Assert ($script:probeCalls -eq 1 -and $script:probeToken -eq 'token-antigo-secreto') 'Refused token was not probed once with the stored token'
-  Assert (-not (Test-Path -LiteralPath $paths.AgentConfig)) 'Refused old agent config stayed in place'
+  # Achado P1 (#93): a credencial antiga so sai do lugar depois de o painel aceitar o token novo.
+  Assert ((Read-NextecAgentTokenConfig -Path $paths.AgentConfig).token -eq 'token-antigo-secreto') 'Old credential was removed before the new token was accepted'
   Assert (-not (Test-Path -LiteralPath $paths.Journal)) 'Old journal stayed in place'
-  $backup = @(Get-ChildItem -LiteralPath $script:root -Filter 'agente-senha.json.antigo-*')
-  Assert ($backup.Count -eq 1 -and (Get-Content -LiteralPath $backup[0].FullName -Raw) -match 'token-antigo-secreto') 'Old token was not preserved in the backup'
   Assert (@(Get-ChildItem -LiteralPath $script:root -Filter 'provisionamento-agente.json.antigo-*').Count -eq 1) 'Old journal was not preserved'
-  Assert (Test-Path -LiteralPath $paths.Input -PathType Leaf) 'Authorization input not written after replacing old agent'
-  Assert ($script:logs -contains 'old_agent_replaced') 'Replacement was not logged'
+  Assert (Test-Path -LiteralPath $paths.Input -PathType Leaf) 'Authorization input not written for the refused old agent'
+  Assert ($script:logs -contains 'old_agent_replace_token_recusado') 'Replacement was not logged'
   $result = Invoke-TestProvision
   Assert ($result -eq 'complete' -and $script:postCalls.Count -eq 1) "Re-enrollment after replacement did not complete: $result"
   $fresh = Read-NextecAgentTokenConfig -Path $paths.AgentConfig
   Assert ($fresh.token -eq $script:postCalls[0].body.proposed_token -and $fresh.token -ne 'token-antigo-secreto') 'New agent config does not carry the new token'
-  Assert (@($script:logs | Where-Object { $_ -match 'token|secret' }).Count -eq 0) 'Secret-looking value in logs'
-  Write-Host 'PASS OldAgent_RefusedTokenIsBackedUpAndReenrolled'
+  Assert ((Get-Content -LiteralPath ($paths.AgentConfig + '.anterior') -Raw) -match 'token-antigo-secreto') 'Old token was not preserved in .anterior after acceptance'
+  Assert (@($script:logs | Where-Object { $_ -match 'token-|secret' }).Count -eq 0) 'Secret-looking value in logs'
+  Write-Host 'PASS OldAgent_RefusedTokenIsReplacedOnlyAfterAcceptance'
+
+  # Recusa do bootstrap (409/401) depois de decidir substituir: a credencial antiga continua valendo.
+  foreach ($refusal in @(409, 401)) {
+    New-CaseRoot
+    $paths = Get-NextecProvisionPaths -Root $script:root
+    Save-NextecAgentTokenConfig -Path $paths.AgentConfig -Panel $script:NextecPainelFixo -Id '536822159' -Token 'token-antigo-secreto'
+    Receive-NextecBootstrapAuthorization -Root $script:root -ReadInput { $script:json } -DiscoverId { '536822159' } -SubstituirAgenteAntigo -ProbeToken { param($p,$i,$t) [pscustomobject]@{ status = 401; agent_state = '' } } | Out-Null
+    $script:refusalStatus = $refusal
+    $postRefused = {
+      param($panel, $body)
+      $script:postCalls.Add([pscustomobject]@{ panel = $panel; body = $body }) | Out-Null
+      $ex = [Net.WebException]::new('http refused')
+      $ex | Add-Member -NotePropertyName Response -NotePropertyValue ([pscustomobject]@{ StatusCode = $script:refusalStatus }) -Force
+      throw $ex
+    }
+    try { Invoke-TestProvision -Post $postRefused | Out-Null } catch { }
+    Assert ((Read-NextecAgentTokenConfig -Path $paths.AgentConfig).token -eq 'token-antigo-secreto') ("Refused bootstrap ($refusal) lost the old credential")
+    Assert (-not (Test-Path -LiteralPath ($paths.AgentConfig + '.anterior'))) ("Refused bootstrap ($refusal) moved the old credential aside")
+    Write-Host ('PASS OldAgent_RefusedBootstrapKeepsCredential_' + $refusal)
+  }
+
+  # Credencial valida (200) e instalacao local quebrada: repara com a credencial existente, sem bootstrap e sem recusar.
+  foreach ($broken in @('TaskMissing', 'ScriptMissing')) {
+    New-CaseRoot
+    $paths = Get-NextecProvisionPaths -Root $script:root
+    Save-NextecAgentTokenConfig -Path $paths.AgentConfig -Panel $script:NextecPainelFixo -Id '536822159' -Token 'token-vivo'
+    if ($broken -eq 'TaskMissing') { Set-Content -LiteralPath $paths.AgentScript -Value '# agente' -Encoding ASCII }
+    $script:taskReadyCalls = 0
+    $out = Receive-NextecBootstrapAuthorization -Root $script:root -ReadInput { $script:json } -DiscoverId { '536822159' } -SubstituirAgenteAntigo `
+      -ProbeToken { param($p,$i,$t) [pscustomobject]@{ status = 200; agent_state = 'parado' } } `
+      -AgentTaskReady { param($r) $script:taskReadyCalls++; $false } `
+      -RegisterAgent { param($path) $script:registerCalls.Add($path) | Out-Null }
+    Assert ([string]$out -match 'reparado') ('Repair did not report success: ' + $broken)
+    Assert ($script:registerCalls.Count -eq 1 -and $script:registerCalls[0] -eq $paths.AgentScript) ('Task was not re-registered: ' + $broken)
+    Assert (-not (Test-Path -LiteralPath $paths.Input)) ('Repair wrote a bootstrap authorization: ' + $broken)
+    Assert ((Read-NextecAgentTokenConfig -Path $paths.AgentConfig).token -eq 'token-vivo') ('Repair changed the credential: ' + $broken)
+    Assert ($script:logs -contains 'agent_repaired' -and -not ($script:logs -contains 'old_agent_kept')) ('Repair not logged: ' + $broken)
+    Write-Host ('PASS OldAgent_ValidCredentialBrokenInstallIsRepaired_' + $broken)
+  }
+
+  # Credencial valida, instalacao boa e painel dizendo "parado": substituicao pelo bootstrap (credencial fica ate aceitar).
+  New-CaseRoot
+  $paths = Get-NextecProvisionPaths -Root $script:root
+  Save-NextecAgentTokenConfig -Path $paths.AgentConfig -Panel $script:NextecPainelFixo -Id '536822159' -Token 'token-parado'
+  Set-Content -LiteralPath $paths.AgentScript -Value '# agente' -Encoding ASCII
+  Receive-NextecBootstrapAuthorization -Root $script:root -ReadInput { $script:json } -DiscoverId { '536822159' } -SubstituirAgenteAntigo `
+    -ProbeToken { param($p,$i,$t) [pscustomobject]@{ status = 200; agent_state = 'parado' } } -AgentTaskReady { param($r) $true } `
+    -RegisterAgent { param($path) throw 'register must not run' } | Out-Null
+  Assert (Test-Path -LiteralPath $paths.Input -PathType Leaf) 'Stalled agent did not get a replacement authorization'
+  Assert ((Read-NextecAgentTokenConfig -Path $paths.AgentConfig).token -eq 'token-parado') 'Stalled agent credential removed before acceptance'
+  Assert ($script:logs -contains 'old_agent_replace_agente_parado') 'Stalled replacement not logged'
+  Write-Host 'PASS OldAgent_StalledInPanelIsReplaced'
 
   foreach ($case in @(
-      @{ Name='Recognized'; Status=200; Expect='already_enrolled'; Log='old_agent_kept' },
-      @{ Name='OtherStatus'; Status=403; Expect='already_enrolled'; Log='old_agent_kept' },
-      @{ Name='Unreachable'; Status=0; Expect='panel_unreachable'; Log='panel_unreachable' }
+      @{ Name='Recognized'; Status=200; State='ativo'; Expect='already_enrolled'; Log='old_agent_kept' },
+      @{ Name='RecognizedOldPanel'; Status=200; State=''; Expect='already_enrolled'; Log='old_agent_kept' },
+      @{ Name='OtherStatus'; Status=403; State=''; Expect='already_enrolled'; Log='old_agent_kept' },
+      @{ Name='Unreachable'; Status=0; State=''; Expect='panel_unreachable'; Log='panel_unreachable' }
     )) {
     New-CaseRoot
     $paths = Get-NextecProvisionPaths -Root $script:root
     Save-NextecAgentTokenConfig -Path $paths.AgentConfig -Panel $script:NextecPainelFixo -Id '536822159' -Token 'token-vivo'
-    $script:probeStatus = $case.Status
+    Set-Content -LiteralPath $paths.AgentScript -Value '# agente' -Encoding ASCII
+    $script:probeAnswer = [pscustomobject]@{ status = $case.Status; agent_state = $case.State }
     $rejected = $false
-    try { Receive-NextecBootstrapAuthorization -Root $script:root -ReadInput { $script:json } -DiscoverId { '536822159' } -SubstituirAgenteAntigo -ProbeToken { param($p,$i,$t) $script:probeStatus } | Out-Null }
+    try { Receive-NextecBootstrapAuthorization -Root $script:root -ReadInput { $script:json } -DiscoverId { '536822159' } -SubstituirAgenteAntigo -ProbeToken { param($p,$i,$t) $script:probeAnswer } -AgentTaskReady { param($r) $true } | Out-Null }
     catch { $rejected = ($_.Exception.Message -eq $case.Expect) }
     Assert $rejected ('Switch replaced or mis-reported an agent the panel does not refuse: ' + $case.Name)
     Assert ((Read-NextecAgentTokenConfig -Path $paths.AgentConfig).token -eq 'token-vivo') 'Recognized agent token changed'
@@ -588,13 +642,15 @@ try {
   Set-Content -LiteralPath $paths.AgentConfig -Value 'isto nao e json {{{' -Encoding UTF8
   $script:probeCalls = 0
   Receive-NextecBootstrapAuthorization -Root $script:root -ReadInput { $script:json } -DiscoverId { '536822159' } -SubstituirAgenteAntigo -ProbeToken { param($p,$i,$t) $script:probeCalls++; 200 } | Out-Null
-  Assert ($script:probeCalls -eq 0 -and -not (Test-Path -LiteralPath $paths.AgentConfig) -and (Test-Path -LiteralPath $paths.Input)) 'Unreadable old config was not replaced without asking the panel'
+  Assert ($script:probeCalls -eq 0 -and (Test-Path -LiteralPath $paths.AgentConfig) -and (Test-Path -LiteralPath $paths.Input)) 'Unreadable old config was not replaced without asking the panel'
+  $result = Invoke-TestProvision
+  Assert ($result -eq 'complete' -and (Read-NextecAgentTokenConfig -Path $paths.AgentConfig).token -eq $script:postCalls[0].body.proposed_token) 'Unreadable old config was not replaced after acceptance'
   New-CaseRoot
   $paths = Get-NextecProvisionPaths -Root $script:root
   Save-NextecAgentTokenConfig -Path $paths.AgentConfig -Panel $script:NextecPainelFixo -Id '999999999' -Token 'token-de-outro-id'
   $script:probeCalls = 0
   Receive-NextecBootstrapAuthorization -Root $script:root -ReadInput { $script:json } -DiscoverId { '536822159' } -SubstituirAgenteAntigo -ProbeToken { param($p,$i,$t) $script:probeCalls++; 200 } | Out-Null
-  Assert ($script:probeCalls -eq 0 -and -not (Test-Path -LiteralPath $paths.AgentConfig) -and (Test-Path -LiteralPath $paths.Input)) 'Config of another ID was not replaced'
+  Assert ($script:probeCalls -eq 0 -and (Test-Path -LiteralPath $paths.AgentConfig) -and (Test-Path -LiteralPath $paths.Input)) 'Config of another ID was not replaced'
   Write-Host 'PASS OldAgent_UnreadableOrOtherIdIsReplaced'
 
   New-CaseRoot
@@ -620,10 +676,11 @@ try {
   $realProbe = (Get-Command Invoke-NextecAgentTokenProbe).ScriptBlock
   $script:httpCall = $null
   $status = & $realProbe -Panel $script:NextecPainelFixo -Id '536822159' -Token 'token-nao-logado'
-  Assert ($status -eq 200 -and $script:httpCall.Uri -eq 'https://painel-remoto.nex.tec.br/api/nextec/agent/sync' -and $script:httpCall.MaximumRedirection -eq 0) 'Probe did not use the fixed HTTPS sync endpoint without redirects'
+  Assert ($status.status -eq 200 -and $script:httpCall.Uri -eq 'https://painel-remoto.nex.tec.br/api/nextec/agent/sync' -and $script:httpCall.MaximumRedirection -eq 0) 'Probe did not use the fixed HTTPS sync endpoint without redirects'
+  Assert (($script:httpCall.Body | ConvertFrom-Json).probe -eq $true) 'Probe did not send probe:true (it would count as a real sync)'
   $script:httpCall = $null
   $status = & $realProbe -Panel 'https://outro-host.exemplo' -Id '536822159' -Token 'token-nao-logado'
-  Assert ($status -eq 0 -and $null -eq $script:httpCall) 'Probe sent the token to a host other than the configured panel'
+  Assert ($status.status -eq 0 -and $null -eq $script:httpCall) 'Probe sent the token to a host other than the configured panel'
   Write-Host 'PASS OldAgent_ProbeUsesOnlyConfiguredPanel'
 
   # Achado P2 (revisao do PR #90): pendente do painel anterior nao bloqueia a inscricao no painel atual.
