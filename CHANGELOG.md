@@ -2,6 +2,16 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.13
+
+- **Corrigido, excluir item já enviado para Atualizações:** o botão **Excluir** estava escondido nesses itens e a confirmação extra nunca aparecia. Agora o botão aparece em todo item que pode ser excluído; nos já enviados, o diálogo mostra o aviso ("já enviado para Atualizações...") e o botão **Excluir mesmo assim**. Em lote, esses itens entram numa única confirmação que lista quais são. Item em andamento continua sem botão. **O rdgen precisa ser atualizado** (`feat/gerador-simplificado`): ele agora separa "pode excluir" de "exige confirmação".
+
+## 2.11.12
+
+- **Itens gerados, excluir o que não serve:** cada item pronto ou com erro tem o botão **Excluir** (confirmação curta). Há seleção múltipla com **Excluir selecionados** e o botão **Limpar falhas**, que remove de uma vez tudo o que falhou, ficou incompleto ou parou sem terminar.
+- **Segurança da exclusão:** itens em andamento não podem ser excluídos; itens que já foram enviados para Atualizações pedem uma confirmação extra (só os arquivos de download saem; a versão preparada no painel não é afetada). O servidor valida o identificador, apaga somente a pasta do próprio item e registra quem excluiu.
+- **Formulário do gerador mais simples:** o essencial (plataforma, nome do instalador e do app, cliente, versão do pacote, ícone) fica à frente, com os valores Nextec já aplicados e explicados em uma linha. Servidor, segurança, aparência, permissões e modelos ficam em **Avançado**, recolhido. Erros aparecem no próprio campo. **O rdgen precisa ser atualizado** (`feat/gerador-simplificado`) para a exclusão e o novo formulário.
+
 ## 2.11.11
 
 - **API com o mesmo painel da interface:** a autorização individual do agente (`/secrets/bootstrap`) deixou de emitir `painel-remoto.nex.tec.br` fixo. O endereço vem de uma fonte única: `NEXTEC_PANEL_URL` (a stack repassa `URL_PAINEL`), e, se vazia, do domínio acessado (`X-Forwarded-Host/Proto` só de proxy local ou privado). Valor inválido gera erro claro em vez de emitir endereço errado.
