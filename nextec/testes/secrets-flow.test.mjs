@@ -8,8 +8,10 @@ import {
 const semCliente = { peer_id: '536822159', alias: 'servidor', group_id: 0, enrolled: false, managed: false }
 const pendente = { peer_id: '111111111', state: 'pending', group_id: 0, enrolled: true }
 const semAgente = { peer_id: '222222222', group_id: 7, enrolled: false, managed: false }
-const semRegra = { peer_id: '333333333', group_id: 7, enrolled: true, managed: false }
-const pronta = { peer_id: '444444444', group_id: 7, enrolled: true, managed: true, has_password: true }
+const AGORA = Date.now() / 1000
+const semRegra = { peer_id: '333333333', group_id: 7, enrolled: true, managed: false, last_sync_at: AGORA - 20 }
+const pronta = { peer_id: '444444444', group_id: 7, enrolled: true, managed: true, has_password: true, last_sync_at: AGORA - 20 }
+const parada = { peer_id: '555555555', group_id: 7, enrolled: true, managed: true, has_password: true, last_seen_at: AGORA - 5, last_sync_at: 0 }
 
 test('cada estado cai na etapa certa', () => {
   assert.equal(machineStage(semCliente), 'client')
@@ -19,7 +21,9 @@ test('cada estado cai na etapa certa', () => {
   assert.equal(machineStage(semRegra), 'rule')
   assert.equal(machineStage(pronta), 'ready')
   assert.equal(machineStage(), 'client')
-  assert.equal(machineStage({ group_id: '7', enrolled: true, managed: true }), 'ready', 'group_id como texto')
+  assert.equal(machineStage({ group_id: '7', enrolled: true, managed: true, last_sync_at: AGORA }), 'ready', 'group_id como texto')
+  assert.equal(machineStage(parada), 'agent', 'cadastro sem consulta real não é pronto')
+  assert.equal(machineStage({ ...pronta, last_sync_at: AGORA - 3600 }), 'agent', 'consulta antiga volta à etapa 2')
   assert.equal(machineStage({ group_id: null }), 'client')
 })
 
@@ -74,7 +78,14 @@ test('Autorização individual lista todas, sem cliente primeiro e com selo', ()
   const ok = o.find(x => x.peer_id === '222222222')
   assert.equal(ok.canAuthorize, true)
   assert.equal(ok.badge, '')
-  assert.equal(o.find(x => x.peer_id === '444444444').badge, 'agente cadastrado')
+  const ativo = o.find(x => x.peer_id === '444444444')
+  assert.equal(ativo.badge, 'agente ativo')
+  assert.equal(ativo.canAuthorize, false, 'agente ativo não precisa de novo arquivo')
+  assert.match(ativo.notice, /ativo e consultando o painel/)
+  const par = agentOptions([parada])[0]
+  assert.equal(par.badge, 'agente parado')
+  assert.equal(par.canAuthorize, true)
+  assert.equal(par.agentStalled, true)
   assert.deepEqual(agentOptions([]), [])
   assert.match(NEEDS_CLIENT_NOTICE, /Escolha o cliente/)
   assert.match(AGENT_EMPTY_NOTICE, /aguarde 1 minuto/)
@@ -108,13 +119,14 @@ test('transições: depois de vincular o cliente a máquina segue para a próxim
   assert.equal(defaultAssignRule(true), 'group')
   assert.equal(defaultAssignRule(false), 'group-enable')
   assert.equal(afterClientStep({ ...semCliente, group_id: 7 }).action, 'install-agent')
-  assert.equal(afterClientStep({ ...semAgente, enrolled: true }).action, 'enable-rule')
+  assert.equal(afterClientStep({ ...semAgente, enrolled: true, last_sync_at: AGORA }).action, 'enable-rule')
+  assert.equal(afterClientStep({ ...semAgente, enrolled: true, last_sync_at: 0 }).action, 'reinstall-agent')
   assert.equal(afterClientStep({ ...semRegra, managed: true }).action, 'connect')
   assert.equal(afterClientStep(semCliente).action, 'stay')
   let d = { ...semCliente }
   const seq = [machineStage(d)]
   d = { ...d, group_id: 7 }; seq.push(machineStage(d))
-  d = { ...d, enrolled: true }; seq.push(machineStage(d))
+  d = { ...d, enrolled: true, last_sync_at: AGORA }; seq.push(machineStage(d))
   d = { ...d, managed: true }; seq.push(machineStage(d))
   assert.deepEqual(seq, ['client', 'agent', 'rule', 'ready'])
 })

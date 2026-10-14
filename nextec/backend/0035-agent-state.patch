@@ -1,0 +1,864 @@
+Estado do agente derivado de contato real (last_sync_at), ultimo erro do agente e sondagem do token
+
+Nextec 0035: colunas aditivas last_sync_at (so a consulta /agent/sync autenticada preenche), last_error e
+last_error_at (codigo estavel enviado pelo agente no sync; sync sem erro ou troca confirmada limpam),
+agent_state (ativo, parado, pendente_aprovacao, sem_agente) na lista do cofre e autorizacao individual
+permitida para agente parado (rotaciona o token, auditoria agent_replaced_stale). Agente ativo continua recusado.
+Sondagem da reinstalacao: /agent/sync com probe:true so confere o token e devolve agent_state; nao grava
+last_sync_at nem last_seen_at, nao limpa last_error e fica auditada (agent_probe).
+
+diff --git a/http/controller/admin/nextec_bootstrap.go b/http/controller/admin/nextec_bootstrap.go
+index 396cc02..b08a30b 100644
+--- a/http/controller/admin/nextec_bootstrap.go
++++ b/http/controller/admin/nextec_bootstrap.go
+@@ -2,6 +2,7 @@ package admin
+ 
+ import (
+ 	"encoding/json"
++	"errors"
+ 	"net/http"
+ 	"strconv"
+ 	"strings"
+@@ -43,6 +44,11 @@ func (n *NextecBootstrap) Issue(c *gin.Context) {
+ 	}
+ 	user := service.AllService.UserService.CurUser(c)
+ 	token, err := service.NextecAgentBootstrapIssue(form.ID, clientID, nextecIP(c), user.Id)
++	if errors.Is(err, service.ErrNextecAlreadyEnroll) {
++		// Agente ativo (consultando o painel) ou aguardando aprovação: não há o que reinstalar.
++		c.JSON(http.StatusConflict, gin.H{"error": "agent active"})
++		return
++	}
+ 	if err != nil {
+ 		c.JSON(http.StatusConflict, gin.H{"error": "bootstrap denied"})
+ 		return
+diff --git a/http/controller/api/nextec_agent.go b/http/controller/api/nextec_agent.go
+index db33828..245455f 100644
+--- a/http/controller/api/nextec_agent.go
++++ b/http/controller/api/nextec_agent.go
+@@ -19,6 +19,11 @@ type nextecAgentForm struct {
+ 	Capabilities   []string `json:"capabilities"`
+ 	OperationID    string   `json:"operation_id"`
+ 	PendingVersion int      `json:"pending_version"`
++	// LastError: código estável da última tentativa do agente (opcional, só no sync).
++	LastError string `json:"last_error"`
++	// Probe: só confere se o token ainda vale (reinstalação). Não conta como consulta: não grava last_sync_at nem
++	// last_seen_at, não limpa last_error e não entrega operação.
++	Probe bool `json:"probe"`
+ }
+ 
+ func agentIP(c *gin.Context) string {
+@@ -64,14 +69,23 @@ func (a *NextecAgent) Enroll(c *gin.Context) {
+ 	c.JSON(http.StatusOK, gin.H{"token": token})
+ }
+ 
+-// Sync POST /api/nextec/agent/sync {id, token}
++// Sync POST /api/nextec/agent/sync {id, token}; com probe:true só confere o token (sondagem da reinstalação)
+ func (a *NextecAgent) Sync(c *gin.Context) {
+ 	f := &nextecAgentForm{}
+ 	if err := c.ShouldBindJSON(f); err != nil {
+ 		c.JSON(http.StatusBadRequest, gin.H{"error": "bad request"})
+ 		return
+ 	}
+-	s, err := service.NextecAgentSyncStateWithCapabilities(agentIP(c), f.Id, f.Token, f.Capabilities)
++	if f.Probe {
++		p, err := service.NextecAgentProbe(agentIP(c), f.Id, f.Token)
++		if err != nil {
++			agentFail(c, err)
++			return
++		}
++		c.JSON(http.StatusOK, p)
++		return
++	}
++	s, err := service.NextecAgentSyncReport(agentIP(c), f.Id, f.Token, f.Capabilities, f.LastError)
+ 	if err != nil {
+ 		agentFail(c, err)
+ 		return
+diff --git a/http/controller/api/nextec_agent_probe_test.go b/http/controller/api/nextec_agent_probe_test.go
+new file mode 100644
+index 0000000..7963a89
+--- /dev/null
++++ b/http/controller/api/nextec_agent_probe_test.go
+@@ -0,0 +1,83 @@
++package api
++
++import (
++	"bytes"
++	"crypto/sha256"
++	"encoding/base64"
++	"encoding/hex"
++	"encoding/json"
++	"net/http/httptest"
++	"os"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++	"gorm.io/driver/sqlite"
++	"gorm.io/gorm"
++	"gorm.io/gorm/logger"
++)
++
++// POST /agent/sync com probe:true: 200 com agent_state, sem gravar last_sync_at nem last_seen_at; token errado é 401.
++func TestAgentSyncProbeFlagDoesNotRecordContact(t *testing.T) {
++	gin.SetMode(gin.TestMode)
++	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := db.AutoMigrate(&model.Peer{}, &model.DeviceGroup{}, &model.NextecSecretPolicy{}, &model.NextecDeviceSecret{}, &model.NextecSecretAudit{}, &model.NextecAgentBootstrap{}, &model.NextecEnrollBlock{}); err != nil {
++		t.Fatal(err)
++	}
++	sqlDB, _ := db.DB()
++	sqlDB.SetMaxOpenConns(1)
++	oldDB, oldService := service.DB, service.AllService
++	service.DB, service.AllService = db, &service.Service{}
++	t.Setenv("NEXTEC_VAULT_KEY", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x53}, 32)))
++	wd, _ := os.Getwd()
++	if err := os.Chdir(t.TempDir()); err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { _ = os.Chdir(wd); service.DB, service.AllService = oldDB, oldService; sqlDB.Close() })
++
++	token := "token-http-probe"
++	sum := sha256.Sum256([]byte(token))
++	stale := time.Now().Unix() - 7200
++	if err := db.Create(&model.NextecDeviceSecret{PeerId: "838383838", TokenHash: hex.EncodeToString(sum[:]), LastSeenAt: stale, LastSyncAt: stale, EnrolledVia: "legacy"}).Error; err != nil {
++		t.Fatal(err)
++	}
++	r := gin.New()
++	r.POST("/sync", (&NextecAgent{}).Sync)
++	call := func(body map[string]interface{}) (int, map[string]interface{}) {
++		raw, _ := json.Marshal(body)
++		req := httptest.NewRequest("POST", "/sync", strings.NewReader(string(raw)))
++		req.Header.Set("Content-Type", "application/json")
++		w := httptest.NewRecorder()
++		r.ServeHTTP(w, req)
++		out := map[string]interface{}{}
++		_ = json.Unmarshal(w.Body.Bytes(), &out)
++		return w.Code, out
++	}
++	code, out := call(map[string]interface{}{"id": "838383838", "token": token, "probe": true})
++	if code != 200 || out["probe"] != true || out["agent_state"] != "parado" {
++		t.Fatalf("sondagem: %d %v", code, out)
++	}
++	row := &model.NextecDeviceSecret{}
++	db.Where("peer_id = ?", "838383838").First(row)
++	if row.LastSyncAt != stale || row.LastSeenAt != stale {
++		t.Fatalf("a sondagem gravou contato: %#v", row)
++	}
++	if code, _ := call(map[string]interface{}{"id": "838383838", "token": "outro", "probe": true}); code != 401 {
++		t.Fatalf("token errado na sondagem: %d", code)
++	}
++	// o sync de verdade continua gravando
++	if code, _ := call(map[string]interface{}{"id": "838383838", "token": token, "capabilities": []string{"transaction_v1"}}); code != 200 {
++		t.Fatalf("sync: %d", code)
++	}
++	row = &model.NextecDeviceSecret{}
++	db.Where("peer_id = ?", "838383838").First(row)
++	if row.LastSyncAt <= stale {
++		t.Fatalf("sync real não gravou last_sync_at: %#v", row)
++	}
++}
+diff --git a/model/nextec_secret.go b/model/nextec_secret.go
+index 4defe92..454be56 100644
+--- a/model/nextec_secret.go
++++ b/model/nextec_secret.go
+@@ -27,6 +27,13 @@ type NextecDeviceSecret struct {
+ 	NextRotationAt   int64  `gorm:"not null;default:0" json:"next_rotation_at"`
+ 	ForceRotate      bool   `gorm:"not null;default:false" json:"force_rotate"`
+ 	LastSeenAt       int64  `gorm:"not null;default:0" json:"last_seen_at"`
++	// LastSyncAt é a última consulta REAL do agente (/agent/sync autenticada). Cadastro e inscrição não preenchem:
++	// LastSeenAt marca qualquer escrita, LastSyncAt só prova que o agente está vivo. Linhas anteriores ficam em 0.
++	LastSyncAt int64 `gorm:"not null;default:0" json:"last_sync_at"`
++	// LastError é o código estável da última tentativa do agente (ex.: client_settings_locked), enviado no sync.
++	// Vazio quando a última rodada não falhou; a troca confirmada também limpa.
++	LastError   string `gorm:"not null;default:''" json:"last_error"`
++	LastErrorAt int64  `gorm:"not null;default:0" json:"last_error_at"`
+ 	// Inscrição global: false por padrão, então as linhas anteriores continuam aprovadas.
+ 	AwaitingApproval bool   `gorm:"not null;default:false;index" json:"awaiting_approval"`
+ 	EnrolledVia      string `gorm:"not null;default:''" json:"enrolled_via"` // self | bootstrap | legacy ("" = linha anterior, tratada como legacy)
+diff --git a/service/nextec_agent_error_test.go b/service/nextec_agent_error_test.go
+new file mode 100644
+index 0000000..1e63fe9
+--- /dev/null
++++ b/service/nextec_agent_error_test.go
+@@ -0,0 +1,51 @@
++package service
++
++import (
++	"testing"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++)
++
++func TestAgentSyncLastErrorIsStoredListedAndClearedOnSuccess(t *testing.T) {
++	db, token := stateEnrolled(t)
++	if err := db.Create(&model.NextecSecretPolicy{Kind: "peer", Ref: enrollPeer, Enabled: true, IntervalMinutes: 180}).Error; err != nil {
++		t.Fatal(err)
++	}
++	// rodada que falhou: o agente manda o código estável
++	s, err := NextecAgentSyncReport(stateSyncIP, enrollPeer, token, stateCaps, "client_settings_locked")
++	if err != nil || s.Operation == nil {
++		t.Fatalf("sync com erro: %#v %v", s, err)
++	}
++	d := stateDevice(t)
++	if d.LastError != "client_settings_locked" || d.LastErrorAt == 0 || d.AgentState != NextecAgentStateActive {
++		t.Fatalf("erro não aparece na lista: %#v", d)
++	}
++	// texto livre do cliente nunca é gravado
++	if _, err := NextecAgentSyncReport(stateSyncIP, enrollPeer, token, stateCaps, "Settings are disabled!"); err != nil {
++		t.Fatal(err)
++	}
++	if got := stateDevice(t).LastError; got != "unknown_error" {
++		t.Fatalf("código fora do formato: %q", got)
++	}
++	// rodada sem erro limpa
++	if _, err := NextecAgentSyncReport(stateSyncIP, enrollPeer, token, stateCaps, ""); err != nil {
++		t.Fatal(err)
++	}
++	if d := stateDevice(t); d.LastError != "" || d.LastErrorAt != 0 {
++		t.Fatalf("sync sem erro não limpou: %#v", d)
++	}
++	// troca confirmada também limpa
++	s, err = NextecAgentSyncReport(stateSyncIP, enrollPeer, token, stateCaps, "password_apply_failed")
++	if err != nil || s.Operation == nil {
++		t.Fatalf("sync: %#v %v", s, err)
++	}
++	if err := NextecAgentProposeTransaction(stateSyncIP, enrollPeer, token, s.Operation.OperationID, s.Operation.PendingVersion, "SenhaNova1234567890ab"); err != nil {
++		t.Fatalf("propose: %v", err)
++	}
++	if err := NextecAgentConfirmTransaction(stateSyncIP, enrollPeer, token, s.Operation.OperationID, s.Operation.PendingVersion); err != nil {
++		t.Fatalf("confirm: %v", err)
++	}
++	if d := stateDevice(t); d.LastError != "" || !d.HasPassword {
++		t.Fatalf("troca confirmada não limpou o erro: %#v", d)
++	}
++}
+diff --git a/service/nextec_agent_probe_test.go b/service/nextec_agent_probe_test.go
+new file mode 100644
+index 0000000..3002351
+--- /dev/null
++++ b/service/nextec_agent_probe_test.go
+@@ -0,0 +1,71 @@
++package service
++
++import (
++	"errors"
++	"testing"
++	"time"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++)
++
++// A sondagem da reinstalação confere o token sem contar como consulta: last_sync_at e last_seen_at não mudam, o
++// agente parado continua parado e o bootstrap de substituição continua aceito depois dela.
++func TestAgentProbeDoesNotCountAsSyncAndBootstrapStillReplacesStalledAgent(t *testing.T) {
++	db, oldToken := stateEnrolled(t)
++	stale := time.Now().Unix() - NextecAgentStaleAfterSeconds() - 600
++	if err := db.Model(&model.NextecDeviceSecret{}).Where("peer_id = ?", enrollPeer).
++		Updates(map[string]interface{}{"last_sync_at": stale, "last_seen_at": stale, "last_error": "client_settings_locked", "last_error_at": stale}).Error; err != nil {
++		t.Fatal(err)
++	}
++	p, err := NextecAgentProbe(stateSyncIP, enrollPeer, oldToken)
++	if err != nil || !p.Probe || p.AgentState != NextecAgentStateStalled || p.LastSyncAt != stale {
++		t.Fatalf("sondagem: %#v %v", p, err)
++	}
++	var row model.NextecDeviceSecret
++	if err := db.Where("peer_id = ?", enrollPeer).First(&row).Error; err != nil {
++		t.Fatal(err)
++	}
++	if row.LastSyncAt != stale || row.LastSeenAt != stale || row.LastError != "client_settings_locked" {
++		t.Fatalf("a sondagem gravou contato ou limpou o erro: %#v", row)
++	}
++	if got := stateDevice(t).AgentState; got != NextecAgentStateStalled {
++		t.Fatalf("a sondagem fez o agente parecer ativo: %s", got)
++	}
++	var audits []model.NextecSecretAudit
++	db.Where("peer_id = ? AND action = ?", enrollPeer, "agent_probe").Find(&audits)
++	if len(audits) != 1 || audits[0].Detail != "agent_state="+NextecAgentStateStalled {
++		t.Fatalf("auditoria agent_probe: %#v", audits)
++	}
++	// bootstrap de substituição continua aceito depois da sondagem
++	code, err := NextecAgentBootstrapIssue(enrollPeer, "7", "10.50.0.9", 44)
++	if err != nil {
++		t.Fatalf("agente parado recusou autorização depois da sondagem: %v", err)
++	}
++	newToken, err := NextecAgentBootstrapConsume("10.50.0.3", enrollPeer, enrollUUID, code)
++	if err != nil || newToken == "" || newToken == oldToken {
++		t.Fatalf("substituição depois da sondagem: %q %v", newToken, err)
++	}
++	// token antigo agora é recusado também na sondagem (401 no instalador)
++	if _, err := NextecAgentProbe(stateSyncIP, enrollPeer, oldToken); !errors.Is(err, ErrNextecBadAgentAuth) {
++		t.Fatalf("sondagem com token aposentado: %v", err)
++	}
++}
++
++// Agente ativo: a sondagem responde "ativo" e não renova a janela.
++func TestAgentProbeReportsActiveWithoutRenewingIt(t *testing.T) {
++	db, token := stateEnrolled(t)
++	if _, err := NextecAgentSyncStateWithCapabilities(stateSyncIP, enrollPeer, token, stateCaps); err != nil {
++		t.Fatal(err)
++	}
++	old := time.Now().Unix() - 120
++	if err := db.Model(&model.NextecDeviceSecret{}).Where("peer_id = ?", enrollPeer).Update("last_sync_at", old).Error; err != nil {
++		t.Fatal(err)
++	}
++	p, err := NextecAgentProbe(stateSyncIP, enrollPeer, token)
++	if err != nil || p.AgentState != NextecAgentStateActive {
++		t.Fatalf("sondagem de agente ativo: %#v %v", p, err)
++	}
++	if d := stateDevice(t); d.LastSyncAt != old {
++		t.Fatalf("a sondagem renovou last_sync_at: %d", d.LastSyncAt)
++	}
++}
+diff --git a/service/nextec_agent_state.go b/service/nextec_agent_state.go
+new file mode 100644
+index 0000000..a95e329
+--- /dev/null
++++ b/service/nextec_agent_state.go
+@@ -0,0 +1,85 @@
++package service
++
++import (
++	"regexp"
++	"strings"
++	"time"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++)
++
++// Estado do agente derivado de CONTATO REAL (consulta /agent/sync autenticada), nunca do cadastro.
++// O agente consulta o painel a cada NextecAgentSyncCycle; passados NextecAgentActiveCycles ciclos sem consulta
++// ele é tratado como parado. Quem decide é só o servidor: o painel web repete a regra apenas para o relógio da tela.
++const (
++	NextecAgentSyncCycle    = 5 * time.Minute
++	NextecAgentActiveCycles = 3
++
++	NextecAgentStateActive          = "ativo"
++	NextecAgentStateStalled         = "parado"
++	NextecAgentStatePendingApproval = "pendente_aprovacao"
++	NextecAgentStateNone            = "sem_agente"
++)
++
++var nextecAgentErrorPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,47}$`)
++
++// NextecAgentErrorCode normaliza o código de erro que o agente manda no sync. Vazio = última tentativa sem falha.
++// Fora do formato vira "unknown_error" (nunca grava texto livre do cliente).
++func NextecAgentErrorCode(raw string) string {
++	raw = strings.TrimSpace(raw)
++	if raw == "" {
++		return ""
++	}
++	if !nextecAgentErrorPattern.MatchString(raw) {
++		return "unknown_error"
++	}
++	return raw
++}
++
++// NextecAgentStaleAfterSeconds é a janela (em segundos) em que uma consulta ainda conta como "ativo".
++func NextecAgentStaleAfterSeconds() int64 {
++	return int64(NextecAgentSyncCycle/time.Second) * NextecAgentActiveCycles
++}
++
++// NextecAgentStateAt classifica a linha do cofre no instante `now` (segundos).
++//   - sem_agente: sem linha ou sem token (nunca cadastrou, ou o admin removeu);
++//   - pendente_aprovacao: inscrita sozinha, aguardando o admin atribuir a um cliente;
++//   - ativo: consulta real (last_sync_at) há menos de 3 ciclos;
++//   - parado: cadastrado, mas sem consulta há mais de 3 ciclos ou sem nenhuma consulta depois do cadastro.
++func NextecAgentStateAt(d *model.NextecDeviceSecret, now int64) string {
++	if d == nil || d.TokenHash == "" {
++		return NextecAgentStateNone
++	}
++	if d.AwaitingApproval {
++		return NextecAgentStatePendingApproval
++	}
++	if d.LastSyncAt > 0 && now-d.LastSyncAt < NextecAgentStaleAfterSeconds() {
++		return NextecAgentStateActive
++	}
++	return NextecAgentStateStalled
++}
++
++// NextecAgentProbeResult é a resposta da sondagem do token (probe:true no /agent/sync).
++type NextecAgentProbeResult struct {
++	Probe      bool   `json:"probe"`
++	AgentState string `json:"agent_state"`
++	LastSyncAt int64  `json:"last_sync_at"`
++}
++
++// NextecAgentProbe confere o token do agente SEM contar como consulta: não grava last_sync_at, last_seen_at nem
++// last_error e não entrega operação. É o que o instalador usa na reinstalação para decidir entre reparar a instalação
++// local (token válido) e pedir a substituição (token recusado ou agente parado); por isso a sondagem nunca pode tornar
++// o agente "ativo" e fazer o painel recusar o bootstrap. Fica auditada (agent_probe, sem segredos).
++func NextecAgentProbe(ip, peerID, token string) (*NextecAgentProbeResult, error) {
++	d, err := agentAuth(ip, peerID, token)
++	if err != nil {
++		return nil, err
++	}
++	now := time.Now().Unix()
++	state := NextecAgentStateAt(d, now)
++	if err := DB.Create(&model.NextecSecretAudit{At: now, PeerId: peerID, Action: "agent_probe",
++		Ip: nextecBootstrapAuditIP(ip), Detail: "agent_state=" + state}).Error; err != nil {
++		return nil, err
++	}
++	return &NextecAgentProbeResult{Probe: true, AgentState: state, LastSyncAt: d.LastSyncAt}, nil
++}
+diff --git a/service/nextec_agent_state_test.go b/service/nextec_agent_state_test.go
+new file mode 100644
+index 0000000..e2e2a21
+--- /dev/null
++++ b/service/nextec_agent_state_test.go
+@@ -0,0 +1,251 @@
++package service
++
++import (
++	"errors"
++	"testing"
++	"time"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"gorm.io/gorm"
++)
++
++const stateSyncIP = "10.50.0.1"
++
++var stateCaps = []string{"transaction_v1"}
++
++// stateEnrolled cria cliente, máquina e cadastra o agente por autorização individual (o fluxo do .cmd).
++func stateEnrolled(t *testing.T) (*gorm.DB, string) {
++	t.Helper()
++	db := enrollSetup(t) // já cria os clientes 7 e 8 e a máquina enrollPeer, ainda sem cliente
++	if err := db.Model(&model.Peer{}).Where("id = ?", enrollPeer).Update("group_id", 7).Error; err != nil {
++		t.Fatal(err)
++	}
++	return db, stateBootstrap(t)
++}
++
++func stateBootstrap(t *testing.T) string {
++	t.Helper()
++	code, err := NextecAgentBootstrapIssue(enrollPeer, "7", "10.50.0.9", 44)
++	if err != nil {
++		t.Fatalf("issue: %v", err)
++	}
++	token, err := NextecAgentBootstrapConsume("10.50.0.2", enrollPeer, enrollUUID, code)
++	if err != nil {
++		t.Fatalf("consume: %v", err)
++	}
++	return token
++}
++
++func stateDevice(t *testing.T) *NextecSecretDevice {
++	t.Helper()
++	for _, d := range NextecSecretDevices() {
++		if d.PeerId == enrollPeer {
++			return d
++		}
++	}
++	t.Fatal("máquina não aparece na lista")
++	return nil
++}
++
++func setLastSync(t *testing.T, db *gorm.DB, at int64) {
++	t.Helper()
++	if err := db.Model(&model.NextecDeviceSecret{}).Where("peer_id = ?", enrollPeer).Update("last_sync_at", at).Error; err != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestAgentStateRegistrationWithoutSyncIsStalled(t *testing.T) {
++	_, _ = stateEnrolled(t)
++	d := stateDevice(t)
++	if !d.Enrolled || d.AgentState != NextecAgentStateStalled {
++		t.Fatalf("cadastro sem consulta tem de ser parado, veio %q (enrolled=%v)", d.AgentState, d.Enrolled)
++	}
++	if d.LastSyncAt != 0 || d.LastSeenAt == 0 {
++		t.Fatalf("o cadastro grava last_seen_at e nunca last_sync_at: seen=%d sync=%d", d.LastSeenAt, d.LastSyncAt)
++	}
++}
++
++func TestAgentStateRealSyncMakesItActiveAndOldSyncStalls(t *testing.T) {
++	db, token := stateEnrolled(t)
++	if _, err := NextecAgentSyncStateWithCapabilities(stateSyncIP, enrollPeer, token, stateCaps); err != nil {
++		t.Fatal(err)
++	}
++	d := stateDevice(t)
++	if d.AgentState != NextecAgentStateActive || d.LastSyncAt == 0 {
++		t.Fatalf("depois do sync real deveria ser ativo: %#v", d)
++	}
++	now := time.Now().Unix()
++	setLastSync(t, db, now-NextecAgentStaleAfterSeconds()+30)
++	if got := stateDevice(t).AgentState; got != NextecAgentStateActive {
++		t.Fatalf("dentro dos 3 ciclos: %s", got)
++	}
++	setLastSync(t, db, now-NextecAgentStaleAfterSeconds()-30)
++	if got := stateDevice(t).AgentState; got != NextecAgentStateStalled {
++		t.Fatalf("sync antigo tem de ser parado: %s", got)
++	}
++	// last_seen_at novo (qualquer escrita) não faz parecer ativo: só a consulta real conta
++	if err := db.Model(&model.NextecDeviceSecret{}).Where("peer_id = ?", enrollPeer).Update("last_seen_at", now).Error; err != nil {
++		t.Fatal(err)
++	}
++	if got := stateDevice(t).AgentState; got != NextecAgentStateStalled {
++		t.Fatalf("last_seen_at não pode ativar: %s", got)
++	}
++}
++
++func TestAgentStateOtherStates(t *testing.T) {
++	now := time.Now().Unix()
++	cases := []struct {
++		name string
++		d    *model.NextecDeviceSecret
++		want string
++	}{
++		{"sem linha", nil, NextecAgentStateNone},
++		{"sem token (removido)", &model.NextecDeviceSecret{PeerId: "x"}, NextecAgentStateNone},
++		{"pendente", &model.NextecDeviceSecret{TokenHash: "h", AwaitingApproval: true, LastSyncAt: now}, NextecAgentStatePendingApproval},
++		{"linha antiga", &model.NextecDeviceSecret{TokenHash: "h", LastSeenAt: now}, NextecAgentStateStalled},
++		{"ativo", &model.NextecDeviceSecret{TokenHash: "h", LastSyncAt: now - 60}, NextecAgentStateActive},
++		{"parado", &model.NextecDeviceSecret{TokenHash: "h", LastSyncAt: now - 3600}, NextecAgentStateStalled},
++	}
++	for _, c := range cases {
++		if got := NextecAgentStateAt(c.d, now); got != c.want {
++			t.Errorf("%s: %s, esperado %s", c.name, got, c.want)
++		}
++	}
++}
++
++func TestBootstrapOverStalledAgentRotatesTokenAndAudits(t *testing.T) {
++	db, oldToken := stateEnrolled(t)
++	// guarda uma senha do cofre: a reinstalação não pode perdê-la
++	enc, err := vaultEncrypt("senha-da-maquina")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := db.Model(&model.NextecDeviceSecret{}).Where("peer_id = ?", enrollPeer).
++		Updates(map[string]interface{}{"active_enc": enc, "version": 3}).Error; err != nil {
++		t.Fatal(err)
++	}
++	code, err := NextecAgentBootstrapIssue(enrollPeer, "7", "10.50.0.9", 44)
++	if err != nil {
++		t.Fatalf("agente parado deveria aceitar nova autorização: %v", err)
++	}
++	newToken, err := NextecAgentBootstrapConsume("10.50.0.3", enrollPeer, enrollUUID, code)
++	if err != nil || newToken == "" || newToken == oldToken {
++		t.Fatalf("substituição: %q %v", newToken, err)
++	}
++	if _, err := NextecAgentSyncStateWithCapabilities(stateSyncIP, enrollPeer, oldToken, stateCaps); !errors.Is(err, ErrNextecBadAgentAuth) {
++		t.Fatalf("token antigo ainda vale: %v", err)
++	}
++	if d := stateDevice(t); d.AgentState != NextecAgentStateStalled || d.LastSyncAt != 0 || !d.HasPassword || d.Version != 3 {
++		t.Fatalf("depois de substituir: parado até o primeiro sync real, com a senha guardada: %#v", d)
++	}
++	if _, err := NextecAgentSyncStateWithCapabilities(stateSyncIP, enrollPeer, newToken, stateCaps); err != nil {
++		t.Fatal(err)
++	}
++	if got := stateDevice(t).AgentState; got != NextecAgentStateActive {
++		t.Fatalf("depois do sync do agente novo: %s", got)
++	}
++	var n int64
++	db.Model(&model.NextecSecretAudit{}).Where("peer_id = ? AND action = ?", enrollPeer, "agent_replaced_stale").Count(&n)
++	if n != 1 {
++		t.Fatalf("auditoria agent_replaced_stale: %d", n)
++	}
++	var audits []model.NextecSecretAudit
++	db.Find(&audits)
++	for _, a := range audits {
++		if a.Detail != "" && (a.Detail == newToken || a.Detail == oldToken || a.Detail == code) {
++			t.Fatal("segredo na auditoria")
++		}
++	}
++}
++
++func TestBootstrapOverActiveAgentIsRefusedAndNotBurned(t *testing.T) {
++	db, token := stateEnrolled(t)
++	// código emitido enquanto estava parado...
++	code, err := NextecAgentBootstrapIssue(enrollPeer, "7", "10.50.0.9", 44)
++	if err != nil {
++		t.Fatal(err)
++	}
++	// ...e o agente (na verdade vivo) consulta antes de o .cmd usá-lo
++	if _, err := NextecAgentSyncStateWithCapabilities(stateSyncIP, enrollPeer, token, stateCaps); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := NextecAgentBootstrapConsume("10.50.0.4", enrollPeer, enrollUUID, code); !errors.Is(err, ErrNextecAlreadyEnroll) {
++		t.Fatalf("agente ativo foi substituído: %v", err)
++	}
++	var boot model.NextecAgentBootstrap
++	if err := db.Where("token_hash = ?", sha256Hex(code)).First(&boot).Error; err != nil || boot.UsedAt != 0 {
++		t.Fatalf("autorização gasta numa recusa: %#v %v", boot, err)
++	}
++	if _, err := NextecAgentBootstrapIssue(enrollPeer, "7", "10.50.0.9", 44); !errors.Is(err, ErrNextecAlreadyEnroll) {
++		t.Fatalf("emitir sobre agente ativo: %v", err)
++	}
++	// o token ativo continua valendo
++	if _, err := NextecAgentSyncStateWithCapabilities(stateSyncIP, enrollPeer, token, stateCaps); err != nil {
++		t.Fatalf("token ativo foi trocado: %v", err)
++	}
++}
++
++func TestBootstrapKeepsRefusingPendingApprovalAndIdentityChecks(t *testing.T) {
++	db, _ := stateEnrolled(t)
++	if err := db.Model(&model.NextecDeviceSecret{}).Where("peer_id = ?", enrollPeer).Update("awaiting_approval", true).Error; err != nil {
++		t.Fatal(err)
++	}
++	if got := stateDevice(t).AgentState; got != NextecAgentStatePendingApproval {
++		t.Fatalf("pendente: %s", got)
++	}
++	if _, err := NextecAgentBootstrapIssue(enrollPeer, "7", "10.50.0.9", 44); !errors.Is(err, ErrNextecAlreadyEnroll) {
++		t.Fatalf("pendente aceitou autorização: %v", err)
++	}
++	if err := db.Model(&model.NextecDeviceSecret{}).Where("peer_id = ?", enrollPeer).Update("awaiting_approval", false).Error; err != nil {
++		t.Fatal(err)
++	}
++	code, err := NextecAgentBootstrapIssue(enrollPeer, "7", "10.50.0.9", 44)
++	if err != nil {
++		t.Fatal(err)
++	}
++	// uuid errado continua negado mesmo com o agente parado
++	if _, err := NextecAgentBootstrapConsume("10.50.0.5", enrollPeer, "outro-uuid", code); !errors.Is(err, ErrNextecBootstrapDenied) {
++		t.Fatalf("uuid diferente aceito: %v", err)
++	}
++	// e uma máquina sem agente nenhum aparece como sem_agente
++	if err := db.Where("peer_id = ?", enrollPeer).Delete(&model.NextecDeviceSecret{}).Error; err != nil {
++		t.Fatal(err)
++	}
++	if err := db.Create(&model.NextecSecretPolicy{Kind: "peer", Ref: enrollPeer, Enabled: true, IntervalMinutes: 180}).Error; err != nil {
++		t.Fatal(err)
++	}
++	if d := stateDevice(t); d.AgentState != NextecAgentStateNone || d.Enrolled {
++		t.Fatalf("sem agente: %#v", d)
++	}
++}
++
++func TestLastSyncAtMigrationIsAdditiveAndLegacyRowsAreStalled(t *testing.T) {
++	db := enrollSetup(t)
++	// tabela como a versão anterior criava: sem last_sync_at
++	for _, col := range []string{"last_sync_at", "last_error", "last_error_at"} {
++		if err := db.Migrator().DropColumn(&model.NextecDeviceSecret{}, col); err != nil {
++			t.Fatal(err)
++		}
++	}
++	if err := db.Exec("INSERT INTO nextec_device_secrets (peer_id, token_hash, last_seen_at) VALUES (?, ?, ?)", "legacy-1", "hash", time.Now().Unix()).Error; err != nil {
++		t.Fatal(err)
++	}
++	if err := db.AutoMigrate(&model.NextecDeviceSecret{}); err != nil {
++		t.Fatalf("migração aditiva: %v", err)
++	}
++	for _, col := range []string{"last_sync_at", "last_error", "last_error_at"} {
++		if !db.Migrator().HasColumn(&model.NextecDeviceSecret{}, col) {
++			t.Fatalf("coluna %s não criada", col)
++		}
++	}
++	var row model.NextecDeviceSecret
++	if err := db.Where("peer_id = ?", "legacy-1").First(&row).Error; err != nil {
++		t.Fatal(err)
++	}
++	if row.LastSyncAt != 0 || row.TokenHash != "hash" || row.LastSeenAt == 0 {
++		t.Fatalf("linha antiga alterada: %#v", row)
++	}
++	if got := NextecAgentStateAt(&row, time.Now().Unix()); got != NextecAgentStateStalled {
++		t.Fatalf("linha antiga cadastrada deve ser parada: %s", got)
++	}
++}
+diff --git a/service/nextec_bootstrap.go b/service/nextec_bootstrap.go
+index 6dcb1b4..db82df3 100644
+--- a/service/nextec_bootstrap.go
++++ b/service/nextec_bootstrap.go
+@@ -54,12 +54,18 @@ func NextecAgentBootstrapIssue(peerID, clientID, ip string, issuedBy uint) (stri
+ 	if err := DB.First(&group, peer.GroupId).Error; err != nil || group.Id == 0 {
+ 		return "", ErrNextecBootstrapDenied
+ 	}
+-	var active int64
+-	if err := DB.Model(&model.NextecDeviceSecret{}).Where("peer_id = ? AND token_hash <> ''", peerID).Count(&active).Error; err != nil {
++	// Cadastro com consulta real recente (ativo) ou aguardando aprovação mantém o bloqueio. Só o agente PARADO
++	// (cadastrado, sem consulta há mais de 3 ciclos ou que nunca consultou) pode ser reinstalado por uma nova autorização.
++	var secrets []model.NextecDeviceSecret
++	if err := DB.Where("peer_id = ? AND token_hash <> ''", peerID).Limit(2).Find(&secrets).Error; err != nil {
+ 		return "", err
+ 	}
+-	if active != 0 {
+-		return "", ErrNextecAlreadyEnroll
++	detail := ""
++	if len(secrets) != 0 {
++		if NextecAgentStateAt(&secrets[0], time.Now().Unix()) != NextecAgentStateStalled {
++			return "", ErrNextecAlreadyEnroll
++		}
++		detail = "reinstalar agente parado"
+ 	}
+ 
+ 	raw := make([]byte, 32)
+@@ -76,7 +82,7 @@ func NextecAgentBootstrapIssue(peerID, clientID, ip string, issuedBy uint) (stri
+ 		if err := tx.Create(row).Error; err != nil {
+ 			return err
+ 		}
+-		return tx.Create(&model.NextecSecretAudit{At: now, UserId: issuedBy, PeerId: peer.Id, Action: "agent_bootstrap_issue", Ip: nextecBootstrapAuditIP(ip)}).Error
++		return tx.Create(&model.NextecSecretAudit{At: now, UserId: issuedBy, PeerId: peer.Id, Action: "agent_bootstrap_issue", Ip: nextecBootstrapAuditIP(ip), Detail: detail}).Error
+ 	}); err != nil {
+ 		return "", err
+ 	}
+@@ -143,12 +149,18 @@ func NextecAgentBootstrapDeliver(ip, peerID, uuid, bootstrapToken, proposedToken
+ 			}
+ 			return nil
+ 		}
+-		if err == nil && existing.TokenHash != "" {
+-			return ErrNextecAlreadyEnroll
+-		}
+ 		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+ 			return err
+ 		}
++		// Máquina já cadastrada: só um agente PARADO é substituído (token rotacionado). Ativo ou aguardando
++		// aprovação continua recusado, e a autorização não é gasta.
++		replacing := false
++		if err == nil && existing.TokenHash != "" {
++			if NextecAgentStateAt(&existing, now) != NextecAgentStateStalled {
++				return ErrNextecAlreadyEnroll
++			}
++			replacing = true
++		}
+ 		deliveryHash := ""
+ 		if proposedToken != "" {
+ 			deliveryHash = sha256Hex(proposedToken)
+@@ -172,6 +184,27 @@ func NextecAgentBootstrapDeliver(ip, peerID, uuid, bootstrapToken, proposedToken
+ 			if err := tx.Create(&existing).Error; err != nil {
+ 				return err
+ 			}
++		} else if replacing {
++			// Mantém senhas e versões (a senha da máquina continua a guardada); só troca o token e zera o contato:
++			// o estado volta a "parado" até o agente novo consultar de verdade.
++			updated := tx.Model(&model.NextecDeviceSecret{}).
++				Where("id = ? AND peer_id = ? AND token_hash = ? AND awaiting_approval = ? AND last_sync_at = ?",
++					existing.Id, peerID, existing.TokenHash, false, existing.LastSyncAt).
++				Updates(map[string]interface{}{
++					"token_hash": sha256Hex(deviceToken), "last_seen_at": now, "last_sync_at": 0,
++					"enrolled_via": "bootstrap", "enrolled_at": now, "approved_at": now, "approved_by": 0,
++					"enrolled_ip": ip, "uuid": uuid,
++				})
++			if updated.Error != nil {
++				return updated.Error
++			}
++			if updated.RowsAffected != 1 {
++				return ErrNextecAlreadyEnroll
++			}
++			if err := tx.Create(&model.NextecSecretAudit{At: now, PeerId: peerID, Action: "agent_replaced_stale",
++				Ip: nextecBootstrapAuditIP(ip), Detail: "last_sync_at=" + strconv.FormatInt(existing.LastSyncAt, 10)}).Error; err != nil {
++				return err
++			}
+ 		} else {
+ 			updated := tx.Model(&model.NextecDeviceSecret{}).
+ 				Where("id = ? AND peer_id = ? AND token_hash = ''", existing.Id, peerID).
+@@ -179,7 +212,7 @@ func NextecAgentBootstrapDeliver(ip, peerID, uuid, bootstrapToken, proposedToken
+ 					"token_hash": sha256Hex(deviceToken), "active_enc": "", "pending_enc": "",
+ 					"version": 0, "protocol_version": 0, "pending_operation": "", "pending_version": 0,
+ 					"last_operation_id": "", "active_at": 0, "next_rotation_at": 0,
+-					"force_rotate": false, "last_seen_at": now,
++					"force_rotate": false, "last_seen_at": now, "last_sync_at": 0,
+ 					"awaiting_approval": false, "enrolled_via": "bootstrap", "enrolled_at": now,
+ 					"approved_at": now, "approved_by": 0, "enrolled_ip": ip, "uuid": uuid,
+ 				})
+diff --git a/service/nextec_bootstrap_test.go b/service/nextec_bootstrap_test.go
+index ff73e40..cded724 100644
+--- a/service/nextec_bootstrap_test.go
++++ b/service/nextec_bootstrap_test.go
+@@ -77,6 +77,10 @@ func TestAgentBootstrapEnrollmentIsBoundOneUseAndDoesNotAuditSecrets(t *testing.
+ 	if _, err := NextecAgentBootstrapConsume("consume-test-ip", peerID, "uuid-original", bootstrap); !errors.Is(err, ErrNextecBootstrapDenied) {
+ 		t.Fatalf("replay accepted: %v", err)
+ 	}
++	// Cadastro sem nenhuma consulta é "parado" (reinstalável); com consulta real recente é "ativo" e bloqueia.
++	if err := db.Model(&model.NextecDeviceSecret{}).Where("peer_id = ?", peerID).Update("last_sync_at", time.Now().Unix()).Error; err != nil {
++		t.Fatal(err)
++	}
+ 	if _, err := NextecAgentBootstrapIssue(peerID, "7", "admin-test-ip", 44); !errors.Is(err, ErrNextecAlreadyEnroll) {
+ 		t.Fatalf("active enrollment allowed a new bootstrap: %v", err)
+ 	}
+diff --git a/service/nextec_secret.go b/service/nextec_secret.go
+index 27cdea8..fcd3e47 100644
+--- a/service/nextec_secret.go
++++ b/service/nextec_secret.go
+@@ -363,6 +363,11 @@ func NextecAgentSyncState(ip, peerID, token string) (*NextecAgentSync, error) {
+ 
+ // NextecAgentSyncStateWithCapabilities não faz downgrade do protocolo negociado por dispositivo.
+ func NextecAgentSyncStateWithCapabilities(ip, peerID, token string, capabilities []string) (*NextecAgentSync, error) {
++	return NextecAgentSyncReport(ip, peerID, token, capabilities, "")
++}
++
++// NextecAgentSyncReport é o sync com o código de erro da última tentativa do agente (lastError vazio limpa o erro).
++func NextecAgentSyncReport(ip, peerID, token string, capabilities []string, lastError string) (*NextecAgentSync, error) {
+ 	d, err := agentAuth(ip, peerID, token)
+ 	if err != nil {
+ 		return nil, err
+@@ -370,7 +375,7 @@ func NextecAgentSyncStateWithCapabilities(ip, peerID, token string, capabilities
+ 	now := time.Now().Unix()
+ 	seen := DB.Model(&model.NextecDeviceSecret{}).
+ 		Where("id = ? AND peer_id = ? AND token_hash = ?", d.Id, peerID, d.TokenHash).
+-		Update("last_seen_at", now)
++		Updates(nextecSyncSeen(now, lastError))
+ 	if seen.Error != nil {
+ 		return nil, seen.Error
+ 	}
+@@ -405,6 +410,14 @@ func NextecAgentSyncStateWithCapabilities(ip, peerID, token string, capabilities
+ 	return nextecAgentSyncTransaction(d.Id, peerID, d.TokenHash, enabled, interval)
+ }
+ 
++func nextecSyncSeen(now int64, lastError string) map[string]interface{} {
++	seen := map[string]interface{}{"last_seen_at": now, "last_sync_at": now, "last_error": "", "last_error_at": 0}
++	if code := NextecAgentErrorCode(lastError); code != "" {
++		seen["last_error"], seen["last_error_at"] = code, now
++	}
++	return seen
++}
++
+ func hasNextecCapability(capabilities []string, name string) bool {
+ 	for _, capability := range capabilities {
+ 		if capability == name {
+@@ -616,6 +629,7 @@ func NextecAgentConfirm(ip, peerID, token string) error {
+ 		Updates(map[string]interface{}{
+ 			"active_enc": d.PendingEnc, "pending_enc": "", "version": d.Version + 1,
+ 			"active_at": now, "next_rotation_at": now + int64(interval)*60, "force_rotate": false,
++			"last_error": "", "last_error_at": 0,
+ 		})
+ 	if res.Error != nil {
+ 		return res.Error
+@@ -663,6 +677,7 @@ func NextecAgentConfirmTransaction(ip, peerID, token, operationID string, pendin
+ 		"active_enc": d.PendingEnc, "pending_enc": "", "version": pendingVersion,
+ 		"pending_operation": "", "pending_version": 0, "last_operation_id": operationID,
+ 		"active_at": now, "next_rotation_at": now + int64(interval)*60, "force_rotate": false,
++		"last_error": "", "last_error_at": 0,
+ 	}
+ 	res := DB.Model(&model.NextecDeviceSecret{}).
+ 		Where("id = ? AND peer_id = ? AND token_hash = ? AND awaiting_approval = ? AND protocol_version = 1 AND version = ? AND pending_operation = ? AND pending_version = ? AND pending_enc = ?", d.Id, peerID, d.TokenHash, false, pendingVersion-1, operationID, pendingVersion, d.PendingEnc).
+@@ -700,7 +715,12 @@ type NextecSecretDevice struct {
+ 	ActiveAt       int64  `json:"active_at"`
+ 	NextRotationAt int64  `json:"next_rotation_at"`
+ 	LastSeenAt     int64  `json:"last_seen_at"`
+-	ForceRotate    bool   `json:"force_rotate"`
++	LastSyncAt     int64  `json:"last_sync_at"`
++	// AgentState: ativo | parado | pendente_aprovacao | sem_agente, calculado do último /agent/sync real.
++	AgentState  string `json:"agent_state"`
++	LastError   string `json:"last_error,omitempty"`
++	LastErrorAt int64  `json:"last_error_at,omitempty"`
++	ForceRotate bool   `json:"force_rotate"`
+ 	// Inscrição global
+ 	State       string `json:"state,omitempty"` // pending | assigned (vazio: máquina sem agente)
+ 	StaleKey    bool   `json:"stale_key,omitempty"` // pendente inscrita com credencial já girada
+@@ -762,7 +782,7 @@ func NextecSecretDevices() []*NextecSecretDevice {
+ 		}
+ 		seen[peerID] = true
+ 		enabled, interval := effectivePolicy(peerID, groupID)
+-		dv := &NextecSecretDevice{PeerId: peerID, Hostname: hostname, Alias: alias, GroupId: groupID, Managed: enabled, IntervalMin: interval}
++		dv := &NextecSecretDevice{PeerId: peerID, Hostname: hostname, Alias: alias, GroupId: groupID, Managed: enabled, IntervalMin: interval, AgentState: NextecAgentStateNone}
+ 		if peer != nil {
+ 			dv.LastIp, dv.Os, dv.Username = peer.LastOnlineIp, peer.Os, peer.Username
+ 		}
+@@ -784,7 +804,9 @@ func NextecSecretDevices() []*NextecSecretDevice {
+ 			dv.HasPassword = s.ActiveEnc != ""
+ 			dv.Pending = s.PendingEnc != ""
+ 			dv.Version, dv.ActiveAt, dv.NextRotationAt = s.Version, s.ActiveAt, s.NextRotationAt
+-			dv.LastSeenAt, dv.ForceRotate = s.LastSeenAt, s.ForceRotate
++			dv.LastSeenAt, dv.LastSyncAt, dv.ForceRotate = s.LastSeenAt, s.LastSyncAt, s.ForceRotate
++			dv.AgentState = NextecAgentStateAt(s, time.Now().Unix())
++			dv.LastError, dv.LastErrorAt = s.LastError, s.LastErrorAt
+ 		}
+ 		out = append(out, dv)
+ 	}

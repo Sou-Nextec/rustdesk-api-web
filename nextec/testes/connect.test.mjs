@@ -19,7 +19,7 @@ test('uses the server-authorized link verbatim after settings and required ticke
   assert.deepEqual(events, [
     'settings', 'ticket:536822159:required', 'note:536822159:CBQ-REQ-6054', 'authorized-link:536822159',
   ])
-  assert.deepEqual(prepared, { id: '536822159', url: 'nextec-connect://536822159?password=opaque-secret' })
+  assert.deepEqual(prepared, { id: '536822159', url: 'nextec-connect://536822159?password=opaque-secret', link: { url: 'nextec-connect://536822159?password=opaque-secret' } })
 })
 
 test('settings outage blocks connection instead of downgrading to an unprepared protocol link', async () => {

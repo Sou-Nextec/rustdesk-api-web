@@ -1,0 +1,584 @@
+Nome do app por maquina e protocolo do link, no mesmo sync de last_error e interval_seconds
+
+Nextec 0037: coluna aditiva app_name (enviada pelo agente no /agent/sync, validada ^[A-Za-z0-9-]{1,64}$), gravada na
+MESMA escrita do sync (NextecAgentSyncWith/NextecAgentReport) junto de last_sync_at, last_error e
+sync_interval_seconds. O link de conexao usa o protocolo da maquina aprovada (fallback ao global) e /my/connect-link
+devolve agent_state e agent_active pela mesma regra da lista do cofre (fonte unica, 0035/0036).
+
+diff --git a/http/controller/admin/my/nextec_connect.go b/http/controller/admin/my/nextec_connect.go
+index 19d0280..ffbf399 100644
+--- a/http/controller/admin/my/nextec_connect.go
++++ b/http/controller/admin/my/nextec_connect.go
+@@ -26,7 +26,9 @@ func (ct *NextecConnect) Link(c *gin.Context) {
+ 		response.Fail(c, 403, response.TranslateMsg(c, "NoAccess"))
+ 		return
+ 	}
+-	link := service.NextecConnectSchemeGet() + "://" + url.PathEscape(id)
++	// O protocolo é o do app instalado NA MÁQUINA (nome informado pelo agente); sem ele, o global do painel.
++	info := service.NextecConnectInfoFor(u, id)
++	link := info.Scheme + "://" + url.PathEscape(id)
+ 	if pw != "" {
+ 		link += "?password=" + url.QueryEscape(pw)
+ 		ip := c.GetHeader("CF-Connecting-IP")
+@@ -35,5 +37,11 @@ func (ct *NextecConnect) Link(c *gin.Context) {
+ 		}
+ 		service.NextecSecretAuditAdd(u, id, "connect", ip, "")
+ 	}
+-	response.Success(c, &gin.H{"url": link, "auto_password": pw != ""})
++	response.Success(c, &gin.H{
++		"url": link, "auto_password": pw != "",
++		"scheme": info.Scheme, "scheme_source": info.SchemeSource, "app_name": info.AppName,
++		"agent_enrolled": info.AgentEnrolled, "agent_active": info.AgentActive,
++		"password_state": info.PasswordState, "last_seen_at": info.LastSeenAt, "interval_minutes": info.Interval,
++		"agent_state": info.AgentState, "last_sync_at": info.LastSyncAt,
++	})
+ }
+diff --git a/http/controller/api/nextec_agent.go b/http/controller/api/nextec_agent.go
+index 56b16cc..c6e60f0 100644
+--- a/http/controller/api/nextec_agent.go
++++ b/http/controller/api/nextec_agent.go
+@@ -27,6 +27,8 @@ type nextecAgentForm struct {
+ 	Probe bool `json:"probe"`
+ 	// IntervalSeconds: intervalo real de consulta do agente (opcional; sem ele vale 5 min). Define a janela de "ativo".
+ 	IntervalSeconds int `json:"interval_seconds"`
++	// AppName: nome do app instalado (marcador da máquina), opcional; define o protocolo do link desta máquina.
++	AppName string `json:"app_name"`
+ }
+ 
+ func agentIP(c *gin.Context) string {
+@@ -92,7 +94,7 @@ func (a *NextecAgent) Sync(c *gin.Context) {
+ 		return
+ 	}
+ 	s, err := service.NextecAgentSyncWith(agentIP(c), f.Id, f.Token, f.Capabilities,
+-		service.NextecAgentReport{LastError: f.LastError, IntervalSeconds: f.IntervalSeconds})
++		service.NextecAgentReport{LastError: f.LastError, IntervalSeconds: f.IntervalSeconds, AppName: f.AppName})
+ 	if err != nil {
+ 		agentFail(c, err)
+ 		return
+diff --git a/http/controller/api/nextec_appname_test.go b/http/controller/api/nextec_appname_test.go
+new file mode 100644
+index 0000000..29200e4
+--- /dev/null
++++ b/http/controller/api/nextec_appname_test.go
+@@ -0,0 +1,88 @@
++package api
++
++import (
++	"bytes"
++	"crypto/sha256"
++	"encoding/base64"
++	"encoding/hex"
++	"encoding/json"
++	"net/http/httptest"
++	"os"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++	"gorm.io/driver/sqlite"
++	"gorm.io/gorm"
++	"gorm.io/gorm/logger"
++)
++
++// O sync aceita app_name de forma aditiva: com ou sem o campo, e com valor inválido, o agente continua funcionando.
++func TestAgentSyncAcceptsAppNameAdditively(t *testing.T) {
++	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := db.AutoMigrate(&model.Peer{}, &model.DeviceGroup{}, &model.NextecSecretPolicy{}, &model.NextecDeviceSecret{}, &model.NextecSecretAudit{}, &model.NextecAgentBootstrap{}, &model.NextecEnrollBlock{}); err != nil {
++		t.Fatal(err)
++	}
++	sqlDB, _ := db.DB()
++	sqlDB.SetMaxOpenConns(1)
++	oldDB, oldService := service.DB, service.AllService
++	service.DB, service.AllService = db, &service.Service{}
++	t.Setenv("NEXTEC_VAULT_KEY", base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{0x52}, 32)))
++	wd, _ := os.Getwd()
++	if err := os.Chdir(t.TempDir()); err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { _ = os.Chdir(wd); service.DB, service.AllService = oldDB, oldService; sqlDB.Close() })
++
++	token := "token-http-appname"
++	sum := sha256.Sum256([]byte(token))
++	now := time.Now().Unix()
++	if err := db.Create(&model.NextecDeviceSecret{PeerId: "737373737", TokenHash: hex.EncodeToString(sum[:]), LastSeenAt: now, EnrolledVia: "legacy"}).Error; err != nil {
++		t.Fatal(err)
++	}
++	r := gin.New()
++	r.POST("/sync", (&NextecAgent{}).Sync)
++	call := func(body map[string]interface{}) int {
++		raw, _ := json.Marshal(body)
++		req := httptest.NewRequest("POST", "/sync", strings.NewReader(string(raw)))
++		req.Header.Set("Content-Type", "application/json")
++		w := httptest.NewRecorder()
++		r.ServeHTTP(w, req)
++		return w.Code
++	}
++	stored := func() string {
++		d := &model.NextecDeviceSecret{}
++		db.Where("peer_id = ?", "737373737").First(d)
++		return d.AppName
++	}
++	base := map[string]interface{}{"id": "737373737", "token": token, "capabilities": []string{"transaction_v1"}}
++	if code := call(base); code != 200 || stored() != "" {
++		t.Fatalf("sync sem app_name: %d %q", code, stored())
++	}
++	with := func(v interface{}) map[string]interface{} {
++		m := map[string]interface{}{}
++		for k, x := range base {
++			m[k] = x
++		}
++		m["app_name"] = v
++		return m
++	}
++	if code := call(with("Client-Nextec-Connect")); code != 200 || stored() != "Client-Nextec-Connect" {
++		t.Fatalf("sync com app_name: %d %q", code, stored())
++	}
++	// Valor inválido nunca troca o nome gravado (tipo errado vira 400 do bind; texto inválido é ignorado com 200).
++	for _, bad := range []interface{}{"com espaco", "../x", 42, strings.Repeat("z", 100)} {
++		if code := call(with(bad)); code != 200 && code != 400 {
++			t.Fatalf("app_name %v: %d", bad, code)
++		}
++		if stored() != "Client-Nextec-Connect" {
++			t.Fatalf("app_name %v alterou o nome gravado: %q", bad, stored())
++		}
++	}
++}
+diff --git a/model/nextec_secret.go b/model/nextec_secret.go
+index 4ba4326..89e7083 100644
+--- a/model/nextec_secret.go
++++ b/model/nextec_secret.go
+@@ -46,6 +46,8 @@ type NextecDeviceSecret struct {
+ 	ApprovedAt       int64  `gorm:"not null;default:0" json:"approved_at"`
+ 	ApprovedBy       uint   `gorm:"not null;default:0" json:"approved_by"`
+ 	Uuid             string `gorm:"not null;default:''" json:"-"`
++	// Nome do app instalado, enviado pelo agente (nextec-marker.json). Define o protocolo do link da máquina.
++	AppName string `gorm:"not null;default:'';size:64" json:"-"`
+ 	TimeModel
+ }
+ 
+diff --git a/service/nextec_agent_sync_unified_test.go b/service/nextec_agent_sync_unified_test.go
+new file mode 100644
+index 0000000..161c067
+--- /dev/null
++++ b/service/nextec_agent_sync_unified_test.go
+@@ -0,0 +1,40 @@
++package service
++
++import (
++	"testing"
++	"time"
++)
++
++// Um único sync grava contato real, intervalo, último erro e nome do app na mesma escrita; o sync seguinte sem os
++// campos opcionais limpa o erro, volta o intervalo ao legado e mantém o nome do app conhecido.
++func TestAgentSyncReportUnifiesAppNameLastErrorAndInterval(t *testing.T) {
++	db, token := stateEnrolled(t)
++	before := time.Now().Unix()
++	if _, err := NextecAgentSyncWith(stateSyncIP, enrollPeer, token, stateCaps, NextecAgentReport{
++		LastError: "client_settings_locked", IntervalSeconds: 60, AppName: "Client-Nextec-Connect",
++	}); err != nil {
++		t.Fatal(err)
++	}
++	row := deviceRow(t, db, enrollPeer)
++	if row.LastSyncAt < before || row.LastError != "client_settings_locked" || row.SyncIntervalSeconds != 60 || row.AppName != "Client-Nextec-Connect" {
++		t.Fatalf("sync unificado: %#v", row)
++	}
++	d := stateDevice(t)
++	if d.AgentState != NextecAgentStateActive || d.ActiveWindowSeconds != 180 || d.LastError != "client_settings_locked" {
++		t.Fatalf("lista: %#v", d)
++	}
++	if _, err := NextecAgentSyncStateWithCapabilities(stateSyncIP, enrollPeer, token, stateCaps); err != nil {
++		t.Fatal(err)
++	}
++	row = deviceRow(t, db, enrollPeer)
++	if row.LastError != "" || row.SyncIntervalSeconds != 0 || row.AppName != "Client-Nextec-Connect" {
++		t.Fatalf("sync sem os campos: %#v", row)
++	}
++	// nome inválido não troca o gravado, e o sync continua aceito
++	if _, err := NextecAgentSyncWith(stateSyncIP, enrollPeer, token, stateCaps, NextecAgentReport{AppName: "nome com espaco"}); err != nil {
++		t.Fatal(err)
++	}
++	if got := deviceRow(t, db, enrollPeer).AppName; got != "Client-Nextec-Connect" {
++		t.Fatalf("nome inválido gravado: %q", got)
++	}
++}
+diff --git a/service/nextec_appname.go b/service/nextec_appname.go
+new file mode 100644
+index 0000000..903294f
+--- /dev/null
++++ b/service/nextec_appname.go
+@@ -0,0 +1,121 @@
++package service
++
++import (
++	"regexp"
++	"strings"
++	"time"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++)
++
++// Nome do app instalado em cada máquina. O agente lê o AppName do marcador (nextec-marker.json ou registro) e envia no
++// /api/nextec/agent/sync. O RustDesk registra o protocolo do link com o nome do app em minúsculas, então o painel
++// monta o link da máquina com esse protocolo e cai no protocolo global (NextecConnectSchemeGet) quando não sabe o nome.
++
++var nextecAppNameRe = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
++
++// Protocolos que o navegador trata de forma especial. Um nome de app nunca vira link com eles: o link leva a senha
++// da máquina e não pode apontar para uma página, um arquivo ou um script.
++var nextecSchemeDenied = map[string]bool{
++	"http": true, "https": true, "file": true, "ftp": true, "ftps": true, "ws": true, "wss": true,
++	"javascript": true, "vbscript": true, "data": true, "blob": true, "about": true, "mailto": true, "tel": true,
++	"sms": true, "chrome": true, "edge": true, "view-source": true, "ms-msdt": true, "search-ms": true,
++}
++
++// NextecAppNameValid diz se o nome enviado pelo agente pode ser gravado.
++func NextecAppNameValid(v string) bool {
++	return nextecAppNameRe.MatchString(v)
++}
++
++// NextecSchemeFromAppName normaliza o nome do app para o protocolo (minúsculas). Vazio quando não serve de protocolo.
++func NextecSchemeFromAppName(appName string) string {
++	if !NextecAppNameValid(appName) {
++		return ""
++	}
++	s := strings.ToLower(appName)
++	if !nextecSchemeValid(s) || nextecSchemeDenied[s] {
++		return ""
++	}
++	return s
++}
++
++// nextecAgentAppName valida o nome enviado pelo agente no sync (espaços nas pontas ignorados).
++func nextecAgentAppName(raw string) (string, bool) {
++	name := strings.TrimSpace(raw)
++	return name, NextecAppNameValid(name)
++}
++
++// NextecAgentSyncStateWithApp é o sync do agente que também informa o nome do app instalado. O nome é gravado na
++// MESMA escrita do sync (NextecAgentSyncWith), junto de last_sync_at, last_error e interval: só com o token autenticado
++// da máquina; nome inválido ou vazio é ignorado e o agente continua funcionando.
++func NextecAgentSyncStateWithApp(ip, peerID, token string, capabilities []string, appName string) (*NextecAgentSync, error) {
++	return NextecAgentSyncWith(ip, peerID, token, capabilities, NextecAgentReport{AppName: appName})
++}
++
++// Estado da senha automática da máquina, como o botão Conectar precisa saber.
++const (
++	NextecPwNone         = "none"             // sem agente ou senha automática desligada: conexão manual
++	NextecPwPendingAgent = "pending_approval" // agente inscrito e ainda não atribuído a um cliente
++	NextecPwWaitingFirst = "waiting_first"    // agente ativo, regra ligada e a primeira senha ainda não foi aplicada
++	NextecPwReady        = "ready"            // senha vigente: o link já leva a senha
++	NextecPwRestricted   = "restricted"       // o usuário não lê o cofre: conecta digitando a senha
++
++	NextecSchemeSrcMachine = "machine"
++	NextecSchemeSrcGlobal  = "global"
++)
++
++// NextecConnectInfo é o que o painel sabe da máquina para montar e abrir o link.
++type NextecConnectInfo struct {
++	Scheme        string `json:"scheme"`
++	SchemeSource  string `json:"scheme_source"` // machine | global
++	AppName       string `json:"app_name,omitempty"`
++	AgentEnrolled bool   `json:"agent_enrolled"`
++	AgentActive   bool   `json:"agent_active"`
++	PasswordState string `json:"password_state"`
++	LastSeenAt    int64  `json:"last_seen_at,omitempty"`
++	LastSyncAt    int64  `json:"last_sync_at,omitempty"`
++	AgentState    string `json:"agent_state,omitempty"`
++	Interval      int    `json:"interval_minutes,omitempty"`
++}
++
++// nextecConnectInfo reúne o protocolo (da máquina, com fallback ao global) e o estado do agente e da senha.
++// canReadVault: o usuário pode receber a senha do cofre desta máquina.
++func nextecConnectInfo(peerID string, canReadVault bool, now int64) *NextecConnectInfo {
++	info := &NextecConnectInfo{Scheme: NextecConnectSchemeGet(), SchemeSource: NextecSchemeSrcGlobal, PasswordState: NextecPwNone}
++	d := &model.NextecDeviceSecret{}
++	if peerID == "" || DB.Where("peer_id = ?", peerID).First(d).Error != nil || d.TokenHash == "" {
++		return info
++	}
++	info.AgentEnrolled = true
++	info.LastSeenAt, info.LastSyncAt = d.LastSeenAt, d.LastSyncAt
++	// Fonte única do estado (0035/0036): a mesma regra da lista do cofre, com o intervalo real do agente.
++	info.AgentState = NextecAgentStateAt(d, now)
++	if d.AwaitingApproval {
++		info.PasswordState = NextecPwPendingAgent
++		return info
++	}
++	info.AgentActive = info.AgentState == NextecAgentStateActive
++	// Só máquina aprovada decide o protocolo do link: uma inscrição pendente não pode mudar para onde a senha vai.
++	if s := NextecSchemeFromAppName(d.AppName); s != "" {
++		info.Scheme, info.SchemeSource, info.AppName = s, NextecSchemeSrcMachine, d.AppName
++	}
++	enabled, interval := effectivePolicy(peerID, peerGroup(peerID))
++	if !enabled {
++		return info
++	}
++	info.Interval = interval
++	switch {
++	case !canReadVault:
++		info.PasswordState = NextecPwRestricted
++	case d.ActiveEnc == "":
++		info.PasswordState = NextecPwWaitingFirst
++	default:
++		info.PasswordState = NextecPwReady
++	}
++	return info
++}
++
++// NextecConnectInfoFor devolve o estado da conexão para o usuário logado (já autorizado a ver a máquina).
++func NextecConnectInfoFor(u *model.User, peerID string) *NextecConnectInfo {
++	return nextecConnectInfo(peerID, NextecUserCanReadVault(u, peerID), time.Now().Unix())
++}
+diff --git a/service/nextec_appname_test.go b/service/nextec_appname_test.go
+new file mode 100644
+index 0000000..e30fd98
+--- /dev/null
++++ b/service/nextec_appname_test.go
+@@ -0,0 +1,196 @@
++package service
++
++import (
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"gorm.io/gorm"
++)
++
++func TestNextecAppNameValidationAndScheme(t *testing.T) {
++	cases := []struct{ in, scheme string }{
++		{"Client-Nextec-Connect", "client-nextec-connect"},
++		{"Nextec-Connect", "nextec-connect"},
++		{"RustDesk", "rustdesk"},
++		{"abc", "abc"},
++		{"a", ""},                     // curto demais para protocolo
++		{"1app", ""},                  // protocolo começa por letra
++		{"Nextec Connect", ""},        // espaço não é aceito
++		{"nextec_connect", ""},        // sublinhado não é aceito
++		{"nextec.connect", ""},        // ponto não é aceito no nome do app
++		{"", ""},                      // vazio
++		{strings.Repeat("a", 65), ""}, // acima de 64
++		{"https", ""}, {"HTTP", ""}, {"File", ""}, {"javascript", ""}, {"data", ""}, {"mailto", ""},
++		{"a://b", ""}, {"app\n", ""},
++	}
++	for _, c := range cases {
++		if got := NextecSchemeFromAppName(c.in); got != c.scheme {
++			t.Fatalf("NextecSchemeFromAppName(%q) = %q, esperado %q", c.in, got, c.scheme)
++		}
++	}
++	if !NextecAppNameValid(strings.Repeat("a", 64)) || NextecAppNameValid(strings.Repeat("a", 65)) {
++		t.Fatal("limite de 64 caracteres")
++	}
++}
++
++func approvedDevice(t *testing.T, db *gorm.DB, token string) *model.NextecDeviceSecret {
++	t.Helper()
++	now := time.Now().Unix()
++	d := &model.NextecDeviceSecret{PeerId: enrollPeer, TokenHash: sha256Hex(token), LastSeenAt: now, LastSyncAt: now, EnrolledVia: "legacy", EnrolledAt: now, ApprovedAt: now}
++	if err := db.Create(d).Error; err != nil {
++		t.Fatal(err)
++	}
++	return d
++}
++
++func TestSyncRecordsAppNameAndConnectInfoUsesMachineScheme(t *testing.T) {
++	db := enrollSetup(t)
++	token := "tok-appname-1"
++	approvedDevice(t, db, token)
++
++	// Sem nome informado: protocolo global (padrão rustdesk).
++	info := nextecConnectInfo(enrollPeer, true, time.Now().Unix())
++	if info.Scheme != "rustdesk" || info.SchemeSource != NextecSchemeSrcGlobal || info.AppName != "" {
++		t.Fatalf("sem nome: %#v", info)
++	}
++	// Admin definiu o protocolo global: é o fallback da máquina sem nome.
++	if err := NextecConnectSchemeSet("nextec-connect"); err != nil {
++		t.Fatal(err)
++	}
++	if info = nextecConnectInfo(enrollPeer, true, time.Now().Unix()); info.Scheme != "nextec-connect" || info.SchemeSource != NextecSchemeSrcGlobal {
++		t.Fatalf("fallback global: %#v", info)
++	}
++
++	if _, err := NextecAgentSyncStateWithApp("10.0.0.1", enrollPeer, token, []string{"transaction_v1"}, "Client-Nextec-Connect"); err != nil {
++		t.Fatal(err)
++	}
++	if got := deviceRow(t, db, enrollPeer).AppName; got != "Client-Nextec-Connect" {
++		t.Fatalf("app_name gravado: %q", got)
++	}
++	info = nextecConnectInfo(enrollPeer, true, time.Now().Unix())
++	if info.Scheme != "client-nextec-connect" || info.SchemeSource != NextecSchemeSrcMachine || info.AppName != "Client-Nextec-Connect" {
++		t.Fatalf("esquema da máquina: %#v", info)
++	}
++
++	// Nome inválido ou vazio não troca nada e o sync continua funcionando.
++	for _, bad := range []string{"", "has space", "x/y", strings.Repeat("a", 65), "<script>"} {
++		if _, err := NextecAgentSyncStateWithApp("10.0.0.1", enrollPeer, token, []string{"transaction_v1"}, bad); err != nil {
++			t.Fatalf("sync com app_name %q: %v", bad, err)
++		}
++		if got := deviceRow(t, db, enrollPeer).AppName; got != "Client-Nextec-Connect" {
++			t.Fatalf("app_name %q alterou o gravado para %q", bad, got)
++		}
++	}
++	// Chamada legada (sem app_name) mantém o nome já conhecido.
++	if _, err := NextecAgentSyncStateWithCapabilities("10.0.0.1", enrollPeer, token, []string{"transaction_v1"}); err != nil {
++		t.Fatal(err)
++	}
++	if got := deviceRow(t, db, enrollPeer).AppName; got != "Client-Nextec-Connect" {
++		t.Fatalf("sync legado apagou o nome: %q", got)
++	}
++	// Token errado não grava nada.
++	if _, err := NextecAgentSyncStateWithApp("10.0.0.2", enrollPeer, "outro-token", nil, "Intruso-App"); err == nil {
++		t.Fatal("token errado deveria falhar")
++	}
++	if got := deviceRow(t, db, enrollPeer).AppName; got != "Client-Nextec-Connect" {
++		t.Fatalf("token errado alterou o nome: %q", got)
++	}
++	// O app pode ser renomeado numa reinstalação.
++	if _, err := NextecAgentSyncStateWithApp("10.0.0.1", enrollPeer, token, nil, "Nextec-Suporte"); err != nil {
++		t.Fatal(err)
++	}
++	if info = nextecConnectInfo(enrollPeer, true, time.Now().Unix()); info.Scheme != "nextec-suporte" {
++		t.Fatalf("renomeado: %#v", info)
++	}
++	// A lista de máquinas do painel expõe o nome e o protocolo.
++	found := false
++	for _, dv := range NextecSecretDevices() {
++		if dv.PeerId == enrollPeer {
++			found = true
++			if dv.AppName != "Nextec-Suporte" || dv.Scheme != "nextec-suporte" || dv.SchemeSource != NextecSchemeSrcMachine {
++				t.Fatalf("lista de máquinas: %#v", dv)
++			}
++		}
++	}
++	if !found {
++		t.Fatal("máquina fora da lista")
++	}
++}
++
++func TestConnectInfoRefusesDangerousOrPendingSchemes(t *testing.T) {
++	db := enrollSetup(t)
++	token := "tok-appname-2"
++	d := approvedDevice(t, db, token)
++	// Mesmo que o nome chegue ao banco (linha antiga, edição direta), "https" nunca vira protocolo do link.
++	db.Model(d).Update("app_name", "https")
++	info := nextecConnectInfo(enrollPeer, true, time.Now().Unix())
++	if info.Scheme != "rustdesk" || info.SchemeSource != NextecSchemeSrcGlobal {
++		t.Fatalf("https aceito como protocolo: %#v", info)
++	}
++	// Inscrição pendente não decide o protocolo.
++	db.Model(d).Updates(map[string]interface{}{"app_name": "Pendente-App", "awaiting_approval": true})
++	info = nextecConnectInfo(enrollPeer, true, time.Now().Unix())
++	if info.Scheme != "rustdesk" || info.PasswordState != NextecPwPendingAgent || info.AgentActive {
++		t.Fatalf("pendente: %#v", info)
++	}
++	for _, dv := range NextecSecretDevices() {
++		if dv.PeerId == enrollPeer && (dv.Scheme != "" || dv.AppName != "") {
++			t.Fatalf("pendente expôs o protocolo: %#v", dv)
++		}
++	}
++}
++
++func TestConnectInfoPasswordStateAndAgentActivity(t *testing.T) {
++	db := enrollSetup(t)
++	now := time.Now().Unix()
++
++	// Sem agente: conexão manual, nenhum aviso.
++	info := nextecConnectInfo(enrollPeer, true, now)
++	if info.PasswordState != NextecPwNone || info.AgentEnrolled || info.AgentActive {
++		t.Fatalf("sem agente: %#v", info)
++	}
++
++	d := approvedDevice(t, db, "tok-state")
++	// Agente ativo, mas a regra está desligada: nada a esperar.
++	if info = nextecConnectInfo(enrollPeer, true, now); info.PasswordState != NextecPwNone || !info.AgentActive || !info.AgentEnrolled {
++		t.Fatalf("regra desligada: %#v", info)
++	}
++	if _, err := NextecSecretUpsertPolicy("peer", enrollPeer, true, 30); err != nil {
++		t.Fatal(err)
++	}
++	// Regra ligada e senha ainda não aplicada: aguardando a primeira troca.
++	info = nextecConnectInfo(enrollPeer, true, now)
++	if info.PasswordState != NextecPwWaitingFirst || !info.AgentActive || info.Interval != 30 || info.LastSeenAt != d.LastSeenAt {
++		t.Fatalf("aguardando primeira troca: %#v", info)
++	}
++	// Quem não lê o cofre não recebe o aviso de senha.
++	if info = nextecConnectInfo(enrollPeer, false, now); info.PasswordState != NextecPwRestricted {
++		t.Fatalf("sem acesso ao cofre: %#v", info)
++	}
++	// Senha aplicada.
++	enc, err := vaultEncrypt("SenhaDeTeste12345")
++	if err != nil {
++		t.Fatal(err)
++	}
++	db.Model(d).Update("active_enc", enc)
++	if info = nextecConnectInfo(enrollPeer, true, now); info.PasswordState != NextecPwReady {
++		t.Fatalf("senha aplicada: %#v", info)
++	}
++	// Mesma regra da lista do cofre: agente legado (sem intervalo) parado depois de 900 s sem consulta real.
++	db.Model(d).Update("last_sync_at", now-901)
++	if info = nextecConnectInfo(enrollPeer, true, now); info.AgentActive || !info.AgentEnrolled || info.AgentState != NextecAgentStateStalled {
++		t.Fatalf("agente parado: %#v", info)
++	}
++	// Agente de 60 s: 240 s sem consulta já é parado, aqui e na lista.
++	db.Model(d).Updates(map[string]interface{}{"last_sync_at": now - 240, "sync_interval_seconds": 60})
++	if info = nextecConnectInfo(enrollPeer, true, now); info.AgentActive || info.AgentState != NextecAgentStateStalled {
++		t.Fatalf("agente de 60 s aos 240 s: %#v", info)
++	}
++	// Cadastro sem nenhuma consulta real (só last_seen_at) não conta como ativo para abrir direto.
++	db.Model(d).Updates(map[string]interface{}{"last_sync_at": 0, "last_seen_at": now})
++	if info = nextecConnectInfo(enrollPeer, true, now); info.AgentActive {
++		t.Fatalf("cadastro sem consulta ficou ativo: %#v", info)
++	}
++}
+diff --git a/service/nextec_secret.go b/service/nextec_secret.go
+index 7e89434..177ec3c 100644
+--- a/service/nextec_secret.go
++++ b/service/nextec_secret.go
+@@ -379,6 +379,7 @@ func NextecAgentSyncReport(ip, peerID, token string, capabilities []string, last
+ type NextecAgentReport struct {
+ 	LastError       string // código estável da última tentativa ("" limpa)
+ 	IntervalSeconds int    // intervalo real de consulta do agente (0 = não informado: 5 min)
++	AppName         string // nome do app instalado; inválido ou vazio não muda o gravado
+ }
+ 
+ // NextecAgentSyncWith é o sync completo: grava o contato real, o último erro e o intervalo informado numa só escrita.
+@@ -431,6 +432,9 @@ func nextecSyncSeen(now int64, report NextecAgentReport) map[string]interface{}
+ 	if code := NextecAgentErrorCode(report.LastError); code != "" {
+ 		seen["last_error"], seen["last_error_at"] = code, now
+ 	}
++	if name, ok := nextecAgentAppName(report.AppName); ok {
++		seen["app_name"] = name
++	}
+ 	return seen
+ }
+ 
+@@ -749,6 +753,10 @@ type NextecSecretDevice struct {
+ 	LastIp      string `json:"last_ip,omitempty"`
+ 	Os          string `json:"os,omitempty"`
+ 	Username    string `json:"username,omitempty"`
++	// Nome do app instalado (informado pelo agente) e o protocolo que o link da máquina usa.
++	AppName      string `json:"app_name,omitempty"`
++	Scheme       string `json:"scheme,omitempty"`
++	SchemeSource string `json:"scheme_source,omitempty"` // machine | global
+ }
+ 
+ // NextecSecretDevices lista as máquinas gerenciadas ou com agente cadastrado.
+@@ -820,6 +828,11 @@ func NextecSecretDevices() []*NextecSecretDevice {
+ 				dv.Uuid = s.Uuid
+ 			}
+ 			dv.Enrolled = s.TokenHash != ""
++			if !s.AwaitingApproval {
++				if sc := NextecSchemeFromAppName(s.AppName); sc != "" {
++					dv.AppName, dv.Scheme, dv.SchemeSource = s.AppName, sc, NextecSchemeSrcMachine
++				}
++			}
+ 			dv.HasPassword = s.ActiveEnc != ""
+ 			dv.Pending = s.PendingEnc != ""
+ 			dv.Version, dv.ActiveAt, dv.NextRotationAt = s.Version, s.ActiveAt, s.NextRotationAt

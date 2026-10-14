@@ -74,6 +74,7 @@ internal static class Fake {
     throw "rota inesperada: $caminho"
   }
   function Get-Calls([string]$path) { return @($script:calls | Where-Object { $_.path -eq $path }).Count }
+  function Get-LastSyncBody { return @($script:calls | Where-Object { $_.path -eq '/api/nextec/agent/sync' })[-1].body }
   function Get-NextecPainelConfigurado { param($Root, $Padrao, $RegistryKey) return $script:painel }
   function ClienteInstalado { return [pscustomobject]@{ ExePath = $fakeExe; PeerId = '536822159' } }
 
@@ -108,6 +109,9 @@ internal static class Fake {
   Assert ((Get-ExeCalls) -eq $exeBefore) "cliente chamado durante a espera ($exeBefore -> $(Get-ExeCalls))"
   Assert ((Get-Calls '/api/nextec/agent/sync') -eq $syncBefore + 3) 'sync com o painel parou durante a espera'
   Assert ((Get-LogLines).Count -eq $linesBefore) 'log cresceu durante a espera'
+  # last_error (0035): as rodadas seguintes informam o codigo estavel ao painel, que mostra 'A troca de senha esta falhando'
+  Assert ((Get-LastSyncBody).last_error -ceq 'client_settings_locked') 'sync em espera nao levou last_error = client_settings_locked'
+  Assert (-not @($script:calls | Where-Object { $_.path -eq '/api/nextec/agent/sync' })[0].body.ContainsKey('last_error')) 'primeiro sync levou last_error sem falha anterior'
   Write-Host 'PASS Locked_NoRetryDuringWait'
 
   # 3) espera vencida: tenta de novo e volta a esperar
@@ -125,6 +129,9 @@ internal static class Fake {
   Assert ((Get-Calls '/api/nextec/agent/confirm') -eq 1) 'senha nao confirmada apos reinstalacao'
   Assert (-not (Test-Path -LiteralPath $wait)) 'espera nao foi removida apos reinstalacao'
   Assert ([IO.File]::ReadAllText($callsFile) -match '--password') 'senha nao foi aplicada pelo CLI'
+  Assert (-not (Test-Path -LiteralPath (Join-Path $PastaDados 'agente-senha.ultimo-erro'))) 'rodada sem erro nao limpou o ultimo erro'
+  Assert (Invoke-NextecAgentExecute) 'rodada seguinte deveria passar'
+  Assert (-not (Get-LastSyncBody).ContainsKey('last_error')) 'sync depois do sucesso ainda levou last_error (o painel nao limparia o aviso)'
   Write-Host 'PASS Locked_ReinstallClearsWaitAndApplies'
 
   # 5) unidade: espera de outro executavel nao vale; espera ilegivel e descartada

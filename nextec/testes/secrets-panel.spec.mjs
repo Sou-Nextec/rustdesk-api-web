@@ -20,8 +20,11 @@ vi.mock('@/utils/request', () => {
 const tick = (ms = 20) => new Promise(r => setTimeout(r, ms))
 const semCliente = { peer_id: '536822159', alias: 'servidor', group_id: 0, enrolled: false, managed: false }
 const semAgente = { peer_id: '222222222', alias: 'srv-agente', group_id: 7, enrolled: false, managed: false }
-const semRegra = { peer_id: '333333333', alias: 'srv-regra', group_id: 7, enrolled: true, managed: false, last_seen_at: Date.now() / 1000 }
-const pronta = { peer_id: '444444444', alias: 'srv-pronto', group_id: 7, enrolled: true, managed: true, has_password: true, version: 2, interval_minutes: 180, last_seen_at: Date.now() / 1000 }
+const semRegra = { peer_id: '333333333', alias: 'srv-regra', group_id: 7, enrolled: true, managed: false, last_seen_at: Date.now() / 1000, last_sync_at: Date.now() / 1000 - 30, agent_state: 'ativo' }
+const pronta = { peer_id: '444444444', alias: 'srv-pronto', group_id: 7, enrolled: true, managed: true, has_password: true, version: 2, interval_minutes: 180, last_seen_at: Date.now() / 1000, last_sync_at: Date.now() / 1000 - 30, agent_state: 'ativo' }
+// Caso real: cadastrou e gravou last_seen_at agora, mas o agente nunca consultou (instalação desfeita pelo rollback do .cmd).
+const cadastradaSemSync = { peer_id: '666666666', alias: 'srv-fantasma', group_id: 7, enrolled: true, managed: true, has_password: false, interval_minutes: 180, last_seen_at: Date.now() / 1000 - 60, last_sync_at: 0, enrolled_at: Date.now() / 1000 - 3600, agent_state: 'parado' }
+const paradaHaMuito = { peer_id: '777777777', alias: 'srv-parado', group_id: 7, enrolled: true, managed: true, has_password: true, version: 4, interval_minutes: 180, last_seen_at: Date.now() / 1000 - 7200, last_sync_at: Date.now() / 1000 - 2 * 3600, enrolled_at: Date.now() / 1000 - 86400, agent_state: 'parado' }
 
 let ElementPlus, icons, Panel, pinia
 let app, host
@@ -92,6 +95,89 @@ describe('Senhas dos servidores, fluxo guiado', () => {
     expect(host.querySelector('.nx-hero-title').textContent).toContain('Tudo pronto')
   })
 
+  it('Trocar agora promete até 1 minuto (não 5) e a troca pedida aparece na linha', async () => {
+    await mount([{ ...pronta, force_rotate: true }])
+    const row = rowTexts().find(t => t.includes('srv-pronto'))
+    expect(row).toContain('Troca solicitada: começa em até 1 minuto')
+    expect(row).not.toContain('5 minutos')
+    const trocar = [...host.querySelectorAll('button')].find(b => b.textContent.trim() === 'Trocar agora')
+    trocar.click()
+    for (let i = 0; i < 5; i++) { await nextTick(); await tick() }
+    expect(document.body.textContent).toContain('A troca começa em até 1 minuto')
+    expect(document.body.textContent).not.toContain('até 5 minutos')
+  })
+
+  it('estado parado, cadastrada sem nenhuma consulta: nunca mostra Tudo pronto nem Aguardando a primeira troca', async () => {
+    await mount([cadastradaSemSync])
+    const row = rowTexts().find(t => t.includes('srv-fantasma'))
+    expect(row).toContain('Agente cadastrado, mas nunca consultou o painel.')
+    expect(row).toContain('Reinstale o agente.')
+    expect(row).toContain('Etapa 2 de 3: Agente parado')
+    expect(row).toContain('Reinstalar agente')
+    expect(row).not.toContain('Tudo pronto')
+    expect(row).not.toContain('Agente ativo')
+    expect(row).not.toContain('visto há')
+    expect(row).not.toContain('Aguardando a primeira troca')
+    expect(row).not.toContain('Instalar agente')
+    expect(host.querySelector('.nx-hero-title').textContent).toBe('1 máquina com agente parado. Reinstale o agente.')
+    expect(host.querySelector('.nx-hero-cta').textContent.trim()).toBe('Reinstalar agente')
+    expect(host.querySelector('.nx-next').textContent.trim()).toBe('Reinstalar agente')
+    // Remover agente fica visível e explicado
+    const remover = buttons().filter(t => t === 'Remover agente')
+    expect(remover.length).toBe(1)
+  })
+
+  it('estado parado com contato antigo mostra há quanto tempo e volta à etapa 2', async () => {
+    await mount([paradaHaMuito])
+    const row = rowTexts().find(t => t.includes('srv-parado'))
+    expect(row).toContain('Agente cadastrado, mas sem contato há 2 h.')
+    expect(row).toContain('Reinstale o agente.')
+    expect(row).toContain('Etapa 2 de 3: Agente parado')
+    expect(row).toContain('Regra pronta, mas o agente está parado')
+    expect(row).not.toContain('Tudo pronto')
+    const steps = host.querySelectorAll('.nx-steps-list .nx-step')
+    expect(steps[0].textContent).toContain('concluída')
+    expect(steps[1].getAttribute('aria-current')).toBe('step')
+  })
+
+  it('Reinstalar agente abre o diálogo com o mesmo arquivo; agente ativo não mostra Reinstalar', async () => {
+    await mount([paradaHaMuito])
+    host.querySelector('.nx-next').click()
+    for (let i = 0; i < 5; i++) { await nextTick(); await tick() }
+    const txt = document.body.textContent
+    expect(txt).toContain('parou de consultar o painel')
+    expect(txt).toContain('Baixar arquivo para reinstalar')
+    const dlgBtn = [...document.body.querySelectorAll('.nx-agent-go button')][0]
+    expect(dlgBtn.disabled).toBe(false)
+    app.unmount(); host.remove(); document.body.innerHTML = ''
+    await mount([pronta])
+    expect(host.textContent).toContain('Agente ativo')
+    expect(host.textContent).toContain('última consulta há')
+    expect(rowTexts().join(' ')).not.toContain('Reinstalar agente')
+    expect(buttons().filter(t => t === 'Remover agente').length).toBe(0)
+  })
+
+  it('só fica ativo com consulta real: o mesmo cadastro vira Tudo pronto quando há last_sync_at recente', async () => {
+    await mount([{ ...cadastradaSemSync, last_sync_at: Date.now() / 1000 - 20, agent_state: 'ativo', has_password: true, version: 1 }])
+    const row = rowTexts().find(t => t.includes('srv-fantasma'))
+    expect(row).toContain('Tudo pronto')
+    expect(row).toContain('Agente ativo')
+  })
+
+  it('troca falhando: mostra o erro do agente com a ação, no lugar de Aguardando a primeira troca', async () => {
+    await mount([{ ...pronta, has_password: false, version: 0, last_error: 'client_settings_locked', last_error_at: Date.now() / 1000 - 60 }])
+    const row = rowTexts().find(t => t.includes('srv-pronto'))
+    expect(row).toContain('A troca de senha está falhando: as configurações do app nesta máquina estão bloqueadas')
+    expect(row).toContain('Gere o instalador de novo e instale por cima.')
+    expect(row).not.toContain('Aguardando a primeira troca')
+    app.unmount(); host.remove(); document.body.innerHTML = ''
+    // sucesso: o servidor limpa last_error e a tela volta ao normal
+    await mount([{ ...pronta, has_password: false, version: 0, last_error: '' }])
+    const ok = rowTexts().find(t => t.includes('srv-pronto'))
+    expect(ok).toContain('Aguardando a primeira troca')
+    expect(ok).not.toContain('está falhando')
+  })
+
   it('o stepper é acessível: lista com etapa atual marcada e texto para leitor de tela', async () => {
     await mount([semAgente])
     const steps = host.querySelectorAll('.nx-steps-list .nx-step')
@@ -150,7 +236,7 @@ describe('Senhas dos servidores, fluxo guiado', () => {
     const tabs = [...host.querySelectorAll('.el-tabs__item')]
     tabs.find(t => t.textContent.includes('Pendentes')).click()
     for (let i = 0; i < 5; i++) { await nextTick(); await tick() }
-    expect(host.querySelector('.nx-next-check').textContent).toMatch(/Próxima verificação em ~4 min/)
+    expect(host.querySelector('.nx-next-check').textContent).toMatch(/Próxima verificação em instantes/)
     host.querySelector('.nx-next').click()
     for (let i = 0; i < 5; i++) { await nextTick(); await tick() }
     const radios = [...document.body.querySelectorAll('.nx-radios .el-radio')].map(r => r.textContent.trim())
