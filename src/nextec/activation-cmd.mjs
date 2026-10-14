@@ -43,52 +43,101 @@ function toBase64(text) {
   return btoa(unescape(encodeURIComponent(text)))
 }
 
-// Localiza o app/agente sem depender do nome do app (qualquer nome serve: Nextec-Connect, Client-Nextec-Connect, XPTO...).
+// Localiza o agente sem depender do nome do app (qualquer nome serve: Nextec-Connect, Client-Nextec-Connect, XPTO...).
 // Ordem: 1) pasta de dados fixa; 2) MARCADOR de instalação (HKLM\SOFTWARE\Nextec\Agente {InstallDir,AppName} e
 // nextec-marker.json na pasta de dados); 3) entrada de desinstalação cuja pasta contém o Coordenar-*.ps1 (qualquer
 // DisplayName); 4) serviço RustDesk (--service) cujo exe vizinho contém o Coordenar-*.ps1, e tarefa agendada Nextec;
 // 5) varredura limitada (até 2 níveis, 300 pastas) de %ProgramFiles%. Nada aqui depende de nome literal.
-// Dados reais do registro e dos serviços chegam sujos (aspas, %VAR%, drive inexistente, UNC, valor não texto): todo
-// caminho passa por ConvertTo-NextecPath/Join-NextecPath, que nunca lançam. Um serviço RustDesk sem o agente ainda
-// identifica o app (App/AppPath), para o .cmd saber que há app e instalar o agente nele.
 // $Marker/$Entries/$Services/$TaskArgs podem ser injetados (testes); sem eles lê o registro, os serviços e as tarefas reais.
+// Dado externo é sujo (InstallLocation entre aspas, %VAR%, UNC, drive inexistente, caractere inválido): todo caminho
+// passa por ConvertTo-NextecPath e cada candidato fica num try/catch próprio. Entrada ruim vira "ignorado: ... (motivo)"
+// em Searched e a busca continua; nunca Join-Path/Split-Path em dado externo. Só ASCII aqui (o .cmd é ASCII).
 export const FIND_AGENT_PS = String.raw`function ConvertTo-NextecPath {
   param($Value)
-  try {
-    if ($null -eq $Value) { return '' }
-    $s = ([string]$Value).Trim()
-    $s = $s.Trim([char]34).Trim([char]39).Trim()
-    if (-not $s -or $s.Length -gt 520) { return '' }
-    $s = [Environment]::ExpandEnvironmentVariables($s)
-    if ($s.IndexOfAny([IO.Path]::GetInvalidPathChars()) -ge 0) { return '' }
-    if ($s -notmatch '^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/])') { return '' }
-    return [IO.Path]::GetFullPath($s)
-  } catch { return '' }
+  $trim = [char[]]@(32, 9, 10, 13, 34, 39)
+  $v = ([string]$Value).Trim($trim)
+  if (-not $v) { throw 'vazio' }
+  if ($v.IndexOf('%') -ge 0) { $v = ([Environment]::ExpandEnvironmentVariables($v)).Trim($trim) }
+  if ($v -match '%[^%\\]+%') { throw '%VAR% sem valor' }
+  $v = $v.Replace('/', '\')
+  if ($v.StartsWith('\\')) { throw 'caminho de rede' }
+  if ($v -notmatch '^[A-Za-z]:\\') { throw 'fora do formato X:\' }
+  if ($v.IndexOfAny([IO.Path]::GetInvalidPathChars()) -ge 0 -or $v.IndexOfAny([char[]]@(42, 63)) -ge 0 -or $v.IndexOf(':', 2) -ge 0) { throw 'caractere proibido' }
+  $v = $v.Substring(0, 3) + ($v.Substring(3) -replace '\\{2,}', '\')
+  try { $v = [IO.Path]::GetFullPath($v) } catch { throw 'formato recusado' }
+  if ($v.Length -gt 3) { $v = $v.TrimEnd('\') }
+  if ($v -notmatch '^[A-Za-z]:\\') { throw 'fora do formato X:\' }
+  return $v
 }
-function Join-NextecPath {
-  param($Dir, [string]$Leaf)
-  try {
-    $d = ConvertTo-NextecPath $Dir
-    if (-not $d) { return '' }
-    return [IO.Path]::Combine($d, $Leaf)
-  } catch { return '' }
+function Add-NextecIgnored {
+  param($List, $Raw, $Why)
+  $t = (([string]$Raw) -replace '[\x00-\x1F]', ' ').Trim()
+  if ($t.Length -gt 160) { $t = $t.Substring(0, 160) + '...' }
+  [void]$List.Add('ignorado: ' + $t + ' (' + [string]$Why + ')')
 }
 function Test-NextecFile {
   param([string]$Path)
-  try { if (-not $Path) { return $false }; return [IO.File]::Exists($Path) } catch { return $false }
+  try { return [IO.File]::Exists($Path) } catch { return $false }
 }
-function Test-NextecDirectory {
-  param([string]$Path)
-  try { if (-not $Path) { return $false }; return [IO.Directory]::Exists($Path) } catch { return $false }
+function Test-NextecRustDeskDir {
+  param([string]$Dir, [string]$Hint)
+  try {
+    if (-not [IO.Directory]::Exists($Dir)) { return $false }
+    foreach ($f in @('librustdesk.dll', 'rustdesk.exe')) { if ([IO.File]::Exists([IO.Path]::Combine($Dir, $f))) { return $true } }
+    $exes = New-Object System.Collections.ArrayList
+    if ($Hint) { try { [void]$exes.Add([IO.Path]::Combine($Dir, $Hint + '.exe')) } catch { } }
+    [void]$exes.Add([IO.Path]::Combine($Dir, [IO.Path]::GetFileName($Dir) + '.exe'))
+    foreach ($x in $exes) {
+      if (-not [IO.File]::Exists($x)) { continue }
+      $vi = [Diagnostics.FileVersionInfo]::GetVersionInfo($x)
+      if ((@($vi.ProductName, $vi.OriginalFilename, $vi.InternalName, $vi.FileDescription, $vi.CompanyName) -join ' ') -match '(?i)rustdesk') { return $true }
+    }
+  } catch { }
+  return $false
 }
+function Add-NextecApp {
+  param($Apps, [string]$Name, [string]$Path, [bool]$Service)
+  $Name = $Name.Trim()
+  if (-not $Name) { $Name = [IO.Path]::GetFileName($Path) }
+  foreach ($x in $Apps) { if ($x.Path -ieq $Path) { if ($Service) { $x.Service = $true }; return } }
+  [void]$Apps.Add([pscustomobject]@{ Name = $Name; Path = $Path; Service = $Service })
+}
+# Fachada: Searched sem repeticao (registro 64/32 bits, servico e varredura repetem caminhos).
 function Find-NextecAgent {
+  param([string]$DataRoot, [string[]]$ProgramRoots, $Entries, $TaskArgs, $Marker, $Services, [string]$MarkerFile)
+  $r = Find-NextecAgentCore @PSBoundParameters
+  $u = New-Object System.Collections.ArrayList
+  $seen = @{}
+  foreach ($x in $r.Searched) {
+    $k = ([string]$x).ToLowerInvariant()
+    if (-not $seen.ContainsKey($k)) { $seen[$k] = $true; [void]$u.Add([string]$x) }
+  }
+  $r.Searched = $u
+  return $r
+}
+# App instalado SEM o agente (desinstalacao, servico --service ou pasta com RustDesk): preenche App/AppPath para a
+# mensagem "gere com o MESMO nome". Havendo servico, so os apps com servico (o suporte avulso nao instala servico).
+function Set-NextecAppGuess {
+  param($R, $Apps)
+  if ($R.App -or $Apps.Count -eq 0) { return $R }
+  $pick = New-Object System.Collections.ArrayList
+  foreach ($x in $Apps) { if ($x.Service) { [void]$pick.Add($x) } }
+  if ($pick.Count -eq 0) { foreach ($x in $Apps) { [void]$pick.Add($x) } }
+  $names = New-Object System.Collections.ArrayList
+  foreach ($x in $pick) { if ($names.Count -lt 3 -and -not ($names -icontains $x.Name)) { [void]$names.Add($x.Name) } }
+  $R.App = ($names.ToArray()) -join ' ou '
+  if (-not $R.AppPath) { $R.AppPath = $pick[0].Path }
+  return $R
+}
+function Find-NextecAgentCore {
   param([string]$DataRoot, [string[]]$ProgramRoots, $Entries, $TaskArgs, $Marker, $Services, [string]$MarkerFile)
   $name = 'Coordenar-Agente-Nextec.ps1'
   $searched = New-Object System.Collections.ArrayList
+  $apps = New-Object System.Collections.ArrayList
   $r = [pscustomobject]@{ Script = ''; App = ''; AppPath = ''; Searched = $searched }
-  $c = Join-NextecPath $DataRoot $name
-  if (-not $c) { $c = [string]$DataRoot + '\' + $name }
-  [void]$searched.Add($c)
+  $c = ''
+  try { $DataRoot = ConvertTo-NextecPath $DataRoot; $c = [IO.Path]::Combine($DataRoot, $name); [void]$searched.Add($c) }
+  catch { Add-NextecIgnored $searched $DataRoot ('pasta de dados: ' + $_.Exception.Message); $DataRoot = '' }
   if ($null -eq $Marker) {
     $Marker = [pscustomobject]@{ InstallDir = ''; AppName = '' }
     try {
@@ -96,114 +145,149 @@ function Find-NextecAgent {
       $Marker.InstallDir = [string]$reg.InstallDir; $Marker.AppName = [string]$reg.AppName
     } catch { }
     if (-not $Marker.InstallDir -and -not $Marker.AppName) {
-      $mp = $MarkerFile
-      if (-not $mp) { $mp = Join-NextecPath $DataRoot 'nextec-marker.json' }
       try {
-        if (Test-NextecFile $mp) {
-          $mj = Get-Content -Raw -LiteralPath $mp -ErrorAction Stop | ConvertFrom-Json
-          if ($mj.InstallDir) { $Marker.InstallDir = [string]$mj.InstallDir } elseif ($mj.install_dir) { $Marker.InstallDir = [string]$mj.install_dir }
-          if ($mj.AppName) { $Marker.AppName = [string]$mj.AppName } elseif ($mj.app_name) { $Marker.AppName = [string]$mj.app_name }
+        $mp = $MarkerFile
+        if (-not $mp -and $DataRoot) { $mp = [IO.Path]::Combine($DataRoot, 'nextec-marker.json') }
+        if ($mp) {
+          $mp = ConvertTo-NextecPath $mp
+          if (Test-NextecFile $mp) {
+            $mj = [IO.File]::ReadAllText($mp) | ConvertFrom-Json
+            if ($mj.InstallDir) { $Marker.InstallDir = [string]$mj.InstallDir } elseif ($mj.install_dir) { $Marker.InstallDir = [string]$mj.install_dir }
+            if ($mj.AppName) { $Marker.AppName = [string]$mj.AppName } elseif ($mj.app_name) { $Marker.AppName = [string]$mj.app_name }
+          }
         }
       } catch { }
     }
   }
-  if ($Marker.AppName) { $r.App = [string]$Marker.AppName }
-  if (Test-NextecFile $c) { $r.Script = $c; return $r }
-  $markerDir = ConvertTo-NextecPath $Marker.InstallDir
-  if ($markerDir) {
-    if (Test-NextecDirectory $markerDir) { $r.AppPath = $markerDir }
-    $p = Join-NextecPath $markerDir $name
-    [void]$searched.Add($p)
-    if (Test-NextecFile $p) { $r.Script = $p; return $r }
+  $mDir = ''; $mApp = ''
+  try { $mDir = [string]$Marker.InstallDir; $mApp = [string]$Marker.AppName } catch { }
+  if ($mApp) { $r.App = $mApp.Trim() }
+  if ($c -and (Test-NextecFile $c)) { $r.Script = $c; return $r }
+  if ($mDir.Trim()) {
+    try {
+      $md = ConvertTo-NextecPath $mDir
+      $r.AppPath = $md
+      $p = [IO.Path]::Combine($md, $name)
+      [void]$searched.Add($p)
+      if (Test-NextecFile $p) { $r.Script = $p; return $r }
+    } catch { Add-NextecIgnored $searched $mDir ('marcador: ' + $_.Exception.Message) }
   }
   if ($null -eq $Entries) {
     $Entries = New-Object System.Collections.ArrayList
     foreach ($k in @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall')) {
-      try { foreach ($i in @(Get-ItemProperty -Path ($k + '\*') -ErrorAction SilentlyContinue)) { [void]$Entries.Add($i) } } catch { }
+      $keys = @()
+      try { $keys = @(Get-ChildItem -LiteralPath $k -ErrorAction SilentlyContinue) } catch { $keys = @() }
+      foreach ($key in $keys) {
+        try { [void]$Entries.Add((Get-ItemProperty -LiteralPath $key.PSPath -ErrorAction Stop)) } catch { }
+      }
     }
   }
-  foreach ($e in @($Entries)) {
+  foreach ($e in $Entries) {
     if ($null -eq $e) { continue }
-    $loc = ConvertTo-NextecPath $e.InstallLocation
-    if (-not $loc) { continue }
-    $p = Join-NextecPath $loc $name
-    $display = [string]$e.DisplayName
-    $isMarkerApp = ($r.App -and $display -and ($display -ieq $r.App))
-    [void]$searched.Add($p)
-    if (Test-NextecFile $p) {
-      if ($display -and -not $r.App) { $r.App = $display }
-      if (-not $r.AppPath) { $r.AppPath = $loc }
-      $r.Script = $p; return $r
-    }
-    if ($isMarkerApp -and -not $r.AppPath) { $r.AppPath = $loc }
+    $raw = ''
+    try {
+      $raw = [string]$e.InstallLocation
+      if (-not $raw.Trim()) { continue }
+      $loc = ConvertTo-NextecPath $raw
+      $p = [IO.Path]::Combine($loc, $name)
+      $dn = ([string]$e.DisplayName).Trim()
+      [void]$searched.Add($p)
+      if (Test-NextecFile $p) {
+        if ($dn -and -not $r.App) { $r.App = $dn }
+        if (-not $r.AppPath) { $r.AppPath = $loc }
+        $r.Script = $p; return $r
+      }
+      if ($r.App -and $dn -and ($dn -ieq $r.App) -and -not $r.AppPath) { $r.AppPath = $loc }
+      if (Test-NextecRustDeskDir $loc $dn) { Add-NextecApp $apps $dn $loc $false }
+    } catch { Add-NextecIgnored $searched $raw $_.Exception.Message }
   }
   if ($null -eq $Services) {
     $Services = @()
-    try { $Services = @(Get-CimInstance -ClassName Win32_Service -ErrorAction Stop) } catch { $Services = @() }
+    try { $Services = @(Get-CimInstance -ClassName Win32_Service -ErrorAction Stop) }
+    catch { try { $Services = @(Get-WmiObject -Class Win32_Service -ErrorAction Stop) } catch { $Services = @() } }
   }
-  $svcName = ''; $svcDir = ''
-  foreach ($s in @($Services)) {
+  foreach ($s in $Services) {
     if ($null -eq $s) { continue }
-    $pn = [string]$s.PathName
-    if ($pn -notmatch '(?i)(?:^|\s)--service(?:\s|$)') { continue }
-    $m = [regex]::Match($pn, '^\s*"([^"]+\.exe)"')
-    if (-not $m.Success) { $m = [regex]::Match($pn, '^\s*(\S.*?\.exe)(?=\s|$)') }
-    if (-not $m.Success) { continue }
-    $exe = ConvertTo-NextecPath $m.Groups[1].Value
-    if (-not $exe) { continue }
-    $dir = ''
-    try { $dir = [IO.Path]::GetDirectoryName($exe) } catch { $dir = '' }
-    if (-not $dir) { continue }
-    $p = Join-NextecPath $dir $name
-    [void]$searched.Add($p)
-    if (Test-NextecFile $p) {
-      if (-not $r.App) { $r.App = [string]$s.Name }
-      if (-not $r.AppPath) { $r.AppPath = $dir }
-      $r.Script = $p; return $r
-    }
-    if (-not $svcDir -and (Test-NextecFile $exe)) { $svcName = [string]$s.Name; $svcDir = $dir }
+    $pn = ''
+    try {
+      $pn = [string]$s.PathName
+      if ($pn -notmatch '(?i)(?:^|\s)--service(?:\s|$)') { continue }
+      $m = [regex]::Match($pn, '(?i)^\s*"([^"]+?\.exe)"')
+      if (-not $m.Success) { $m = [regex]::Match($pn, '(?i)^\s*([^\s"].*?\.exe)(?=\s|$)') }
+      if (-not $m.Success) { throw 'PathName sem .exe' }
+      $exe = ConvertTo-NextecPath $m.Groups[1].Value
+      $dir = [IO.Path]::GetDirectoryName($exe)
+      if (-not $dir) { throw 'PathName sem pasta' }
+      $p = [IO.Path]::Combine($dir, $name)
+      [void]$searched.Add($p)
+      if (Test-NextecFile $p) {
+        if (-not $r.App) { $r.App = [string]$s.Name }
+        if (-not $r.AppPath) { $r.AppPath = $dir }
+        $r.Script = $p; return $r
+      }
+      if (Test-NextecFile $exe) { Add-NextecApp $apps ([string]$s.Name) $dir $true }
+    } catch { Add-NextecIgnored $searched $pn $_.Exception.Message }
   }
   if ($null -eq $TaskArgs) {
     $TaskArgs = @()
-    try { $TaskArgs = @(Get-ScheduledTask -TaskName 'Nextec*' -ErrorAction SilentlyContinue | ForEach-Object { $_.Actions } | ForEach-Object { [string]$_.Arguments }) } catch { $TaskArgs = @() }
+    try {
+      if (Get-Command -Name Get-ScheduledTask -ErrorAction SilentlyContinue) {
+        $TaskArgs = @(Get-ScheduledTask -TaskName 'Nextec*' -ErrorAction SilentlyContinue | ForEach-Object { $_.Actions } | ForEach-Object { [string]$_.Arguments })
+      }
+    } catch { $TaskArgs = @() }
   }
-  foreach ($a in @($TaskArgs)) {
-    $m = [regex]::Match([string]$a, '-File\s+"?([^"]+\.ps1)"?')
-    if ($m.Success) {
-      $tp = ConvertTo-NextecPath $m.Groups[1].Value
-      if (-not $tp) { continue }
-      $td = ''
-      try { $td = [IO.Path]::GetDirectoryName($tp) } catch { $td = '' }
-      $p = Join-NextecPath $td $name
-      if (-not $p) { continue }
+  foreach ($a in $TaskArgs) {
+    $raw = ''
+    try {
+      $raw = [string]$a
+      $m = [regex]::Match($raw, '(?i)(?:^|\s)-File\s+(?:"([^"]+)"|''([^'']+)''|([^\s"''].*?\.ps1)(?=\s|$))')
+      if (-not $m.Success) { continue }
+      $f = ''
+      foreach ($g in 1, 2, 3) { if ($m.Groups[$g].Success) { $f = $m.Groups[$g].Value } }
+      $f = ConvertTo-NextecPath $f
+      $dir = [IO.Path]::GetDirectoryName($f)
+      if (-not $dir) { throw 'tarefa sem pasta' }
+      $p = [IO.Path]::Combine($dir, $name)
       [void]$searched.Add($p)
       if (Test-NextecFile $p) { $r.Script = $p; return $r }
-    }
+    } catch { Add-NextecIgnored $searched $raw ('tarefa: ' + $_.Exception.Message) }
   }
   $budget = 300
-  foreach ($root in @($ProgramRoots)) {
-    $rootPath = ConvertTo-NextecPath $root
-    if (-not $rootPath -or -not (Test-NextecDirectory $rootPath)) { continue }
-    foreach ($d in @(Get-ChildItem -LiteralPath $rootPath -Directory -ErrorAction SilentlyContinue)) {
+  $seenRoots = @{}
+  foreach ($root0 in @($ProgramRoots)) {
+    $root = ''
+    try {
+      if (-not ([string]$root0).Trim()) { continue }
+      $root = ConvertTo-NextecPath $root0
+    } catch { Add-NextecIgnored $searched $root0 ('Program Files: ' + $_.Exception.Message); continue }
+    if ($seenRoots.ContainsKey($root.ToLowerInvariant())) { continue }
+    $seenRoots[$root.ToLowerInvariant()] = $true
+    try { if (-not [IO.Directory]::Exists($root)) { continue } } catch { continue }
+    $dirs = @()
+    try { $dirs = @(Get-ChildItem -LiteralPath $root -Directory -ErrorAction SilentlyContinue) } catch { $dirs = @() }
+    foreach ($d in $dirs) {
       if ($budget -le 0) { break }
       $budget--
-      $cands = @((Join-NextecPath $d.FullName $name))
-      foreach ($sub in @(Get-ChildItem -LiteralPath $d.FullName -Directory -ErrorAction SilentlyContinue)) { $budget--; $cands += (Join-NextecPath $sub.FullName $name) }
-      foreach ($p in $cands) {
-        if ($p -and (Test-NextecFile $p)) {
-          if (-not $r.App) { $r.App = $d.Name }
-          if (-not $r.AppPath) { $r.AppPath = $d.FullName }
-          [void]$searched.Add($p)
-          $r.Script = $p; return $r
+      try {
+        $cands = New-Object System.Collections.ArrayList
+        [void]$cands.Add([IO.Path]::Combine($d.FullName, $name))
+        $subs = @()
+        try { $subs = @(Get-ChildItem -LiteralPath $d.FullName -Directory -ErrorAction SilentlyContinue) } catch { $subs = @() }
+        foreach ($sub in $subs) { $budget--; [void]$cands.Add([IO.Path]::Combine($sub.FullName, $name)) }
+        foreach ($p in $cands) {
+          if (Test-NextecFile $p) {
+            if (-not $r.App) { $r.App = $d.Name }
+            if (-not $r.AppPath) { $r.AppPath = $d.FullName }
+            [void]$searched.Add($p)
+            $r.Script = $p; return $r
+          }
         }
-      }
-      [void]$searched.Add((Join-NextecPath $d.FullName $name))
+        [void]$searched.Add($cands[0])
+        if (Test-NextecRustDeskDir $d.FullName $d.Name) { Add-NextecApp $apps $d.Name $d.FullName $false }
+      } catch { Add-NextecIgnored $searched $d.FullName $_.Exception.Message }
     }
   }
-  # app RustDesk instalado, mas sem o agente: o .cmd instala o agente nele
-  if (-not $r.App -and $svcName) { $r.App = $svcName }
-  if (-not $r.AppPath -and $svcDir) { $r.AppPath = $svcDir }
-  return $r
+  return (Set-NextecAppGuess $r $apps)
 }`
 
 // Instalação do pacote embutido, agente antigo e orquestração do fluxo. Roda elevado (o .cmd se reabre por UAC).
@@ -414,7 +498,9 @@ function Invoke-NxActivation {
     Initialize-NxRoot -Root $Root
     Write-NxLog $Root 'inicio'
     $app = [string]$Found.App
-    if (-not $Found.Script -and -not $Found.AppPath) {
+    $appThere = $false
+    try { $appThere = ([bool]$Found.Script) -or ([bool][string]$Found.App) -or ([bool]$Found.AppPath -and [IO.Directory]::Exists([string]$Found.AppPath)) } catch { $appThere = $false }
+    if (-not $appThere) {
       Write-NxLog $Root 'app_nao_encontrado'
       & $Say ($M.notInstalled + $M.searched + (@($Found.Searched) -join '; '))
       return 1
@@ -443,6 +529,11 @@ function Invoke-NxActivation {
     # 3) instala o que faltar (Coordenar, Provisionar, Agente-Senha) e registra a tarefa do coordenador
     foreach ($name in @($plan.Install)) { Set-NxScript -Root $Root -Name $name -Bytes $files[$name] -Stamp $stamp }
     Write-NxLog $Root ('instalado=' + (@($plan.Install) -join ',') + ' substituir=' + $replace)
+    # scripts que ja estavam la (versao igual ou mais nova) tambem ficam com dono e ACL do coordenador
+    foreach ($name in @('Coordenar-Agente-Nextec.ps1', 'Provisionar-Agente-Nextec.ps1', 'Agente-Senha-Nextec.ps1')) {
+      $path = [IO.Path]::Combine($Root, $name)
+      if ([IO.File]::Exists($path)) { try { Set-Acl -LiteralPath $path -AclObject (New-NxAcl -WithOwner) } catch { } }
+    }
     $taskOk = $false
     try { $taskOk = [bool](Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) } catch { $taskOk = $false }
     if (@($plan.Install).Count -gt 0 -or -not $taskOk) {
@@ -523,6 +614,8 @@ export const MESSAGES = {
   expired: 'O prazo de 15 minutos venceu. Gere uma nova autorização no painel.',
   notInstalled: 'O app Nextec não está instalado nesta máquina (nenhum serviço RustDesk foi encontrado). Instale o app gerado pelo painel e execute este arquivo de novo.',
   searched: ' Procurei em: ',
+  others: ' e outros {0}.',
+  fullList: ' Lista completa em: ',
   otherMachine: 'Este arquivo é de outra máquina (o ID não confere). Gere a autorização para esta máquina.',
   client: 'Não foi possível identificar o ID do app instalado nesta máquina (serviço não encontrado ou sem resposta). Confirme que o app está instalado e em execução e tente de novo. Detalhes em ativar.log.',
   pending: 'Já existe uma ativação em andamento nesta máquina. Aguarde até 5 minutos.',
@@ -561,6 +654,8 @@ export function buildActivationCmd(bundle, now = Date.now(), pkg, options = {}) 
 
   const ps = [
     "$ErrorActionPreference = 'Stop'",
+    // rede de segurança: nenhum erro inesperado (arquivo corrompido, ambiente estranho) termina com exceção crua
+    'trap { Write-Host (' + m.failed + '); exit 1 }',
     "$self = $env:NX_SELF",
     "$lines = [IO.File]::ReadAllLines($self)",
     "$id = ($lines | Where-Object { $_ -like 'rem NXID *' } | Select-Object -First 1).Substring(9).Trim()",
@@ -574,22 +669,46 @@ export function buildActivationCmd(bundle, now = Date.now(), pkg, options = {}) 
     '  try { Start-Process -FilePath $env:ComSpec -ArgumentList (\'/c ""\' + $self + \'""\') -Verb RunAs; exit 5 }',
     '  catch { Say (' + m.notAdmin + '); exit 1 }',
     '}',
-    "$root = Join-Path $env:ProgramData 'Nextec\\Acesso'",
+    "$pd = [string]$env:ProgramData; if (-not $pd.Trim()) { $pd = [string]$env:SystemDrive + '\ProgramData' }",
+    "$root = [IO.Path]::Combine($pd, 'Nextec\Acesso')",
     "if ($rootLine) { $root = $rootLine.Substring(10).Trim() }",
     ...FIND_AGENT_PS.split('\n'),
     ...INSTALL_AGENT_PS.split('\n'),
     '$M = @{',
     ...messages,
     '}',
-    '$psexe = Join-Path $env:SystemRoot \'System32\\WindowsPowerShell\\v1.0\\powershell.exe\'',
+    '$psexe = Join-Path $env:SystemRoot \'System32\WindowsPowerShell\v1.0\powershell.exe\'',
     '$run = {',
     '  param($script, $argList)',
     "  $ErrorActionPreference = 'Continue'",
     '  $o = & $psexe -NoProfile -ExecutionPolicy Bypass -File $script @argList 2>&1 | Out-String',
     '  [pscustomobject]@{ Code = $LASTEXITCODE; Out = $o }',
     '}',
-    '$pf = @($env:ProgramFiles, ${env:ProgramFiles(x86)})',
-    '$found = Find-NextecAgent -DataRoot $root -ProgramRoots $pf',
+    '$pf = @($env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramW6432)',
+    'try { $found = Find-NextecAgent -DataRoot $root -ProgramRoots $pf }',
+    "catch { $found = [pscustomobject]@{ Script = ''; App = ''; AppPath = ''; Searched = @($root, ('busca interrompida: ' + $_.Exception.Message)) } }",
+    // nenhum app: ao usuário, no máximo 5 caminhos; a lista inteira vai para um arquivo ao lado do .cmd (ou no TEMP)
+    '$appThere = $false',
+    'try { $appThere = ([bool]$found.Script) -or ([bool][string]$found.App) -or ([bool]$found.AppPath -and [IO.Directory]::Exists([string]$found.AppPath)) } catch { $appThere = $false }',
+    'if (-not $appThere) {',
+    "  $all = New-Object System.Collections.ArrayList; foreach ($x in @($found.Searched)) { [void]$all.Add([string]$x) }",
+    "  $short = New-Object System.Collections.ArrayList; foreach ($x in $all) { if ($short.Count -lt 5) { [void]$short.Add($x) } }",
+    "  $where = " + m.searched + " + ($short.ToArray() -join '; ')",
+    "  if ($all.Count -gt 5) { $where += (" + m.others + ").Replace('{0}', [string]($all.Count - 5)) }",
+    "  $logName = 'Ativar-Nextec-' + ([string]$id -replace '[^0-9]', '') + '-busca.log'",
+    "  $logText = @(('Ativar Nextec: busca do agente em ' + (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')), ('App: ' + [string]$found.App), ('Pasta do app: ' + [string]$found.AppPath)) + $all.ToArray()",
+    "  $log = ''",
+    '  $logDirs = New-Object System.Collections.ArrayList',
+    '  try { [void]$logDirs.Add([IO.Path]::GetDirectoryName($self)) } catch { }',
+    '  try { [void]$logDirs.Add([IO.Path]::GetTempPath()) } catch { }',
+    '  foreach ($dirLog in $logDirs) {',
+    '    if ($log -or -not $dirLog) { continue }',
+    '    try { $try = [IO.Path]::Combine($dirLog, $logName); [IO.File]::WriteAllLines($try, [string[]]$logText); $log = $try } catch { }',
+    '  }',
+    '  if ($log) { $where += (' + m.fullList + ') + $log }',
+    '  Say (' + m.notInstalled + ' + $where)',
+    '  exit 1',
+    '}',
     '$code = @(Invoke-NxActivation -Root $root -Lines $lines -DataB64 $b64 -Found $found -M $M -Run $run -Say { param($t) Write-Host $t })[-1]',
     'exit ([int]$code)',
   ]

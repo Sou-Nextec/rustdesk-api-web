@@ -38,6 +38,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Ativar-Nextec .cmd no PowerShell 5.1 (dados sujos reais, parse e fumaca)
+        shell: powershell
+        run: |
+          node --test nextec/testes/activation-cmd.test.mjs nextec/testes/activation-cmd-dados-reais.test.mjs nextec/testes/ativar-cmd-instalacao.test.mjs
+          if ($LASTEXITCODE -ne 0) { throw 'Activation cmd regression failed' }
       - name: Validar identidade em Windows PowerShell 5.1
         shell: powershell
         run: |

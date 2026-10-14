@@ -2,6 +2,21 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.16
+
+- **Ativar-Nextec-<ID>.cmd de um clique, sem gerar nem instalar outro app:** o arquivo agora traz dentro de si o pacote do agente (`Coordenar-Agente-Nextec.ps1`, `Provisionar-Agente-Nextec.ps1` e `Agente-Senha-Nextec.ps1`, os mesmos scripts de `nextec/atualizacao`), comprimido (gzip) e em base64, com o SHA-256 de cada script. Antes de gravar qualquer coisa ele descomprime e confere os hashes; se divergirem, para com mensagem clara. Nada é baixado da internet.
+- **Instalação segura:** o que faltar (ou for de versão antiga) é gravado em `%ProgramData%NextecAcesso` com ACL SYSTEM + Administradores (herança desligada, arquivo criado com CreateNew, BOM preservado) e a tarefa do coordenador é registrada. Funciona para qualquer nome de app, inclusive RustDesk 1.5.0 sem os scripts novos (como `Client-Nextec-Connect`).
+- **Agente antigo ou quebrado é substituído:** se houver `agente-senha.json` ou o `Agente-Senha-Nextec.ps1` do cofre inicial, o .cmd para e desativa a tarefa "Nextec Acesso - Senha", guarda cópia do cadastro em `agente-senha.json.antigo-<data>` e chama o Coordenar com o novo `-SubstituirAgenteAntigo`. Só o .cmd baixado do painel por administrador autenticado (15 minutos, amarrado ao ID e uuid) usa o parâmetro. O Coordenar tira o cadastro antigo do caminho apenas se estiver em formato ilegível, for de outro ID ou o painel recusar o token (HTTP 401); token reconhecido ou painel sem resposta mantém tudo e o fluxo normal continua recusando cadastro duplicado.
+- **Confirmação e log:** depois de entregar a autorização o .cmd aciona o coordenador e espera o cadastro (até 90 s): "Pronto: máquina ativada" ou erro claro, sem expor token nem código. O detalhe vai para `ativar.log` em `%ProgramData%NextecAcesso`, sem segredos. O arquivo se apaga ao terminar com sucesso.
+- **Painel:** o botão da tela Senhas dos servidores monta o pacote no navegador (scripts importados no build, `?raw`). O workflow da imagem deixou de ignorar `nextec/atualizacao/**`, porque esses scripts agora fazem parte do build. **Depois do merge o rdgen precisa ressincronizar `Coordenar-Agente-Nextec.ps1` e `Provisionar-Agente-Nextec.ps1`.**
+
+## 2.11.15
+
+- **Corrigido, Ativar-Nextec-<ID>.cmd parava em servidor real:** um programa qualquer com `InstallLocation` entre aspas no registro (`"C:\Program Files\X\"`) derrubava o script com "Cannot find drive '"C'". Agora todo caminho vindo de fora (registro de desinstalação 64/32 bits, marcador, serviços, tarefas agendadas, Program Files) passa por uma normalização única: tira espaços e aspas, expande `%VAR%`, remove barra final repetida e só aceita caminho local `X:\` válido. Entrada ruim (UNC, caractere inválido, variável sem valor) é ignorada e anotada; a busca continua e o agente é achado mesmo depois de várias entradas ruins.
+- **App instalado sem o agente é reconhecido:** pasta com o RustDesk (entrada de desinstalação, serviço `--service` ou Program Files) preenche o nome do app e a mensagem passa a ser "gere com o MESMO nome do app e instale por cima". Havendo serviço, vale só o app com serviço (o de suporte avulso não instala serviço); sem serviço, lista os encontrados.
+- **Mensagem curta:** a lista do que foi procurado não repete caminhos, mostra no máximo 5 na tela ("e outros N") e a lista completa vai para `Ativar-Nextec-<ID>-busca.log` ao lado do `.cmd` (ou no TEMP). Nenhum erro inesperado termina com exceção crua.
+- **Testes com dados sujos reais** rodando o PowerShell gerado no 5.1 (novo passo no job Windows do CI): parse do bloco embutido, tabela de casos sujos, leitura real da máquina e fumaça do `.cmd` completo.
+
 ## 2.11.14
 
 - **Trava de CI contra erros repetidos:** novo `nextec/testes/verificar-integridade.mjs` roda em todo PR e barra patch, `.sh`, Dockerfile ou workflow com CRLF, `.ps1` com acento sem BOM UTF-8 e série de patches fora do padrão. `.gitattributes` passou a forçar LF nesses tipos e em `.mjs`, `.js`, `.vue` e `.json`.

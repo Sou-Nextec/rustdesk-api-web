@@ -86,7 +86,7 @@ async function prepararCmd(dir, opcoes) {
   return { text: t, path: p }
 }
 
-const found = () => "([pscustomobject]@{ Script = ''; App = 'Client-Nextec-Connect'; AppPath = 'C:\\Program Files\\Client-Nextec-Connect'; Searched = @('x') })"
+const found = (dir) => "([pscustomobject]@{ Script = ''; App = 'Client-Nextec-Connect'; AppPath = '" + dir + "'; Searched = @('x') })"
 
 const withDir = async (fn) => {
   const d = mkdtempSync(join(realpathSync.native(tmpdir()), 'nxcmd-'))
@@ -180,7 +180,7 @@ test('PS 5.1 (c): agente antigo é preservado em backup, scripts novos gravados 
     const out = runPs(`
 $lines = [IO.File]::ReadAllLines(${psq(path)})
 $b64 = ($lines | Where-Object { $_ -like 'rem NXDATA *' } | Select-Object -First 1).Substring(11).Trim()
-$code = Invoke-NxActivation -Root ${psq(root)} -Lines $lines -DataB64 $b64 -Found ${found()} -M $M -Run $run -Say $say -Now ([DateTime]::SpecifyKind([DateTime]'2026-10-13T12:00:00', 'Utc')) -WaitSeconds 0
+$code = Invoke-NxActivation -Root ${psq(root)} -Lines $lines -DataB64 $b64 -Found ${found(d)} -M $M -Run $run -Say $say -Now ([DateTime]::SpecifyKind([DateTime]'2026-10-13T12:00:00', 'Utc')) -WaitSeconds 0
 Out-Result @{ code = $code; runs = @($script:runs); calls = @($script:calls); said = @($script:said); payload = $script:payloadSeen }`)
     assert.equal(out.status, 0, out.stderr + out.stdout)
     const j = out.json
@@ -224,7 +224,7 @@ test('PS 5.1 (d): sem agente antigo instala tudo, não passa -SubstituirAgenteAn
 $script:receberCreates = ${psq(join(root, 'agente-senha.json'))}
 $lines = [IO.File]::ReadAllLines(${psq(path)})
 $b64 = ($lines | Where-Object { $_ -like 'rem NXDATA *' } | Select-Object -First 1).Substring(11).Trim()
-$code = Invoke-NxActivation -Root ${psq(root)} -Lines $lines -DataB64 $b64 -Found ${found()} -M $M -Run $run -Say $say -WaitSeconds 6 -Sleep { param($s) }
+$code = Invoke-NxActivation -Root ${psq(root)} -Lines $lines -DataB64 $b64 -Found ${found(d)} -M $M -Run $run -Say $say -WaitSeconds 6 -Sleep { param($s) }
 Out-Result @{ code = $code; runs = @($script:runs); calls = @($script:calls); said = @($script:said) }`)
     assert.equal(out.status, 0, out.stderr + out.stdout)
     const j = out.json
@@ -254,7 +254,7 @@ test('PS 5.1: scripts já instalados e tarefa registrada não são regravados ne
 $script:taskExists = $true
 $lines = [IO.File]::ReadAllLines(${psq(path)})
 $b64 = ($lines | Where-Object { $_ -like 'rem NXDATA *' } | Select-Object -First 1).Substring(11).Trim()
-$code = Invoke-NxActivation -Root ${psq(root)} -Lines $lines -DataB64 $b64 -Found ${found()} -M $M -Run $run -Say $say -WaitSeconds 0
+$code = Invoke-NxActivation -Root ${psq(root)} -Lines $lines -DataB64 $b64 -Found ${found(d)} -M $M -Run $run -Say $say -WaitSeconds 0
 Out-Result @{ code = $code; runs = @($script:runs); said = @($script:said) }`)
     assert.equal(out.status, 0, out.stderr + out.stdout)
     assert.equal(out.json.runs.length, 1, 'só entrega a autorização')
@@ -275,7 +275,7 @@ test('PS 5.1: pacote adulterado ou app ausente falham antes de gravar qualquer s
     const out = runPs(`
 $b64 = 'e30='
 $lines = [IO.File]::ReadAllLines(${psq(arqRuim)})
-$c1 = Invoke-NxActivation -Root ${psq(root1)} -Lines $lines -DataB64 $b64 -Found ${found()} -M $M -Run $run -Say $say -WaitSeconds 0
+$c1 = Invoke-NxActivation -Root ${psq(root1)} -Lines $lines -DataB64 $b64 -Found ${found(d)} -M $M -Run $run -Say $say -WaitSeconds 0
 $said1 = @($script:said); $script:said.Clear()
 $lines = [IO.File]::ReadAllLines(${psq(arqBom)})
 $none = [pscustomobject]@{ Script = ''; App = ''; AppPath = ''; Searched = @('a', 'b') }
@@ -323,15 +323,19 @@ $services = @(
   [pscustomobject]@{ Name = 'Cru'; PathName = 'C:\\Arquivos de Programas\\r d\\rd.exe --service' },
   [pscustomobject]@{ Name = 'Client-Nextec-Connect'; PathName = '"%NX_TEST_PF%\\Client-Nextec-Connect\\Client-Nextec-Connect.exe" --service' }
 )
-$marker = [pscustomobject]@{ InstallDir = '"X:\\nada"'; AppName = 'Client-Nextec-Connect' }
+$marker = [pscustomobject]@{ InstallDir = ''; AppName = '' }
+$markerSujo = [pscustomobject]@{ InstallDir = '"X:\\nada"'; AppName = 'Client-Nextec-Connect' }
 $taskArgs = @($null, '-File', '-File "Z:\\x\\y.ps1" -Executar', '-File ""', "-File 'C:\\a.ps1'")
 $r = Find-NextecAgent -DataRoot ${psq(join(d, 'PD', 'Nextec', 'Acesso'))} -ProgramRoots @($null, '', 'Z:\\', '"C:\\nao-existe-xyz"', ${psq(pf)}) -Entries $entries -TaskArgs $taskArgs -Marker $marker -Services $services
-Out-Result @{ script = [string]$r.Script; app = [string]$r.App; appPath = [string]$r.AppPath; searched = $r.Searched.Count }`, { NX_TEST_PF: pf })
+$r2 = Find-NextecAgent -DataRoot ${psq(join(d, 'PD', 'Nextec', 'Acesso'))} -ProgramRoots @() -Entries @() -TaskArgs $taskArgs -Marker $markerSujo -Services $services
+Out-Result @{ script = [string]$r.Script; app = [string]$r.App; appPath = [string]$r.AppPath; searched = $r.Searched.Count; sujoScript = [string]$r2.Script; sujoApp = [string]$r2.App }`, { NX_TEST_PF: pf })
     assert.equal(out.status, 0, out.stderr + out.stdout)
     assert.equal(out.json.script, '', 'não há Coordenar em lugar nenhum')
     assert.equal(out.json.app, 'Client-Nextec-Connect')
     assert.equal(out.json.appPath.toLowerCase(), app.toLowerCase(), 'o app sem agente é identificado pela pasta do serviço')
     assert.ok(out.json.searched >= 3)
+    assert.equal(out.json.sujoScript, '')
+    assert.equal(out.json.sujoApp, 'Client-Nextec-Connect', 'marcador com caminho sujo ainda informa o nome do app')
   })
 })
 
@@ -340,7 +344,7 @@ test('PS 5.1 (e): o .cmd completo roda o localizador real do registro sem exceç
     const vencido = await buildActivationCmd(bundle, Date.UTC(2020, 0, 1), await pacoteReal())
     const arq = join(d, 'Ativar-Nextec-536822159.cmd')
     writeFileSync(arq, vencido, 'latin1')
-    const script = vencido.slice(vencido.indexOf('rem #PS-BEGIN#'))
+    const script = vencido.slice(vencido.indexOf('#PS-BEGIN#'))
     const ps1 = join(d, 'run.ps1')
     writeFileSync(ps1, '\ufeff' + script, 'utf8')
     const r = spawnSync(PS51, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps1], { encoding: 'utf8', env: { ...process.env, NX_SELF: arq } })
@@ -348,4 +352,15 @@ test('PS 5.1 (e): o .cmd completo roda o localizador real do registro sem exceç
     assert.match(r.stdout, /prazo de 15 minutos/)
     assert.ok(existsSync(arq))
   })
+})
+
+// ---------- a tela entrega o pacote real ao gerador ----------
+test('o painel importa os scripts oficiais no build (?raw) e passa o pacote ao gerador do .cmd', () => {
+  const fonte = readFileSync(new URL('../../src/nextec/agent-package-sources.js', import.meta.url), 'utf8')
+  for (const n of AGENT_PACKAGE_FILES) assert.ok(fonte.includes(`nextec/atualizacao/${n}?raw`), n)
+  const tela = readFileSync(new URL('../../src/nextec/views/SecretsPanel.vue', import.meta.url), 'utf8')
+  assert.match(tela, /import \{ getAgentPackage \} from '@\/nextec\/agent-package-sources\.js'/)
+  assert.match(tela, /buildActivationCmd\(bundle, Date\.now\(\), pkg\)/)
+  const wf = readFileSync(new URL('../../.github/workflows/nextec-imagem.yml', import.meta.url), 'utf8')
+  assert.ok(!/paths-ignore:[\s\S]*nextec\/atualizacao\/\*\*[\s\S]*workflow_dispatch/.test(wf), 'script do agente muda o .cmd: a imagem precisa ser reconstruida')
 })
