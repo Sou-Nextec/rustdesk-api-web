@@ -18,11 +18,11 @@
 </template>
 
 <script setup>
-  import { onMounted, onBeforeUnmount, ref } from 'vue'
+  import { onMounted, onBeforeUnmount, ref, watch } from 'vue'
   import { generatorHeight } from '@/nextec/generator-frame.mjs'
   import { generationEvent } from '@/nextec/generation-catalog.mjs'
 
-  defineProps({ src: { type: String, required: true }, title: { type: String, default: '' } })
+  const props = defineProps({ src: { type: String, required: true }, title: { type: String, default: '' } })
   const emit = defineEmits(['generated', 'open'])
 
   const frame = ref(null)
@@ -46,6 +46,7 @@
     frameKey.value++
     startTimer()
   }
+  watch(() => props.src, () => reload())
   const receive = (event) => {
     if (generationEvent(event, window.location.origin, frame.value?.contentWindow)) {
       emit('generated')

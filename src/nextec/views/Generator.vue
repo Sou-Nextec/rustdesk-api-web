@@ -16,7 +16,7 @@
         <li :class="{ 'is-current': tab === 'generated' }" :aria-current="tab === 'generated' ? 'step' : undefined"><span>2</span><strong>Conferir</strong><small>Baixe e teste em uma máquina.</small></li>
         <li><span>3</span><strong>Atualizar</strong><small>Envie, autorize e publique.</small></li>
       </ol>
-      <GeneratedClients v-if="tab === 'generated'" @create="tab = 'new'" />
+      <GeneratedClients v-if="tab === 'generated'" @create="tab = 'new'" @retry="retry" />
       <div v-show="tab === 'new'">
         <el-collapse v-model="guide" class="nx-gen-guide">
           <el-collapse-item name="guide">
@@ -40,7 +40,7 @@
             </div>
           </el-collapse-item>
         </el-collapse>
-        <GeneratorFrame ref="gen" src="/gerador/" title="Gerador de clientes Nextec" @generated="generated" @open="open" />
+        <GeneratorFrame ref="gen" :src="newSrc" title="Gerador de clientes Nextec" @generated="generated" @open="open" />
       </div>
       <div v-if="brandingSeen" v-show="tab === 'branding'">
         <GeneratorFrame src="/gerador/nextec/imagens/" title="Identidade visual do gerador" @open="open" />
@@ -80,6 +80,17 @@
   watch(tab, (value) => { if (value === 'branding') brandingSeen.value = true })
 
   const open = () => { window.open(tab.value === 'branding' ? '/gerador/nextec/imagens/' : '/gerador/', '_blank', 'noopener') }
+  // "Tentar de novo": reabre o formulario com os campos simples do item que falhou (arquivos e segredos nunca voltam).
+  const newSrc = ref('/gerador/')
+  const retry = (row) => {
+    const query = new URLSearchParams()
+    const exename = String(row.filename || '').replace(/\.(msi|exe|deb|rpm|zip)$/i, '')
+    if (exename) { query.set('exename', exename); query.set('appname', exename) }
+    for (const field of ['client_name', 'profile', 'platform', 'notes']) if (row[field]) query.set(field, row[field])
+    const qs = query.toString()
+    newSrc.value = '/gerador/' + (qs ? '?' + qs : '')
+    tab.value = 'new'
+  }
   const generated = () => { tab.value = 'generated'; gen.value?.reload() }
 
   const scheme = ref('rustdesk')

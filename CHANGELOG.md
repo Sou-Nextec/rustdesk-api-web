@@ -2,6 +2,14 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.27
+
+Falha ao gerar um instalador agora diz o motivo e deixa tentar de novo.
+
+- **Tentar de novo:** itens com falha em Itens gerados ganham o botão, que reabre Novo instalador com nome, cliente, perfil, plataforma e notas já preenchidos. Arquivos e segredos nunca voltam.
+- **Mensagem clara no lugar do JSON cru:** o texto do item e a página de erro do gerador explicam o que aconteceu e o que fazer (Actions desativado, token inválido, sem permissão, limite do GitHub, repositório não encontrado, GitHub instável, rede).
+- **rdgen:** depende do PR "erros do GitHub explicados e Tentar de novo" (rdgen #53); sem ele o item mostra o texto antigo, mas o botão já funciona.
+
 ## 2.11.26
 
 Tela **Gerar cliente** arrumada.

@@ -88,8 +88,11 @@
           </el-button>
         </div>
 
-        <div v-if="deletableGeneration(row)" class="nx-generation-remove">
-          <el-button text type="danger" :loading="deleting === row.uuid" :disabled="!!deleting" @click="removeOne(row)">
+        <div v-if="deletableGeneration(row) || failedGeneration(row)" class="nx-generation-remove">
+          <el-button v-if="failedGeneration(row)" type="primary" plain @click="$emit('retry', row)">
+            <el-icon aria-hidden="true"><el-icon-RefreshRight /></el-icon><span>Tentar de novo</span>
+          </el-button>
+          <el-button v-if="deletableGeneration(row)" text type="danger" :loading="deleting === row.uuid" :disabled="!!deleting" @click="removeOne(row)">
             <el-icon v-if="deleting !== row.uuid" aria-hidden="true"><el-icon-Delete /></el-icon><span>Excluir</span>
           </el-button>
         </div>
@@ -119,7 +122,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { generationDownload, generationState, activeGeneration, validGenerationId, failedGeneration, deletableGeneration, deletionPrompt, deleteGeneration, deleteGenerations } from '@/nextec/generation-catalog.mjs'
 import { importGeneratedRelease } from '@/nextec/api'
-defineEmits(['create'])
+defineEmits(['create', 'retry'])
 const rows = ref([]), count = ref(0), page = ref(1), loading = ref(false), error = ref(''), importing = ref('')
 const router = useRouter()
 const selected = ref([]), deleting = ref('')
