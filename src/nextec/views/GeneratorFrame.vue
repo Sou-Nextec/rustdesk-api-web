@@ -22,7 +22,7 @@
   import { generatorHeight } from '@/nextec/generator-frame.mjs'
   import { generationEvent } from '@/nextec/generation-catalog.mjs'
 
-  const props = defineProps({ src: { type: String, required: true }, title: { type: String, default: '' } })
+  const props = defineProps({ src: { type: String, required: true }, title: { type: String, default: '' }, nonce: { type: Number, default: 0 } })
   const emit = defineEmits(['generated', 'open'])
 
   const frame = ref(null)
@@ -46,7 +46,7 @@
     frameKey.value++
     startTimer()
   }
-  watch(() => props.src, () => reload())
+  watch(() => [props.src, props.nonce], () => reload())
   const receive = (event) => {
     if (generationEvent(event, window.location.origin, frame.value?.contentWindow)) {
       emit('generated')

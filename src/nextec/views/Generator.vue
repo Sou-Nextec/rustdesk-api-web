@@ -40,7 +40,7 @@
             </div>
           </el-collapse-item>
         </el-collapse>
-        <GeneratorFrame ref="gen" :src="newSrc" title="Gerador de clientes Nextec" @generated="generated" @open="open" />
+        <GeneratorFrame ref="gen" :src="retryState.src" :nonce="retryState.nonce" title="Gerador de clientes Nextec" @generated="generated" @open="open" />
       </div>
       <div v-if="brandingSeen" v-show="tab === 'branding'">
         <GeneratorFrame src="/gerador/nextec/imagens/" title="Identidade visual do gerador" @open="open" />
@@ -73,6 +73,7 @@
   import { connectScheme, connectSchemeSave } from '@/nextec/api'
   import GeneratedClients from './GeneratedClients.vue'
   import GeneratorFrame from './GeneratorFrame.vue'
+  import { nextRetry } from '@/nextec/generator-retry.mjs'
   const tab = ref('new')
   const guide = ref([])
   const gen = ref(null)
@@ -80,16 +81,14 @@
   watch(tab, (value) => { if (value === 'branding') brandingSeen.value = true })
 
   const open = () => { window.open(tab.value === 'branding' ? '/gerador/nextec/imagens/' : '/gerador/', '_blank', 'noopener') }
-  // "Tentar de novo": reabre o formulario com os campos simples do item que falhou (arquivos e segredos nunca voltam).
-  const newSrc = ref('/gerador/')
+  // "Tentar de novo": reabre o formulario com os campos simples do item que falhou (ver generator-retry.mjs).
+  const retryState = ref({ src: '/gerador/', nonce: 0 })
   const retry = (row) => {
-    const query = new URLSearchParams()
-    const exename = String(row.filename || '').replace(/\.(msi|exe|deb|rpm|zip)$/i, '')
-    if (exename) { query.set('exename', exename); query.set('appname', exename) }
-    for (const field of ['client_name', 'profile', 'platform', 'notes']) if (row[field]) query.set(field, row[field])
-    const qs = query.toString()
-    newSrc.value = '/gerador/' + (qs ? '?' + qs : '')
+    retryState.value = nextRetry(retryState.value, row)
     tab.value = 'new'
+    if (!retryState.value.appKnown) {
+      ElMessage.warning('Este item é anterior ao registro do nome do aplicativo. Confira o campo Nome do aplicativo antes de gerar.')
+    }
   }
   const generated = () => { tab.value = 'generated'; gen.value?.reload() }
 
