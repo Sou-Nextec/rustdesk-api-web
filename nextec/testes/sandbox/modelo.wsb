@@ -1,0 +1,27 @@
+<!-- Modelo do Windows Sandbox do teste do agente Nextec. O Invoke-SandboxTest.ps1 troca {{ENTRADA}}, {{SAIDA}} e {{CENARIO}}.
+     Rede DESLIGADA, entrada somente leitura, saida unica gravavel, sem area de transferencia, GPU, audio, video ou impressora. -->
+<Configuration>
+  <vGPU>Disable</vGPU>
+  <Networking>Disable</Networking>
+  <AudioInput>Disable</AudioInput>
+  <VideoInput>Disable</VideoInput>
+  <ProtectedClient>Enable</ProtectedClient>
+  <PrinterRedirection>Disable</PrinterRedirection>
+  <ClipboardRedirection>Disable</ClipboardRedirection>
+  <MemoryInMB>2048</MemoryInMB>
+  <MappedFolders>
+    <MappedFolder>
+      <HostFolder>{{ENTRADA}}</HostFolder>
+      <SandboxFolder>C:\NxIn</SandboxFolder>
+      <ReadOnly>true</ReadOnly>
+    </MappedFolder>
+    <MappedFolder>
+      <HostFolder>{{SAIDA}}</HostFolder>
+      <SandboxFolder>C:\NxOut</SandboxFolder>
+      <ReadOnly>false</ReadOnly>
+    </MappedFolder>
+  </MappedFolders>
+  <LogonCommand>
+    <Command>cmd.exe /c "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\NxIn\Run-InSandbox.ps1 -Cenario {{CENARIO}} &gt; C:\NxOut\console.log 2&gt;&amp;1"</Command>
+  </LogonCommand>
+</Configuration>
