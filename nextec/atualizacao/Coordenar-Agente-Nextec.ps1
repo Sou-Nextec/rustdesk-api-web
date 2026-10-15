@@ -226,7 +226,7 @@ function Write-NextecCoordinatorLog {
     if ((Test-Path -LiteralPath $log -PathType Leaf) -and (Get-Item -LiteralPath $log -Force).Length -gt 262144) {
       Move-Item -LiteralPath $log -Destination ($log + '.antigo') -Force
     }
-    $line = '{0:yyyy-MM-dd HH:mm:ss} {1}' -f (Get-Date), ([string]$Message -replace '[\r\n]+', ' ')
+    $line = '{0} {1}' -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture), ([string]$Message -replace '[\r\n]+', ' ')
     [IO.File]::AppendAllText($log, $line + "`r`n", [Text.UTF8Encoding]::new($false))
   } catch { }
 }

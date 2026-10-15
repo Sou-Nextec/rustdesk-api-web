@@ -77,7 +77,7 @@ try {
   function Initialize-NextecProvisionDirectory { param($Root) New-Item -ItemType Directory -Path $Root -Force | Out-Null }
   function Assert-NextecProvisionPath { param($Path) }
   function Assert-NextecProvisionFileAcl { param($Path) }
-  function Write-NextecProvisionLog { param($Code, $Root) Add-Content -LiteralPath (Get-NextecProvisionPaths -Root $Root).Log -Value ([string]$Code) -Encoding UTF8 }
+  # O log e o REAL (Write-NextecProvisionLog): lista de codigos e gravacao em arquivo entram no teste.
   function Write-NextecProtectedJson { param($Path, $Value) $Value | ConvertTo-Json -Depth 6 -Compress | Set-Content -LiteralPath $Path -Encoding UTF8 }
   function Set-Acl { param($LiteralPath, $AclObject) }
   $script:NextecPainelFixo = $script:testOrigin
@@ -97,7 +97,7 @@ try {
     Save-NextecAgentTokenConfig -Path $paths.AgentConfig -Panel $script:testOrigin -Id $id -Token $oldToken
     return $paths
   }
-  function Get-Logs { $l = (Get-NextecProvisionPaths -Root $work).Log; if (Test-Path -LiteralPath $l) { return @(Get-Content -LiteralPath $l) }; return @() }
+  function Get-Logs { $l = (Get-NextecProvisionPaths -Root $work).Log; if (Test-Path -LiteralPath $l) { return @(Get-Content -LiteralPath $l | ForEach-Object { ([string]$_) -replace '^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} ', '' }) }; return @() }
 
   # 1) credencial valida (painel diz parado porque a tarefa sumiu) e tarefa ausente: repara, sem bootstrap
   $paths = New-Case
@@ -111,12 +111,15 @@ try {
   Assert ($syncs.Count -eq 1 -and $syncs[0].Probe) 'a sondagem nao foi uma unica chamada com probe:true'
   Assert (@($state.Requests | Where-Object { $_.Path -eq '/api/nextec/agent/bootstrap' }).Count -eq 0) 'reparo chamou o bootstrap'
   Assert ((Get-Logs) -contains 'agent_repaired') 'reparo nao registrado no log'
+  Assert (@(Get-Logs | Where-Object { $_ -like 'unknown_code*' -or $_ -eq 'protocol_error' }).Count -eq 0) 'reparo gerou protocol_error/unknown_code no log real'
   Write-Host 'PASS Reinstall_ValidCredentialMissingTask_RepairsWithoutBootstrap'
 
   # 2) credencial recusada (401): bootstrap substitui; a antiga fica no lugar ate o painel aceitar a nova
   $paths = New-Case
   Receive-NextecBootstrapAuthorization -Root $work -ReadInput { $json } -DiscoverId { $id } -SubstituirAgenteAntigo -AgentTaskReady { param($r) $true } -RegisterAgent $register | Out-Null
   Assert (Test-Path -LiteralPath $paths.Input -PathType Leaf) 'autorizacao nao gravada para credencial 401'
+  Assert ((Get-Logs) -contains 'old_agent_replace_token_recusado') 'substituicao nao gravou old_agent_replace_token_recusado no log real'
+  Assert (@(Get-Logs | Where-Object { $_ -eq 'protocol_error' -or $_ -like 'unknown_code*' }).Count -eq 0) 'substituicao virou protocol_error no log real (BUG 1)'
   Assert ((Read-NextecAgentTokenConfig -Path $paths.AgentConfig).token -ceq $oldToken) 'credencial antiga saiu antes do token novo ser aceito'
   $result = Invoke-NextecProvisioning -Root $work -DiscoverId { $id } -PostBootstrap $postBootstrap -RegisterAgent $register
   Assert ($result -eq 'complete') "substituicao nao concluiu: $result"
