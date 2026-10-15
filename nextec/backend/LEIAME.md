@@ -299,7 +299,8 @@ O agente consulta o painel uma vez por minuto (2.11.21). O patch acrescenta, em 
 ## Patch 0037: nome do app por máquina e protocolo do link
 
 O RustDesk registra no sistema o protocolo com o nome do app em minúsculas. O patch 0020 guarda um protocolo global; este
-passa a usar o da própria máquina, descoberto por dados, com o global como fallback.
+guarda o nome do app de cada máquina (informativo). **O protocolo do link NÃO vem do app da máquina remota**: o link abre no
+computador de quem conecta, então vale o protocolo global (ver 0038); `machine_scheme` fica só como informação.
 
 - **Coluna aditiva** `nextec_device_secrets.app_name` (`AutoMigrate`, padrão vazio, sem migração de dados). Rollback: remover o
   patch deixa a coluna sem uso.
@@ -309,10 +310,10 @@ passa a usar o da própria máquina, descoberto por dados, com o global como fal
   token autenticado da máquina.
 - **Derivação:** protocolo = nome em minúsculas, desde que sirva de protocolo (`^[a-z][a-z0-9+.-]{1,31}$`) e não esteja na lista
   proibida (`http`, `https`, `file`, `ftp`, `ws`, `wss`, `javascript`, `vbscript`, `data`, `blob`, `about`, `mailto`, `tel`, `sms`,
-  `chrome`, `edge`, `view-source`, `ms-msdt`, `search-ms`), porque o link leva a senha da máquina. Só máquina **aprovada** decide o
-  protocolo (inscrição pendente usa o global). Sem nome válido: protocolo global (`NextecConnectSchemeGet`, padrão `rustdesk`).
-- **Saída:** `GET /my/connect-link` mantém `url` e `auto_password` e acrescenta `scheme`, `scheme_source` (`machine` ou `global`),
-  `app_name`, `agent_enrolled`, `agent_active` e `agent_state` (mesma regra da lista do cofre: consulta real dentro de 3 intervalos do agente), `password_state` (`none`, `pending_approval`,
+  `chrome`, `edge`, `view-source`, `ms-msdt`, `search-ms`), porque o link leva a senha da máquina. O resultado vai para
+  `MachineScheme` (informativo); o protocolo do link é o global (`NextecConnectSchemeAuto`, ver 0038).
+- **Saída:** `GET /my/connect-link` mantém `url` e `auto_password` e acrescenta `scheme`, `scheme_source` (`global` ou `published`),
+  `machine_app_name`, `agent_enrolled`, `agent_active` e `agent_state` (mesma regra da lista do cofre: consulta real dentro de 3 intervalos do agente), `password_state` (`none`, `pending_approval`,
   `waiting_first`, `ready`, `restricted`), `last_seen_at`, `last_sync_at` e `interval_minutes`. `GET /nextec/secrets` ganhou `devices[].app_name`,
   `scheme` e `scheme_source`.
 - **Painel:** o link é o do servidor, sem alteração. O front só decide se abre direto (lembrança por protocolo no navegador ou
@@ -324,3 +325,14 @@ passa a usar o da própria máquina, descoberto por dados, com o global como fal
   `http/controller/admin/my/nextec_connect.go` e cria `service/nextec_appname.go` (+ testes, inclusive
   `service/nextec_agent_sync_unified_test.go`).
 - Testes: `service/nextec_appname_test.go` e `http/controller/api/nextec_appname_test.go` (rodam no build da imagem; também com `-race`).
+
+## Patch 0038: protocolo do link deduzido do app publicado
+
+O link do botão Conectar abre no computador de quem conecta, pelo app instalado lá. `NextecConnectSchemeAuto()` decide o
+protocolo: (1) o que o admin configurou (`connect_scheme`); (2) senão o do app publicado para os analistas em Atualizações
+(`NextecAvailableApp`, nome do arquivo sem a extensão, validado como no 0037); (3) senão `rustdesk`. Resposta de
+`/my/connect-link`: `scheme_source` = `global` ou `published`. O analista não escolhe nada. Limite: o arquivo publicado precisa
+ter o mesmo nome do app (o gerador pré-preenche os dois iguais); se forem diferentes, o admin define o protocolo.
+- Cria `service/nextec_connect_app.go` e `service/nextec_connect_app_test.go`; o 0037 passa a chamar a função.
+- **Limpar o campo volta ao automático:** `NextecConnectSchemeSet("")` (0020) agora apaga a configuração em vez de gravar `rustdesk`;
+  `GET/POST /nextec/connect-scheme` devolvem `scheme` (vazio = automático), `effective` e `source` (`manual`, `published` ou `default`).

@@ -54,9 +54,13 @@
           Define o endereço que o botão Conectar do painel abre no computador. O app gerado com o nome <code>Nextec-Connect</code>
           usa <code>nextec-connect://</code> (o nome em minúsculas). O RustDesk oficial usa <code>rustdesk://</code>.
           Se o Windows pedir para “obter um aplicativo para abrir este link”, o protocolo salvo aqui não é o do app instalado.
+          <strong>Deixe em branco para o painel usar sozinho o app publicado em Atualizações do app.</strong>
+        </p>
+        <p v-if="effective" class="nx-note">
+          Em uso agora: <code>{{ effective }}://</code> ({{ sourceLabel }}).
         </p>
         <div class="nx-scheme">
-          <el-input v-model="scheme" class="nx-scheme-input" maxlength="32" placeholder="rustdesk" aria-label="Protocolo do app"
+          <el-input v-model="scheme" class="nx-scheme-input" maxlength="32" :placeholder="effective ? 'Automático: ' + effective : 'Automático'" aria-label="Protocolo do app"
                     :disabled="loadingScheme" @keyup.enter="saveScheme">
             <template #append>://</template>
           </el-input>
@@ -68,7 +72,7 @@
 </template>
 
 <script setup>
-  import { onMounted, ref, watch } from 'vue'
+  import { computed, onMounted, ref, watch } from 'vue'
   import { ElMessage } from 'element-plus'
   import { connectScheme, connectSchemeSave } from '@/nextec/api'
   import GeneratedClients from './GeneratedClients.vue'
@@ -92,13 +96,17 @@
   }
   const generated = () => { tab.value = 'generated'; gen.value?.reload() }
 
-  const scheme = ref('rustdesk')
+  const scheme = ref('')
+  const effective = ref('')
+  const source = ref('')
+  const sourceLabel = computed(() => ({ manual: 'definido por você', published: 'automático, do app publicado', default: 'padrão' }[source.value] || ''))
+  const applyScheme = (data) => { scheme.value = data.scheme || ''; effective.value = data.effective || data.scheme || ''; source.value = data.source || '' }
   const loadingScheme = ref(true)
   const savingScheme = ref(false)
 
   onMounted(async () => {
     const res = await connectScheme().catch(() => false)
-    if (res && res.data && res.data.scheme) scheme.value = res.data.scheme
+    if (res && res.data) applyScheme(res.data)
     loadingScheme.value = false
   })
 
@@ -107,8 +115,10 @@
     const res = await connectSchemeSave(scheme.value.trim()).catch(() => false)
     savingScheme.value = false
     if (res && res.data) {
-      scheme.value = res.data.scheme
-      ElMessage.success('Protocolo salvo. O botão Conectar já usa ' + res.data.scheme + '://')
+      applyScheme(res.data)
+      ElMessage.success(res.data.scheme
+        ? 'Protocolo salvo. O botão Conectar já usa ' + res.data.scheme + '://'
+        : 'Protocolo automático. O botão Conectar usa ' + effective.value + '://')
     }
   }
 </script>

@@ -2,7 +2,7 @@ Nome do app por maquina e protocolo do link, no mesmo sync de last_error e inter
 
 Nextec 0037: coluna aditiva app_name (enviada pelo agente no /agent/sync, validada ^[A-Za-z0-9-]{1,64}$), gravada na
 MESMA escrita do sync (NextecAgentSyncWith/NextecAgentReport) junto de last_sync_at, last_error e
-sync_interval_seconds. O link de conexao usa o protocolo da maquina aprovada (fallback ao global) e /my/connect-link
+sync_interval_seconds. O link de conexao usa o protocolo global (o app de quem conecta; o app da maquina e so informativo) e /my/connect-link
 devolve agent_state e agent_active pela mesma regra da lista do cofre (fonte unica, 0035/0036).
 
 diff --git a/http/controller/admin/my/nextec_connect.go b/http/controller/admin/my/nextec_connect.go
@@ -14,7 +14,7 @@ index 19d0280..ffbf399 100644
  		return
  	}
 -	link := service.NextecConnectSchemeGet() + "://" + url.PathEscape(id)
-+	// O protocolo é o do app instalado NA MÁQUINA (nome informado pelo agente); sem ele, o global do painel.
++	// O link abre no computador de QUEM CONECTA, pelo app instalado lá: vale o protocolo global do painel. O nome do app da máquina remota é só informação.
 +	info := service.NextecConnectInfoFor(u, id)
 +	link := info.Scheme + "://" + url.PathEscape(id)
  	if pw != "" {
@@ -27,7 +27,7 @@ index 19d0280..ffbf399 100644
 -	response.Success(c, &gin.H{"url": link, "auto_password": pw != ""})
 +	response.Success(c, &gin.H{
 +		"url": link, "auto_password": pw != "",
-+		"scheme": info.Scheme, "scheme_source": info.SchemeSource, "app_name": info.AppName,
++		"scheme": info.Scheme, "scheme_source": info.SchemeSource, "machine_app_name": info.AppName,
 +		"agent_enrolled": info.AgentEnrolled, "agent_active": info.AgentActive,
 +		"password_state": info.PasswordState, "last_seen_at": info.LastSeenAt, "interval_minutes": info.Interval,
 +		"agent_state": info.AgentState, "last_sync_at": info.LastSyncAt,
@@ -213,7 +213,7 @@ new file mode 100644
 index 0000000..903294f
 --- /dev/null
 +++ b/service/nextec_appname.go
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,124 @@
 +package service
 +
 +import (
@@ -225,8 +225,8 @@ index 0000000..903294f
 +)
 +
 +// Nome do app instalado em cada máquina. O agente lê o AppName do marcador (nextec-marker.json ou registro) e envia no
-+// /api/nextec/agent/sync. O RustDesk registra o protocolo do link com o nome do app em minúsculas, então o painel
-+// monta o link da máquina com esse protocolo e cai no protocolo global (NextecConnectSchemeGet) quando não sabe o nome.
++// /api/nextec/agent/sync. O RustDesk registra o protocolo do link com o nome do app em minúsculas, mas o link abre no
++// computador de quem conecta: o protocolo do link é o global (NextecConnectSchemeGet); o nome da máquina é informativo.
 +
 +var nextecAppNameRe = regexp.MustCompile(`^[A-Za-z0-9-]{1,64}$`)
 +
@@ -283,8 +283,9 @@ index 0000000..903294f
 +// NextecConnectInfo é o que o painel sabe da máquina para montar e abrir o link.
 +type NextecConnectInfo struct {
 +	Scheme        string `json:"scheme"`
-+	SchemeSource  string `json:"scheme_source"` // machine | global
++	SchemeSource  string `json:"scheme_source"` // global | published | machine
 +	AppName       string `json:"app_name,omitempty"`
++	MachineScheme string `json:"machine_scheme,omitempty"` // protocolo do app instalado na máquina remota (informativo)
 +	AgentEnrolled bool   `json:"agent_enrolled"`
 +	AgentActive   bool   `json:"agent_active"`
 +	PasswordState string `json:"password_state"`
@@ -294,10 +295,11 @@ index 0000000..903294f
 +	Interval      int    `json:"interval_minutes,omitempty"`
 +}
 +
-+// nextecConnectInfo reúne o protocolo (da máquina, com fallback ao global) e o estado do agente e da senha.
++// nextecConnectInfo reúne o protocolo do link (global: o app de quem conecta) e o estado do agente e da senha.
 +// canReadVault: o usuário pode receber a senha do cofre desta máquina.
 +func nextecConnectInfo(peerID string, canReadVault bool, now int64) *NextecConnectInfo {
-+	info := &NextecConnectInfo{Scheme: NextecConnectSchemeGet(), SchemeSource: NextecSchemeSrcGlobal, PasswordState: NextecPwNone}
++	scheme, source := NextecConnectSchemeAuto()
++	info := &NextecConnectInfo{Scheme: scheme, SchemeSource: source, PasswordState: NextecPwNone}
 +	d := &model.NextecDeviceSecret{}
 +	if peerID == "" || DB.Where("peer_id = ?", peerID).First(d).Error != nil || d.TokenHash == "" {
 +		return info
@@ -311,9 +313,10 @@ index 0000000..903294f
 +		return info
 +	}
 +	info.AgentActive = info.AgentState == NextecAgentStateActive
-+	// Só máquina aprovada decide o protocolo do link: uma inscrição pendente não pode mudar para onde a senha vai.
++	// O link é aberto no computador de QUEM CONECTA, pelo app instalado lá: vale o protocolo global do painel.
++	// O nome do app da máquina remota é só informação e nunca muda o protocolo do link.
 +	if s := NextecSchemeFromAppName(d.AppName); s != "" {
-+		info.Scheme, info.SchemeSource, info.AppName = s, NextecSchemeSrcMachine, d.AppName
++		info.AppName, info.MachineScheme = d.AppName, s
 +	}
 +	enabled, interval := effectivePolicy(peerID, peerGroup(peerID))
 +	if !enabled {
@@ -388,7 +391,7 @@ index 0000000..e30fd98
 +	return d
 +}
 +
-+func TestSyncRecordsAppNameAndConnectInfoUsesMachineScheme(t *testing.T) {
++func TestSyncRecordsAppNameAndLinkKeepsGlobalScheme(t *testing.T) {
 +	db := enrollSetup(t)
 +	token := "tok-appname-1"
 +	approvedDevice(t, db, token)
@@ -413,8 +416,8 @@ index 0000000..e30fd98
 +		t.Fatalf("app_name gravado: %q", got)
 +	}
 +	info = nextecConnectInfo(enrollPeer, true, time.Now().Unix())
-+	if info.Scheme != "client-nextec-connect" || info.SchemeSource != NextecSchemeSrcMachine || info.AppName != "Client-Nextec-Connect" {
-+		t.Fatalf("esquema da máquina: %#v", info)
++	if info.Scheme != "nextec-connect" || info.SchemeSource != NextecSchemeSrcGlobal || info.MachineScheme != "client-nextec-connect" || info.AppName != "Client-Nextec-Connect" {
++		t.Fatalf("o link deve manter o protocolo global: %#v", info)
 +	}
 +
 +	// Nome inválido ou vazio não troca nada e o sync continua funcionando.
@@ -444,7 +447,7 @@ index 0000000..e30fd98
 +	if _, err := NextecAgentSyncStateWithApp("10.0.0.1", enrollPeer, token, nil, "Nextec-Suporte"); err != nil {
 +		t.Fatal(err)
 +	}
-+	if info = nextecConnectInfo(enrollPeer, true, time.Now().Unix()); info.Scheme != "nextec-suporte" {
++	if info = nextecConnectInfo(enrollPeer, true, time.Now().Unix()); info.MachineScheme != "nextec-suporte" || info.Scheme != "nextec-connect" {
 +		t.Fatalf("renomeado: %#v", info)
 +	}
 +	// A lista de máquinas do painel expõe o nome e o protocolo.
