@@ -40,7 +40,7 @@ new file mode 100644
 index 0000000..649d462
 --- /dev/null
 +++ b/http/controller/admin/nextec_scheme.go
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,36 @@
 +package admin
 +
 +import (
@@ -58,7 +58,8 @@ index 0000000..649d462
 +
 +// Get @Router /admin/nextec/connect-scheme [get]
 +func (n *NextecScheme) Get(c *gin.Context) {
-+	response.Success(c, &gin.H{"scheme": service.NextecConnectSchemeGet()})
++	configured, effective, source := service.NextecConnectSchemeStatus()
++	response.Success(c, &gin.H{"scheme": configured, "effective": effective, "source": source})
 +}
 +
 +// Save @Router /admin/nextec/connect-scheme [post]
@@ -73,7 +74,8 @@ index 0000000..649d462
 +		return
 +	}
 +	service.NextecSecretAuditAdd(service.AllService.UserService.CurUser(c), "", "connect_scheme", nextecIP(c), service.NextecConnectSchemeGet())
-+	response.Success(c, &gin.H{"scheme": service.NextecConnectSchemeGet()})
++	configured, effective, source := service.NextecConnectSchemeStatus()
++	response.Success(c, &gin.H{"scheme": configured, "effective": effective, "source": source})
 +}
 diff --git a/http/router/admin.go b/http/router/admin.go
 index 9948918..5f7540c 100644
@@ -129,12 +131,12 @@ index 0000000..31ee080
 +	return v
 +}
 +
-+// NextecConnectSchemeSet grava o protocolo. Vazio volta ao padrão.
++// NextecConnectSchemeSet grava o protocolo. Vazio limpa a configuração: volta ao automático (app publicado, patch 0038).
 +func NextecConnectSchemeSet(v string) error {
 +	v = strings.ToLower(strings.TrimSpace(v))
 +	v = strings.TrimSuffix(v, "://")
 +	if v == "" {
-+		v = defaultConnectScheme
++		return global.NextecSettingSet(settingConnectScheme, "")
 +	}
 +	if !nextecSchemeValid(v) {
 +		return errors.New("protocolo inválido: use letras minúsculas, números e hífen, como nextec-connect")

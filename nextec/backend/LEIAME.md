@@ -334,3 +334,5 @@ protocolo: (1) o que o admin configurou (`connect_scheme`); (2) senão o do app 
 `/my/connect-link`: `scheme_source` = `global` ou `published`. O analista não escolhe nada. Limite: o arquivo publicado precisa
 ter o mesmo nome do app (o gerador pré-preenche os dois iguais); se forem diferentes, o admin define o protocolo.
 - Cria `service/nextec_connect_app.go` e `service/nextec_connect_app_test.go`; o 0037 passa a chamar a função.
+- **Limpar o campo volta ao automático:** `NextecConnectSchemeSet("")` (0020) agora apaga a configuração em vez de gravar `rustdesk`;
+  `GET/POST /nextec/connect-scheme` devolvem `scheme` (vazio = automático), `effective` e `source` (`manual`, `published` ou `default`).

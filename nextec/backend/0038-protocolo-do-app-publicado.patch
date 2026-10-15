@@ -2,14 +2,14 @@ Protocolo do link deduzido do app publicado para os analistas (sem escolha do an
 
 Nextec 0038: o link do botao Conectar abre no computador de quem conecta. Vale o protocolo que o admin configurou; sem
 ele, o do app publicado em Atualizacoes (nome do arquivo sem a extensao); sem ele, rustdesk. O nome do app da maquina
-remota nao entra (0037).
+remota nao entra (0037). Limpar o campo (0020) volta ao automatico em vez de gravar rustdesk.
 
 diff --git a/service/nextec_connect_app.go b/service/nextec_connect_app.go
 new file mode 100644
-index 0000000..bdc48c5
+index 0000000..f050916
 --- /dev/null
 +++ b/service/nextec_connect_app.go
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,55 @@
 +package service
 +
 +import (
@@ -51,12 +51,26 @@ index 0000000..bdc48c5
 +	}
 +	return NextecConnectSchemeGet(), NextecSchemeSrcGlobal
 +}
++
++// NextecConnectSchemeStatus é o que a tela do admin mostra: o valor manual (vazio = automático), o que vale de fato e a
++// origem (manual | published | default).
++func NextecConnectSchemeStatus() (configured, effective, source string) {
++	configured = strings.TrimSpace(global.NextecSettingGet(settingConnectScheme))
++	effective, source = NextecConnectSchemeAuto()
++	switch {
++	case configured != "":
++		source = "manual"
++	case source == NextecSchemeSrcGlobal:
++		source = "default"
++	}
++	return configured, effective, source
++}
 diff --git a/service/nextec_connect_app_test.go b/service/nextec_connect_app_test.go
 new file mode 100644
-index 0000000..988eae0
+index 0000000..e45bfe2
 --- /dev/null
 +++ b/service/nextec_connect_app_test.go
-@@ -0,0 +1,44 @@
+@@ -0,0 +1,51 @@
 +package service
 +
 +import (
@@ -90,14 +104,21 @@ index 0000000..988eae0
 +	if s, src := NextecConnectSchemeAuto(); s != "meu-app" || src != NextecSchemeSrcGlobal {
 +		t.Fatalf("admin: %q %q", s, src)
 +	}
-+	// Nome publicado que não serve de protocolo é ignorado.
++	if c, e, src := NextecConnectSchemeStatus(); c != "meu-app" || e != "meu-app" || src != "manual" {
++		t.Fatalf("status manual: %q %q %q", c, e, src)
++	}
++	// Limpar o campo volta ao automático (não grava rustdesk).
 +	if err := NextecConnectSchemeSet(""); err != nil {
 +		t.Fatal(err)
 +	}
++	if c, e, src := NextecConnectSchemeStatus(); c != "" || e != "joao-da-silva" || src != NextecSchemeSrcPublished {
++		t.Fatalf("limpar deve voltar ao automático: %q %q %q", c, e, src)
++	}
++	// Nome publicado que não serve de protocolo é ignorado.
 +	if err := db.Model(rel).Update("file_name", "Nome com espaco.msi").Error; err != nil {
 +		t.Fatal(err)
 +	}
-+	if s, src := NextecConnectSchemeAuto(); s != "rustdesk" || src != NextecSchemeSrcGlobal {
-+		t.Fatalf("nome inválido: %q %q", s, src)
++	if c, e, src := NextecConnectSchemeStatus(); c != "" || e != "rustdesk" || src != "default" {
++		t.Fatalf("nome inválido: %q %q %q", c, e, src)
 +	}
 +}
