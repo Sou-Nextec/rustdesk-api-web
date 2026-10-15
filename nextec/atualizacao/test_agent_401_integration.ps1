@@ -78,7 +78,7 @@ try {
     function Initialize-NextecProvisionDirectory { param($Root) New-Item -ItemType Directory -Path $Root -Force | Out-Null }
     function Assert-NextecProvisionPath { param($Path) }
     function Assert-NextecProvisionFileAcl { param($Path) }
-    function Write-NextecProvisionLog { param($Code, $Root) Add-Content -LiteralPath (Get-NextecProvisionPaths -Root $Root).Log -Value ([string]$Code) -Encoding UTF8 }
+    # log REAL do provisionador (sem duble)
     function Write-NextecProtectedJson { param($Path, $Value) $Value | ConvertTo-Json -Depth 6 -Compress | Set-Content -LiteralPath $Path -Encoding UTF8 }
     function Set-Acl { param($LiteralPath, $AclObject) }
   }

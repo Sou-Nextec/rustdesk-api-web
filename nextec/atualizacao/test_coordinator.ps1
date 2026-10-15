@@ -122,7 +122,7 @@ try {
 
   New-CaseRoot
   & $script:realWriteProvisionLog -Code 'sensitive-bootstrap-secret' -Root $script:root
-  Assert ($script:loggedValues.Count -eq 1 -and $script:loggedValues[0] -match ' protocol_error$' -and $script:loggedValues[0] -notmatch 'sensitive-bootstrap-secret') 'Provision log did not sanitize secret-shaped values'
+  Assert ($script:loggedValues.Count -eq 1 -and $script:loggedValues[0] -match ' unknown_code \[redigido\]$' -and $script:loggedValues[0] -notmatch 'sensitive-bootstrap-secret') 'Provision log did not redact secret-shaped values as unknown_code'
   $logPath = (Get-NextecProvisionPaths -Root $script:root).Log
   Remove-Item -LiteralPath $logPath -Force
   New-Item -ItemType Directory -Path $logPath -Force | Out-Null
@@ -338,6 +338,18 @@ try {
   Assert (Test-NextecAgentTaskShape -Task (New-FakeTask) -Root $rootTask) 'tarefa correta foi recusada'
   Assert (Test-NextecAgentTaskShape -Task (New-FakeTask -user 'S-1-5-18') -Root $rootTask) 'SID do SYSTEM deve valer'
   Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -user 'BUILTIN\Users') -Root $rootTask)) 'conta comum nao pode valer'
+  # BUG 2 (Sandbox pt-BR): o nome da conta e localizado. Identidade e o SID, nunca o texto 'SYSTEM'.
+  $sysNtLocal = (New-Object Security.Principal.SecurityIdentifier('S-1-5-18')).Translate([Security.Principal.NTAccount]).Value
+  $sysShortLocal = $sysNtLocal.Substring($sysNtLocal.LastIndexOf('\') + 1)
+  Assert (Test-NextecAgentTaskShape -Task (New-FakeTask -user $sysShortLocal) -Root $rootTask) "conta localizada curta ($sysShortLocal) deve valer"
+  Assert (Test-NextecAgentTaskShape -Task (New-FakeTask -user $sysNtLocal) -Root $rootTask) "conta localizada completa ($sysNtLocal) deve valer"
+  $sisOk = $false
+  try { $sisOk = ((New-Object Security.Principal.NTAccount('SISTEMA')).Translate([Security.Principal.SecurityIdentifier]).Value -eq 'S-1-5-18') } catch {}
+  if ($sisOk) { Assert (Test-NextecAgentTaskShape -Task (New-FakeTask -user 'SISTEMA') -Root $rootTask) 'SISTEMA (pt-BR) deve valer' }
+  Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -user 'Administradores') -Root $rootTask)) 'grupo Administradores nao pode valer'
+  Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -user 'conta-que-nao-existe-xyz') -Root $rootTask)) 'conta inexistente nao pode valer'
+  Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -user '') -Root $rootTask)) 'conta vazia nao pode valer'
+  Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -user 'S-1-5-19') -Root $rootTask)) 'LocalService nao pode valer'
   Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -exe 'C:\Temp\powershell.exe') -Root $rootTask)) 'executavel diferente nao pode valer'
   Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -args2 '-NoProfile -File "C:\ProgramData\Nextec\Acesso\Agente-Senha-Nextec.ps1"') -Root $rootTask)) 'sem -Executar nao pode valer'
   Assert (-not (Test-NextecAgentTaskShape -Task (New-FakeTask -args2 '-File "C:\Outro\Agente-Senha-Nextec.ps1" -Executar') -Root $rootTask)) 'script em outra pasta nao pode valer'

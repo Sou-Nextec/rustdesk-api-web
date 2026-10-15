@@ -194,9 +194,39 @@ function New-NextecProposedToken {
   [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+','-').Replace('/','_')
 }
 
+# Codigos que os scripts do agente podem gravar em provisionamento-agente.log. UNICA fonte: o gravador
+# (Write-NextecProvisionLog) e o teste de guarda (nextec/testes/codigos-log-provisionamento.test.mjs, que tambem confere os
+# codigos lidos pelo Ativar-Nextec-<ID>.cmd) consomem esta lista. Codigo novo entra aqui, em nenhum outro lugar.
+function Get-NextecProvisionLogCodes {
+  @(
+    'pending', 'complete', 'network_retry', 'manual_authorization_required', 'already_configured', 'identity_conflict',
+    'already_enrolled', 'registration_retry', 'invalid_input', 'invalid_panel', 'invalid_identity', 'invalid_bootstrap',
+    'protocol_error', 'unsafe_path', 'component_missing', 'self_enrolled', 'self_backoff', 'self_blocked', 'self_manual',
+    'peer_not_registered', 'rate_limited', 'painel_padrao', 'agent_config_replaced', 'agent_config_unreadable',
+    'identity_changed', 'bootstrap_discarded', 'old_agent_replaced', 'old_agent_kept', 'panel_unreachable',
+    'pending_other_panel', 'pending_expired', 'pending_authorization',
+    'old_agent_replace_formato_antigo', 'old_agent_replace_outro_id', 'old_agent_replace_token_recusado',
+    'old_agent_replace_agente_parado', 'agent_repaired', 'unknown_code'
+  )
+}
+
+# Codigo fora da lista nunca derruba o fluxo: vira "unknown_code [texto]". O texto e so diagnostico: caracteres seguros,
+# no maximo 48, e qualquer sequencia longa (parece token ou segredo) e trocada por [redigido]. Entre colchetes para o
+# Ativar-Nextec-<ID>.cmd (que le o codigo no FIM da linha) nunca confundir o texto com um codigo de falha.
+function ConvertTo-NextecProvisionLogLine {
+  param([string]$Code)
+  if ($null -eq $Code) { $Code = '' }
+  $Code = $Code.Trim()
+  if ($Code -cin (Get-NextecProvisionLogCodes)) { return $Code }
+  $text = [regex]::Replace($Code, '[A-Za-z0-9_-]{24,}', 'redigido')
+  $text = [regex]::Replace($text, '[^A-Za-z0-9_. :-]', '?')
+  if ($text.Length -gt 48) { $text = $text.Substring(0, 48) }
+  return ('unknown_code [' + $text + ']')
+}
+
 function Write-NextecProvisionLog {
   param([Parameter(Mandatory)][string]$Code, [string]$Root = (Join-Path $env:ProgramData 'Nextec\Acesso'))
-  if ($Code -notmatch '^(pending|complete|network_retry|manual_authorization_required|already_configured|identity_conflict|already_enrolled|registration_retry|invalid_input|invalid_panel|invalid_identity|invalid_bootstrap|protocol_error|unsafe_path|component_missing|self_enrolled|self_backoff|self_blocked|self_manual|peer_not_registered|rate_limited|painel_padrao|agent_config_replaced|agent_config_unreadable|identity_changed|bootstrap_discarded|old_agent_replaced|old_agent_kept|panel_unreachable|pending_other_panel|pending_expired)$') { $Code = 'protocol_error' }
+  $Code = ConvertTo-NextecProvisionLogLine -Code $Code
   $paths = Get-NextecProvisionPaths -Root $Root
   Assert-NextecProvisionPath -Path $paths.Root
   if (-not (Test-Path -LiteralPath $paths.Root -PathType Container)) { Initialize-NextecProvisionDirectory -Root $paths.Root }
@@ -349,6 +379,16 @@ function Test-NextecAgentTaskReady {
   } catch { return $false }
 }
 
+# Nome de conta (localizado ou nao) para SID. Aceita o proprio SID. Vazio quando nao resolve.
+function ConvertTo-NextecAccountSid {
+  param([string]$Account)
+  $name = ([string]$Account).Trim()
+  if (-not $name) { return '' }
+  if ($name -match '^(?i)S-1-\d+(-\d+)+$') { return $name.ToUpperInvariant() }
+  try { return (New-Object Security.Principal.NTAccount($name)).Translate([Security.Principal.SecurityIdentifier]).Value }
+  catch { return '' }
+}
+
 # Tarefa correta = conta SYSTEM (S-1-5-18) com RunLevel Highest, uma unica acao com o powershell.exe 5.1 do sistema,
 # "-File" apontando para o script do agente em $Root, "-Executar", gatilho periodico de no maximo PasswordMinutes (o valor
 # de Get-NextecAgentIntervals no script do agente em $Root) e habilitada.
@@ -357,8 +397,8 @@ function Test-NextecAgentTaskReady {
 function Test-NextecAgentTaskShape {
   param([Parameter(Mandatory)]$Task, [Parameter(Mandatory)][string]$Root)
   if ([string]$Task.State -eq 'Disabled') { return $false }
-  $user = [string]$Task.Principal.UserId
-  if ($user -notin @('SYSTEM', 'S-1-5-18', 'NT AUTHORITY\SYSTEM')) { return $false }
+  # A conta e identificada pelo SID: o nome e localizado (pt-BR: SISTEMA, AUTORIDADE NT\SISTEMA) e nunca e comparado.
+  if ((ConvertTo-NextecAccountSid -Account ([string]$Task.Principal.UserId)) -cne 'S-1-5-18') { return $false }
   if ([string]$Task.Principal.RunLevel -ine 'Highest') { return $false }
   $actions = @($Task.Actions)
   if ($actions.Count -ne 1) { return $false }

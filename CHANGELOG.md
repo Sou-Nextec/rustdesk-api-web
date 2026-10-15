@@ -2,6 +2,15 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.25
+
+Dois defeitos do agente achados no teste ponta a ponta no Windows Sandbox (app real, Windows em português).
+
+- **Agente antigo + `.cmd` abortava e desfazia a instalação:** `Write-NextecProvisionLog` trocava por `protocol_error` todo código fora de uma lista copiada à mão, e `Resolve-NextecOldAgent` grava `old_agent_replace_<motivo>` e `agent_repaired`, que não estavam nela. O `.cmd` lê `protocol_error` no fim da linha, abortava e desfazia antes de o coordenador falar com o painel. Agora a lista é uma só (`Get-NextecProvisionLogCodes`, com os códigos novos), consumida pelo gravador. Código desconhecido não derruba mais nada: é registrado como `unknown_code [texto]` (texto seguro, até 48 caracteres, sequência longa que lembre token vira `redigido`, entre colchetes para o `.cmd` nunca confundir com um código de falha). Também deixa de virar `protocol_error` o `pending_authorization` que seguia o `pending` a cada rodada.
+- **Tarefa de senha recriada a cada rodada em Windows pt-BR:** `Test-NextecAgentTaskShape` comparava `Principal.UserId` com o texto `SYSTEM`; no pt-BR o valor é `SISTEMA`, então a tarefa nunca era "pronta" e era registrada e disparada de novo a cada 2 minutos. A conta passa a ser identificada pelo SID (`S-1-5-18`, via `NTAccount.Translate`), nunca por nome localizado. Varredura do repositório: nenhuma outra comparação por nome de conta ou grupo (as demais já usavam SID).
+- **Testes que falham antes e passam depois:** `test_log_codigos.ps1` (log real em arquivo, sem dublê; só a ACL, que exige elevação, é substituída), `test_reinstalar_agente.ps1` e `test_agent_401_integration.ps1` passaram a usar o log real (o dublê era o que escondia o BUG 1), `test_coordinator.ps1` com a conta localizada (`SISTEMA`) e `codigos-log-provisionamento.test.mjs` (lista única, códigos que o `.cmd` lê, nenhum nome de conta localizado nos scripts).
+- **rdgen:** depois do merge o rdgen precisa ressincronizar `Provisionar-Agente-Nextec.ps1` (o ressincronismo é outro trabalho).
+
 ## 2.11.24
 
 - **Agente reconhece o cliente gerado com "Bloquear configurações":** no RustDesk 1.5.0, a opção `disable-settings` do gerador faz `--password` e `--option` responderem "Settings are disabled!". O agente registrava `password_apply_failed` a cada rodada e o painel ficava em "Aguardando a primeira troca". Agora a resposta vira o código estável `client_settings_locked`, com a orientação no `agente-senha.log`: "O app foi gerado com 'Bloquear configurações'; gere o instalador de novo com a versão atual do gerador e instale por cima". O `--option` também é conferido (antes o log dizia "Opção approve-mode = password" sem ter aplicado nada).
