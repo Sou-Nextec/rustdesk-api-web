@@ -447,7 +447,7 @@ index 0000000..e30fd98
 +	if _, err := NextecAgentSyncStateWithApp("10.0.0.1", enrollPeer, token, nil, "Nextec-Suporte"); err != nil {
 +		t.Fatal(err)
 +	}
-+	if info = nextecConnectInfo(enrollPeer, true, time.Now().Unix()); info.Scheme != "nextec-suporte" {
++	if info = nextecConnectInfo(enrollPeer, true, time.Now().Unix()); info.MachineScheme != "nextec-suporte" || info.Scheme != "nextec-connect" {
 +		t.Fatalf("renomeado: %#v", info)
 +	}
 +	// A lista de máquinas do painel expõe o nome e o protocolo.
