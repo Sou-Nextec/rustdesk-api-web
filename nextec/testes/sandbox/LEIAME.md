@@ -22,6 +22,20 @@ Use um MSI **sem** o agente (ex.: 2.0.7). Com o MSI 2.0.9 o agente já vem insta
 Um sandbox por vez; a máquina precisa de uns 2,5 GB de RAM livres. Cada cenário leva de 4 a 12 minutos.
 Para habilitar o recurso (PowerShell administrador, uma vez): `Enable-WindowsOptionalFeature -Online -FeatureName Containers-DisposableClientVM -All`.
 
+## Código de saída do runner
+
+Os relatórios (`verificacoes.md`, `RESULTADO.md`, `resumo.json`) são sempre gerados; depois o runner decide o código:
+
+| Código | Causa |
+| --- | --- |
+| 0 | Todos os cenários pedidos com `resultado.json` válido, Verificacoes > 0 e Falhas = 0 |
+| 2 | `fim.json`/`resultado.json` ausente, tempo esgotado, Falhas = -1 ou cenário não executado |
+| 3 | Zero verificações |
+| 4 | Verificações falharam (Falhas > 0) |
+
+Com mais de uma causa vale o menor código; todas aparecem no console e no `RESULTADO.md`. A decisão fica em
+`Get-SandboxExitCode.ps1`, testada sem Sandbox por `test_exitcode.ps1` (roda no CI).
+
 ## Segurança do teste
 
 - `.wsb`: `Networking=Disable`, `vGPU`, áudio, vídeo, impressora e área de transferência desligados, `ProtectedClient`, 2 GB.
