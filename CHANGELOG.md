@@ -2,6 +2,17 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.31
+
+Autorizar atualização em um passo.
+
+- **Assinar no navegador:** em Atualizações do app > Autorizar, escolha o arquivo da chave do atualizador, digite a senha e clique **Assinar e autorizar**. O navegador baixa e confere os pacotes (SHA-256 e tamanho), monta o manifesto e assina localmente (RSA SHA-256, mesmo formato do assinador). Não precisa baixar o assinador, nem subir arquivos.
+- **A chave não sai do computador:** o arquivo `.pem` cifrado é lido pelo próprio navegador e aberto com a senha digitada; nada disso é enviado ao painel, só o manifesto e a assinatura.
+- **Lembrar a chave neste navegador (opcional):** guarda o `.pem` cifrado no armazenamento local, continua protegido pela senha.
+- **Terminal continua disponível:** a seção "avançado" mostra o comando pronto para copiar (`Assinar-Versao.ps1 -Versao X`) e o fluxo antigo com arquivos.
+- **Limite:** o navegador confere hash e tamanho do MSI e dos DEB contra o pedido, mas não abre o conteúdo do MSI (ProductName e ProductVersion) como o assinador local faz.
+- **Testes:** `assinatura-navegador.test.mjs` compara o manifesto byte a byte com o do assinador Python e verifica a assinatura com a chave pública.
+
 ## 2.11.30
 
 Transferência de arquivos sem pedir senha.
