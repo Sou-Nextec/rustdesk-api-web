@@ -238,7 +238,7 @@ function Write-NextecProvisionLog {
   Assert-NextecProvisionPath -Path $paths.Log
   if (-not (Test-Path -LiteralPath $paths.Log -PathType Leaf)) { throw 'unsafe_path' }
   Assert-NextecProvisionFileAcl -Path $paths.Log
-  Add-Content -LiteralPath $paths.Log -Value ('{0:yyyy-MM-dd HH:mm:ss} {1}' -f (Get-Date), $Code) -Encoding UTF8
+  Add-Content -LiteralPath $paths.Log -Value ('{0} {1}' -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture), $Code) -Encoding UTF8
 }
 
 function Import-NextecIdentityFunctions {
@@ -903,7 +903,7 @@ function Resolve-NextecOldAgent {
   }
   # Pendencia antiga (journal) sairia na frente da autorizacao nova: vai para backup protegido. A credencial fica.
   if (Test-Path -LiteralPath $paths.Journal -PathType Leaf) {
-    [void](Move-NextecProvisionFileAside -Path $paths.Journal -Stamp ($Now.ToUniversalTime().ToString('yyyyMMdd-HHmmss')))
+    [void](Move-NextecProvisionFileAside -Path $paths.Journal -Stamp ($Now.ToUniversalTime().ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture)))
   }
   Write-NextecProvisionLog ('old_agent_replace_' + $reason) -Root $Root
   return $reason

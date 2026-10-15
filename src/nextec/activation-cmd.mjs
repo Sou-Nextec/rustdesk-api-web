@@ -348,7 +348,7 @@ function Write-NxLog {
     if ([IO.File]::Exists($p) -and ([IO.FileInfo]::new($p)).Length -gt 262144) { [IO.File]::Delete($p) }
     if (-not [IO.File]::Exists($p)) { New-NxProtectedFile -Path $p }
     $clean = [regex]::Replace([string]$Text, '[^A-Za-z0-9 _=.:/,;()-]', '?')
-    $line = ('{0:yyyy-MM-dd HH:mm:ss} {1}' -f (Get-Date), $clean) + [char]13 + [char]10
+    $line = ('{0} {1}' -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture), $clean) + [char]13 + [char]10
     $fs = [IO.File]::Open($p, [IO.FileMode]::Append, [IO.FileAccess]::Write, [IO.FileShare]::Read)
     try { $b = [Text.Encoding]::ASCII.GetBytes($line); $fs.Write($b, 0, $b.Length) } finally { $fs.Dispose() }
   } catch { }
@@ -755,7 +755,7 @@ function Invoke-NxActivation {
     [bool]$IsAdmin = $true,
     [scriptblock]$ReadIdentity = { param($f, $p, $r) Get-NxLocalIdentity -Files $f -Root $r -PanelDefault $p.painel }
   )
-  $stamp = $Now.ToUniversalTime().ToString('yyyyMMdd-HHmmss')
+  $stamp = $Now.ToUniversalTime().ToString('yyyyMMdd-HHmmss', [Globalization.CultureInfo]::InvariantCulture)
   $coord = [IO.Path]::Combine($Root, 'Coordenar-Agente-Nextec.ps1')
   $taskName = 'Nextec Acesso - Cadastro de agente'
   $senhaTask = 'Nextec Acesso - Senha'
@@ -1003,7 +1003,7 @@ export function buildActivationCmd(bundle, now = Date.now(), pkg, options = {}) 
     "  $where = " + m.searched + " + ($short.ToArray() -join '; ')",
     "  if ($all.Count -gt 5) { $where += (" + m.others + ").Replace('{0}', [string]($all.Count - 5)) }",
     "  $logName = 'Ativar-Nextec-' + ([string]$id -replace '[^0-9]', '') + '-busca.log'",
-    "  $logText = @(('Ativar Nextec: busca do agente em ' + (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')), ('App: ' + [string]$found.App), ('Pasta do app: ' + [string]$found.AppPath)) + $all.ToArray()",
+    "  $logText = @(('Ativar Nextec: busca do agente em ' + (Get-Date).ToString('yyyy-MM-dd HH:mm:ss', [Globalization.CultureInfo]::InvariantCulture)), ('App: ' + [string]$found.App), ('Pasta do app: ' + [string]$found.AppPath)) + $all.ToArray()",
     "  $log = ''",
     '  $logDirs = New-Object System.Collections.ArrayList',
     '  try { [void]$logDirs.Add([IO.Path]::GetDirectoryName($self)) } catch { }',
