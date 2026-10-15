@@ -41,6 +41,10 @@ services:
       - RELAY=${DOMINIO:-remoto.nex.tec.br}:21117
       - ENCRYPTED_ONLY=1
       - MUST_LOGIN=N
+      # Todas as conexões passam pelo relay desta VPS (hbbr). Sem isso, duas pontas atrás de NAT tentam P2P, o ponto
+      # direto falha e a sessão termina em "Failed to connect via rendezvous server: Please try later" (visto em
+      # 15/10/2026, máquina 215 969 168). Para voltar ao P2P, troque por N e redeploy.
+      - ALWAYS_USE_RELAY=${SEMPRE_RELAY:-Y}
     volumes:
       # chave do servidor e cadastro de IDs (hbbs)
       - ${PASTA_DADOS:-/opt/rustdesk-nextec}/data:/data
