@@ -118,6 +118,7 @@
                 </el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
+                    <el-dropdown-item command="files">Transferir arquivos</el-dropdown-item>
                     <el-dropdown-item command="details">Ver detalhes</el-dropdown-item>
                     <el-dropdown-item v-if="appStore.setting.appConfig.web_client" command="web">Abrir no navegador</el-dropdown-item>
                     <el-dropdown-item command="list">Salvar em uma lista</el-dropdown-item>
@@ -291,7 +292,7 @@
   import { loadAllUsers } from '@/global'
   import { useAppStore } from '@/store/app'
   import { timeAgo } from '@/utils/time'
-  import { connectDevice as connectByClient } from '@/nextec/connect'
+  import { connectDevice as connectByClient, connectFiles } from '@/nextec/connect'
   import { useQuickAccess } from '@/nextec/quick-access'
   import { toWebClientLink } from '@/utils/webclient'
   import { downBlob, jsonToCsv } from '@/utils/file'
@@ -437,6 +438,7 @@
   }
   const onRow = (cmd, row) => {
     if (cmd === 'details') { details.row = row; details.visible = true }
+    if (cmd === 'files') connectFiles(row.id)
     if (cmd === 'web') toWebClientLink(row)
     if (cmd === 'list') { listForm.row = row; listForm.visible = true }
     if (cmd === 'delete') delOne(row)

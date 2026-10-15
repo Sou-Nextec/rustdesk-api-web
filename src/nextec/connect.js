@@ -11,6 +11,7 @@ import { useUserStore } from '@/store/user'
 import { connectSettings, connectNote, availableApp, secretsRotate } from './api'
 import { useQuickAccess } from './quick-access'
 import { prepareConnection } from './connect-flow.mjs'
+import { urlForAction } from './connect-action.mjs'
 import { appLabel, createOpenedStore, launchWatched, openConnection, passwordNotice, watchOpened } from './connect-open.mjs'
 
 // localStorage pode lançar (modo privado, bloqueio): nunca derruba a conexão.
@@ -123,7 +124,8 @@ async function askTicket (id, mode) {
   return value
 }
 
-export async function connectDevice (id) {
+// action: opcional, ex.: 'file-transfer' abre direto a transferência de arquivos, com a mesma senha do cofre.
+export async function connectDevice (id, { action = '' } = {}) {
   id = String(id).replace(/\s+/g, '') // o painel mostra o ID em grupos (536 822 159); o link precisa dele sem espaços
   try { useQuickAccess().touch(id) } catch (e) { /* recentes são opcionais */ }
   try {
@@ -142,7 +144,7 @@ export async function connectDevice (id) {
     })
     if (prepared) {
       openConnection({
-        url: prepared.url, link: prepared.link, store: openedStore(), launch,
+        url: urlForAction(prepared.url, action), link: prepared.link, store: openedStore(), launch,
         watch: () => watchOpened({ win: window, doc: document }),
         toast: showOpeningToast, dialog: showDialog,
       }).catch(() => { /* aviso é só conveniência */ })
@@ -155,4 +157,8 @@ export async function connectDevice (id) {
 // Mantém as entradas antigas no mesmo caminho autorizado e preparado do painel.
 export function connectLink (id) {
   return connectDevice(id)
+}
+
+export function connectFiles (id) {
+  return connectDevice(id, { action: 'file-transfer' })
 }
