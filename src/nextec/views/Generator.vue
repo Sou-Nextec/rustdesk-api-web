@@ -87,7 +87,7 @@
     retryState.value = nextRetry(retryState.value, row)
     tab.value = 'new'
     if (!retryState.value.appKnown) {
-      ElMessage.warning('Este item é anterior ao registro do nome do aplicativo. Confira o campo Nome do aplicativo antes de gerar.')
+      ElMessage.warning({ message: 'Item antigo: o nome do aplicativo não foi guardado. Confira o campo Nome do aplicativo antes de gerar.', duration: 8000, showClose: true })
     }
   }
   const generated = () => { tab.value = 'generated'; gen.value?.reload() }

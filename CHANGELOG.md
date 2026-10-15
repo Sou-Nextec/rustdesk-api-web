@@ -2,6 +2,13 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.28
+
+Ajuste de texto e do layout do gerador.
+
+- **Aviso do item antigo mais claro e mais longo:** ao tentar de novo um item gerado antes do registro do nome do aplicativo, o aviso fica 8 segundos e pede para conferir o campo.
+- **Modelos salvos no topo do formulário e layout no padrão do painel:** vem do rdgen (PR do mesmo tema); ficam visíveis depois do deploy do gerador.
+
 ## 2.11.27
 
 Falha ao gerar um instalador agora diz o motivo e deixa tentar de novo.
