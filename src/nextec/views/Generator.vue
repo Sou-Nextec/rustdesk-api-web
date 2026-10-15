@@ -1,17 +1,17 @@
 <template>
   <section class="nx-gen" aria-label="Gerar cliente">
     <div class="nx-card">
-      <div class="nx-card-head">
-        <div>
-          <h2 class="nx-h2">Gerar cliente</h2>
-          <p class="nx-sub">Cria o instalador do app já configurado com o servidor, a chave e a identidade da Nextec.</p>
-        </div>
+      <div class="nx-tabs-row">
+        <el-tabs v-model="tab" class="nx-generator-tabs">
+          <el-tab-pane label="Novo instalador" name="new"/>
+          <el-tab-pane label="Identidade visual" name="branding"/>
+          <el-tab-pane label="Itens gerados" name="generated"/>
+        </el-tabs>
         <el-button class="nx-open" @click="open">
           <el-icon aria-hidden="true"><el-icon-TopRight/></el-icon><span>Abrir em outra aba</span>
         </el-button>
       </div>
-      <el-tabs v-model="tab" class="nx-generator-tabs"><el-tab-pane label="Novo instalador" name="new"/><el-tab-pane label="Itens gerados" name="generated"/></el-tabs>
-      <ol class="nx-gen-flow" aria-label="Etapas para gerar e publicar um cliente">
+      <ol v-if="tab !== 'branding'" class="nx-gen-flow" aria-label="Etapas para gerar e publicar um cliente">
         <li :class="{ 'is-current': tab === 'new' }" :aria-current="tab === 'new' ? 'step' : undefined"><span>1</span><strong>Gerar</strong><small>Preencha e gere o instalador.</small></li>
         <li :class="{ 'is-current': tab === 'generated' }" :aria-current="tab === 'generated' ? 'step' : undefined"><span>2</span><strong>Conferir</strong><small>Baixe e teste em uma máquina.</small></li>
         <li><span>3</span><strong>Atualizar</strong><small>Envie, autorize e publique.</small></li>
@@ -40,20 +40,10 @@
             </div>
           </el-collapse-item>
         </el-collapse>
-        <div v-if="!frameReady" class="nx-frame-status" role="status" aria-live="polite">
-          <template v-if="frameDelayed">
-            <p><strong>O gerador ainda não respondeu.</strong> Abra em outra aba para verificar o acesso ou tente novamente.</p>
-            <div class="nx-frame-actions">
-              <el-button type="primary" @click="reloadFrame">Tentar novamente</el-button>
-              <el-button @click="open">Abrir em outra aba</el-button>
-            </div>
-          </template>
-          <template v-else><el-skeleton :rows="3" animated /><p>Carregando o gerador…</p></template>
-        </div>
-        <div class="nx-frame-wrap">
-          <iframe ref="frame" :key="frameKey" src="/gerador/" title="Gerador de clientes Nextec"
-            class="nx-generator-frame" :class="{ 'is-pending': !frameReady }" :style="{ height: frameHeight + 'px' }" @load="syncTheme" />
-        </div>
+        <GeneratorFrame ref="gen" src="/gerador/" title="Gerador de clientes Nextec" @generated="generated" @open="open" />
+      </div>
+      <div v-if="brandingSeen" v-show="tab === 'branding'">
+        <GeneratorFrame src="/gerador/nextec/imagens/" title="Identidade visual do gerador" @open="open" />
       </div>
     </div>
 
@@ -78,68 +68,28 @@
 </template>
 
 <script setup>
-  import { onMounted, onBeforeUnmount, ref } from 'vue'
+  import { onMounted, ref, watch } from 'vue'
   import { ElMessage } from 'element-plus'
   import { connectScheme, connectSchemeSave } from '@/nextec/api'
-  import { generatorHeight } from '@/nextec/generator-frame.mjs'
-  import { generationEvent } from '@/nextec/generation-catalog.mjs'
   import GeneratedClients from './GeneratedClients.vue'
+  import GeneratorFrame from './GeneratorFrame.vue'
   const tab = ref('new')
-  const guide = ref(typeof window !== 'undefined' && window.innerWidth >= 768 ? ['guide'] : [])
+  const guide = ref([])
+  const gen = ref(null)
+  const brandingSeen = ref(false)
+  watch(tab, (value) => { if (value === 'branding') brandingSeen.value = true })
 
-  const open = () => { window.open('/gerador/', '_blank', 'noopener') }
-  const frame = ref(null)
-  const frameKey = ref(0)
-  const frameReady = ref(false)
-  const frameDelayed = ref(false)
-  const frameHeight = ref(720)
-  let frameTimer
-  let themeObserver
-  const syncTheme = () => frame.value?.contentWindow?.postMessage({
-    type: 'nextec-generator-theme', dark: document.documentElement.classList.contains('dark')
-  }, window.location.origin)
-  const receiveFrame = (event) => {
-    if (generationEvent(event, window.location.origin, frame.value?.contentWindow)) {
-      tab.value = 'generated'
-      reloadFrame()
-      return
-    }
-    const height = generatorHeight(event, window.location.origin, frame.value?.contentWindow)
-    if (height === null) return
-    frameHeight.value = height
-    frameReady.value = true
-    frameDelayed.value = false
-    clearTimeout(frameTimer)
-    syncTheme()
-  }
-  const startTimer = () => {
-    clearTimeout(frameTimer)
-    frameTimer = setTimeout(() => { if (!frameReady.value) frameDelayed.value = true }, 15000)
-  }
-  const reloadFrame = () => {
-    frameReady.value = false
-    frameDelayed.value = false
-    frameKey.value++
-    startTimer()
-  }
+  const open = () => { window.open(tab.value === 'branding' ? '/gerador/nextec/imagens/' : '/gerador/', '_blank', 'noopener') }
+  const generated = () => { tab.value = 'generated'; gen.value?.reload() }
 
   const scheme = ref('rustdesk')
   const loadingScheme = ref(true)
   const savingScheme = ref(false)
 
   onMounted(async () => {
-    window.addEventListener('message', receiveFrame)
-    themeObserver = new MutationObserver(syncTheme)
-    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] })
-    startTimer()
     const res = await connectScheme().catch(() => false)
     if (res && res.data && res.data.scheme) scheme.value = res.data.scheme
     loadingScheme.value = false
-  })
-  onBeforeUnmount(() => {
-    window.removeEventListener('message', receiveFrame)
-    themeObserver?.disconnect()
-    clearTimeout(frameTimer)
   })
 
   const saveScheme = async () => {
@@ -155,15 +105,16 @@
 
 <style scoped lang="scss">
   .nx-gen { width: 100%; }
-  .nx-generator-tabs { padding: 0 20px; }
-  .nx-gen-flow { list-style: none; display: flex; gap: 8px; margin: 0 20px 6px; padding: 0; }
+  .nx-tabs-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 6px 22px 0; }
+  .nx-generator-tabs { flex: 1 1 auto; min-width: 0; }
+  .nx-gen-flow { list-style: none; display: flex; gap: 8px; margin: 12px 22px 6px; padding: 0; }
   .nx-gen-flow li { display: grid; grid-template-columns: auto 1fr; column-gap: 8px; align-items: center; flex: 1 1 0; min-width: 0; padding: 4px 0; color: var(--nx-text-subtle); }
   .nx-gen-flow li > span { grid-row: span 2; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--nx-border); font-size: 12px; font-weight: 700; }
   .nx-gen-flow strong { font-size: 13px; color: var(--nx-text-muted); }
   .nx-gen-flow small { font-size: 12px; line-height: 1.35; color: var(--nx-text-subtle); }
   .nx-gen-flow li.is-current > span { background: var(--nx-accent); border-color: var(--nx-accent); color: #fff; }
   .nx-gen-flow li.is-current strong { color: var(--nx-text); }
-  .nx-gen-guide { margin: 8px 20px 4px; border: 1px solid var(--nx-border); border-radius: 14px; overflow: hidden; --el-collapse-header-height: 46px; }
+  .nx-gen-guide { margin: 8px 22px 4px; border: 1px solid var(--nx-border); border-radius: 14px; overflow: hidden; --el-collapse-header-height: 46px; }
   .nx-gen-guide :deep(.el-collapse-item__header) { height: auto; min-height: 46px; line-height: 1.4; padding: 10px 16px; background: var(--nx-surface); border-bottom: 0; }
   .nx-gen-guide :deep(.el-collapse-item__wrap) { border-bottom: 0; background: var(--nx-surface); }
   .nx-gen-guide :deep(.el-collapse-item__content) { padding: 0 16px 16px; }
@@ -171,20 +122,12 @@
   .nx-guide-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
   .nx-guide-grid h3 { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; font-size: 13px; color: var(--nx-text); }
   .nx-guide-grid ul { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.55; color: var(--nx-text-muted); li + li { margin-top: 6px; } strong { color: var(--nx-text); } }
-  .nx-frame-wrap { position: relative; }
-  .nx-generator-frame { display: block; border: 0; width: 100%; background: var(--nx-bg); }
-  .nx-generator-frame.is-pending { position: absolute; top: 0; left: 0; visibility: hidden; pointer-events: none; }
-  .nx-frame-status { margin: 12px 20px; padding: 16px 18px; border-radius: 14px; background: var(--nx-bg); color: var(--nx-text-muted); p { margin: 0 0 12px; font-size: 14px; line-height: 1.5; strong { color: var(--nx-text); } } }
-  .nx-frame-actions { display: flex; gap: 8px; flex-wrap: wrap; .el-button { margin: 0; } }
   .nx-gen-options { margin-top: 4px; border: 0; --el-collapse-header-height: 48px; background: var(--nx-surface); border-radius: var(--nx-radius-card); box-shadow: var(--nx-shadow-card); overflow: hidden; }
   .nx-gen-options :deep(.el-collapse-item__header) { height: auto; min-height: 48px; line-height: 1.4; padding: 10px 22px; background: transparent; border-bottom: 0; }
   .nx-gen-options :deep(.el-collapse-item__wrap) { background: transparent; border-bottom: 0; }
   .nx-gen-options :deep(.el-collapse-item__content) { padding: 0 22px 18px; }
   .nx-card { background: var(--nx-surface); border-radius: var(--nx-radius-card); box-shadow: var(--nx-shadow-card); overflow: hidden; margin-bottom: 16px; }
-  .nx-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; padding: 18px 22px 8px; }
   .nx-open { margin: 0; }
-  .nx-h2 { font-size: 18px; margin: 0; color: var(--nx-text); }
-  .nx-sub { margin: 4px 0 0; font-size: 13px; line-height: 1.5; color: var(--nx-text-muted); }
   .nx-scheme { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
   .nx-scheme-input { max-width: 340px; }
   .nx-note { margin: 0 0 12px; font-size: 13px; line-height: 1.55; color: var(--nx-text-muted); }
@@ -193,12 +136,10 @@
     .nx-guide-grid { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   }
   @media (max-width: 560px) {
-    .nx-card-head { padding: 16px 16px 6px; }
-    .nx-generator-tabs { padding: 0 16px; }
-    .nx-gen-flow { margin: 0 16px 6px; gap: 4px; }
+    .nx-tabs-row { padding: 6px 16px 0; }
+    .nx-gen-flow { margin: 12px 16px 6px; gap: 4px; }
     .nx-gen-flow small { display: none; }
     .nx-gen-guide { margin: 8px 14px 4px; }
-    .nx-frame-status { margin: 12px 14px; }
     .nx-open { width: 100%; }
     .nx-gen-options :deep(.el-collapse-item__header) { padding: 10px 16px; }
     .nx-gen-options :deep(.el-collapse-item__content) { padding: 0 16px 16px; }
