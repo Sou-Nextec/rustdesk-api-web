@@ -169,34 +169,53 @@
       </template>
     </el-dialog>
 
-    <el-dialog v-model="authorization.visible" title="Autorizar atualização" width="min(520px, 92vw)" :close-on-click-modal="false">
-      <el-alert type="info" :closable="false" show-icon title="A chave privada fica no computador de assinatura">
-        <template #default><span>O navegador recebe apenas o manifesto e a assinatura. Não envie a chave privada nem a senha dela ao painel.</span></template>
-      </el-alert>
-      <ol class="nx-sign-steps">
-        <li>Baixe o pedido e o pacote da versão <strong>{{ authorization.version }}</strong>. Abra o assinador no seu computador: a senha desbloqueia uma sessão de 15 minutos.</li>
-        <li>Selecione abaixo <code>manifesto-connect.json</code> e <code>manifesto-connect.json.sig</code>.</li>
-        <li>Depois de autorizar, publique primeiro para um grupo piloto e confira o resultado.</li>
-      </ol>
-      <el-button :loading="authorization.preparing" :disabled="authorization.busy || !!authorization.request" @click="prepareSigning">Baixar pedido de assinatura</el-button>
-      <a href="/gerador/nextec/atualizacao/assinador.zip" download style="display:inline-block;margin:12px">Baixar assinador local</a>
-      <div v-if="authorization.request" class="nx-sign-steps">
-        <p>Baixe os pacotes abaixo para o assinador conferir o conteúdo antes de assinar.</p>
-        <a v-if="authorization.request.windows" :href="signAssetUrl(authorization.request.windows)" download>Baixar MSI</a>
-        <a v-for="(asset, arch) in authorization.request.linux || {}" :key="arch" :href="signAssetUrl(asset)" download style="margin-left:12px">Baixar Linux {{ arch }}</a>
-      </div>
-      <el-form label-position="top">
-        <el-form-item label="Manifesto Connect (.json)">
-          <input type="file" accept=".json" :disabled="authorization.busy" @change="authorization.manifest = $event.target.files[0]">
+    <el-dialog v-model="authorization.visible" title="Autorizar atualização" width="min(540px, 92vw)" :close-on-click-modal="false">
+      <p class="nx-help">
+        Versão <strong>{{ authorization.version }}</strong>. Escolha a chave do atualizador e digite a senha.
+        O navegador assina aqui mesmo: a chave e a senha <strong>não saem do seu computador</strong>; só o manifesto assinado vai ao painel.
+      </p>
+      <el-form label-position="top" @submit.prevent>
+        <el-form-item label="Chave do atualizador (.pem)">
+          <input type="file" accept=".pem,application/x-pem-file,text/plain" :disabled="authorization.busy" @change="chooseKey">
+          <p v-if="authorization.keyName" class="nx-help">Chave: {{ authorization.keyName }}</p>
         </el-form-item>
-        <el-form-item label="Assinatura (.sig)">
-          <input type="file" accept=".sig" :disabled="authorization.busy" @change="authorization.signature = $event.target.files[0]">
+        <el-form-item label="Senha da chave">
+          <el-input v-model="authorization.passphrase" type="password" show-password autocomplete="off"
+                    :disabled="authorization.busy" @keyup.enter="signInBrowser" />
         </el-form-item>
+        <el-checkbox v-model="authorization.remember" :disabled="authorization.busy">
+          Lembrar a chave neste navegador (continua protegida pela senha)
+        </el-checkbox>
       </el-form>
+      <p v-if="authorization.status" class="nx-help" role="status">{{ authorization.status }}</p>
       <p v-if="authorization.error" class="nx-error" role="alert">{{ authorization.error }}</p>
+
+      <el-collapse class="nx-sign-advanced">
+        <el-collapse-item title="Prefiro assinar pelo terminal ou com arquivos (avançado)" name="adv">
+          <p class="nx-help">No terminal, na pasta do repositório (faz tudo e pede só a senha):</p>
+          <p><code>{{ signCommand }}</code>
+            <el-button size="small" @click="copySignCommand">Copiar</el-button></p>
+          <p class="nx-help">Ou assine em outro computador e envie os dois arquivos gerados:</p>
+          <el-button :loading="authorization.preparing" :disabled="authorization.busy || !!authorization.request" @click="prepareSigning">Baixar pedido de assinatura</el-button>
+          <a href="/gerador/nextec/atualizacao/assinador.zip" download style="display:inline-block;margin:12px">Baixar assinador local</a>
+          <div v-if="authorization.request" class="nx-sign-steps">
+            <a v-if="authorization.request.windows" :href="signAssetUrl(authorization.request.windows)" download>Baixar MSI</a>
+            <a v-for="(asset, arch) in authorization.request.linux || {}" :key="arch" :href="signAssetUrl(asset)" download style="margin-left:12px">Baixar Linux {{ arch }}</a>
+          </div>
+          <el-form label-position="top">
+            <el-form-item label="Manifesto Connect (.json)">
+              <input type="file" accept=".json" :disabled="authorization.busy" @change="authorization.manifest = $event.target.files[0]">
+            </el-form-item>
+            <el-form-item label="Assinatura (.sig)">
+              <input type="file" accept=".sig" :disabled="authorization.busy" @change="authorization.signature = $event.target.files[0]">
+            </el-form-item>
+          </el-form>
+          <el-button :loading="authorization.busy" :disabled="!authorization.manifest || !authorization.signature" @click="saveAuthorization">Autorizar com os arquivos</el-button>
+        </el-collapse-item>
+      </el-collapse>
       <template #footer>
         <el-button :disabled="authorization.busy" @click="authorization.visible = false">Cancelar</el-button>
-        <el-button type="primary" :loading="authorization.busy" :disabled="!authorization.manifest || !authorization.signature" @click="saveAuthorization">Autorizar</el-button>
+        <el-button type="primary" :loading="authorization.busy" :disabled="!authorization.keyText || !authorization.passphrase" @click="signInBrowser">Assinar e autorizar</el-button>
       </template>
     </el-dialog>
 
@@ -255,6 +274,7 @@
   import { timeAgo } from '@/utils/time'
   import { updatesOverview, updatesRollout, updatesDelete, updatesSignature, updatesInternal, updatesSignRequest } from '@/nextec/api'
   import { signingRequest, downloadLocalJson } from '@/nextec/local-requests.mjs'
+  import { openPrivateKey, buildManifest, signManifest, checkAsset, bytesToBase64 } from '@/nextec/assinatura-navegador.mjs'
   import { updateState } from '@/nextec/update-status.mjs'
 
   const SCRIPT_URL = 'https://raw.githubusercontent.com/Sou-Nextec/rustdesk-api-web/master/nextec/atualizacao/Instalar-Nextec.ps1'
@@ -375,8 +395,74 @@
   }
 
   // ---------- publicar ----------
-  const authorization = reactive({ visible: false, busy: false, preparing: false, request: null, version: '', manifest: null, signature: null, error: '' })
-  const openAuthorization = (row) => Object.assign(authorization, { visible: true, busy: false, preparing: false, request: null, version: row.version, manifest: null, signature: null, error: '' })
+  const KEY_STORE = 'nx-sign-key'
+  const SEQ_STORE = 'nx-sign-seq'
+  const storeGet = (k) => { try { return localStorage.getItem(k) } catch (e) { return null } }
+  const storeSet = (k, v) => { try { localStorage.setItem(k, v) } catch (e) { /* opcional */ } }
+  const storeDel = (k) => { try { localStorage.removeItem(k) } catch (e) { /* opcional */ } }
+  const authorization = reactive({ visible: false, busy: false, preparing: false, request: null, version: '', manifest: null, signature: null, error: '', status: '', keyText: '', keyName: '', passphrase: '', remember: false })
+  const openAuthorization = (row) => {
+    const saved = storeGet(KEY_STORE)
+    Object.assign(authorization, {
+      visible: true, busy: false, preparing: false, request: null, version: row.version, manifest: null, signature: null,
+      error: '', status: '', passphrase: '', keyText: saved || '', keyName: saved ? 'lembrada neste navegador' : '', remember: !!saved,
+    })
+  }
+  const signCommand = computed(() => `powershell -ExecutionPolicy Bypass -File .\\nextec\\atualizacao\\assinador\\Assinar-Versao.ps1 -Versao ${authorization.version}`)
+  const copySignCommand = async () => {
+    try { await navigator.clipboard.writeText(signCommand.value); ok('Comando copiado.') } catch (e) { authorization.error = 'Não foi possível copiar. Selecione o texto e copie.' }
+  }
+  const chooseKey = async (event) => {
+    const file = event.target.files && event.target.files[0]
+    authorization.error = ''
+    if (!file) return
+    if (file.size > 16384) { authorization.error = 'O arquivo é grande demais para ser uma chave.'; return }
+    authorization.keyText = await file.text()
+    authorization.keyName = file.name
+  }
+  // Assina no navegador: a chave é aberta aqui com a senha digitada, nunca enviada. Só o manifesto assinado vai ao painel.
+  const signInBrowser = async () => {
+    authorization.error = ''
+    authorization.status = ''
+    if (authorization.busy) return
+    authorization.busy = true
+    const version = authorization.version
+    try {
+      authorization.status = 'Abrindo a chave...'
+      const key = await openPrivateKey(authorization.keyText, authorization.passphrase)
+      authorization.status = 'Pedindo a versão ao painel...'
+      const response = await updatesSignRequest(version)
+      const request = signingRequest(response.data)
+      if (request.versao !== version) throw new Error('O pedido pertence a outra versão.')
+      const last = Number(storeGet(SEQ_STORE) || 0)
+      if (last && request.sequencia <= last) throw new Error('Esta sequência já foi assinada neste navegador. Peça um novo pedido no painel.')
+      const assets = []
+      if (request.windows) assets.push(['MSI', request.windows])
+      for (const [arch, asset] of Object.entries(request.linux || {})) assets.push([`Linux ${arch}`, asset])
+      for (const [label, asset] of assets) {
+        authorization.status = `Baixando e conferindo ${label}...`
+        const download = await fetch(signAssetUrl(asset), { credentials: 'same-origin' })
+        if (!download.ok) throw new Error(`Não foi possível baixar ${label} (HTTP ${download.status}).`)
+        await checkAsset(await download.arrayBuffer(), asset, label)
+      }
+      authorization.status = 'Assinando...'
+      const manifest = buildManifest(request)
+      const signature = await signManifest(key, manifest)
+      authorization.status = 'Enviando ao painel...'
+      await updatesSignature({ version, manifesto: bytesToBase64(manifest), assinatura: signature })
+      storeSet(SEQ_STORE, String(request.sequencia))
+      if (authorization.remember) storeSet(KEY_STORE, authorization.keyText); else storeDel(KEY_STORE)
+      authorization.passphrase = ''
+      authorization.visible = false
+      ok('Autorização conferida. Você pode publicar para o grupo piloto.')
+      await load()
+    } catch (e) {
+      authorization.error = e.message || 'Não foi possível autorizar esta atualização.'
+    } finally {
+      authorization.busy = false
+      authorization.status = ''
+    }
+  }
   const signAssetUrl = asset => `/api/nextec/update/${asset.arquivo}`
   const prepareSigning = async () => {
     authorization.preparing = true
