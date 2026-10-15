@@ -2,6 +2,17 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.26
+
+Tela **Gerar cliente** arrumada.
+
+- **Sem título repetido:** o título e a descrição já estão no topo da página; o cartão não os repete mais.
+- **Uma linha de abas:** Novo instalador, Identidade visual e Itens gerados, com o botão Abrir em outra aba ao lado. Antes havia duas fileiras de abas (uma do painel, outra de dentro do gerador).
+- **Identidade visual dentro do painel:** carrega na própria tela, sem cabeçalho duplicado.
+- **Gerador embutido sem moldura:** fundo igual ao do cartão do painel, sem cabeçalho próprio, sem título "Novo instalador" repetido.
+- **Guia "O que preencher" fechado por padrão:** o formulário aparece sem rolar.
+- **rdgen:** depende do ajuste em `embed.html` do gerador (PR de mesmo nome); sem ele, o cabeçalho antigo continua aparecendo dentro do painel.
+
 ## 2.11.25
 
 Dois defeitos do agente achados no teste ponta a ponta no Windows Sandbox (app real, Windows em português).
