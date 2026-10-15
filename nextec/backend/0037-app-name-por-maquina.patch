@@ -213,7 +213,7 @@ new file mode 100644
 index 0000000..903294f
 --- /dev/null
 +++ b/service/nextec_appname.go
-@@ -0,0 +1,123 @@
+@@ -0,0 +1,124 @@
 +package service
 +
 +import (
@@ -283,7 +283,7 @@ index 0000000..903294f
 +// NextecConnectInfo é o que o painel sabe da máquina para montar e abrir o link.
 +type NextecConnectInfo struct {
 +	Scheme        string `json:"scheme"`
-+	SchemeSource  string `json:"scheme_source"` // machine | global
++	SchemeSource  string `json:"scheme_source"` // global | published | machine
 +	AppName       string `json:"app_name,omitempty"`
 +	MachineScheme string `json:"machine_scheme,omitempty"` // protocolo do app instalado na máquina remota (informativo)
 +	AgentEnrolled bool   `json:"agent_enrolled"`
@@ -298,7 +298,8 @@ index 0000000..903294f
 +// nextecConnectInfo reúne o protocolo do link (global: o app de quem conecta) e o estado do agente e da senha.
 +// canReadVault: o usuário pode receber a senha do cofre desta máquina.
 +func nextecConnectInfo(peerID string, canReadVault bool, now int64) *NextecConnectInfo {
-+	info := &NextecConnectInfo{Scheme: NextecConnectSchemeGet(), SchemeSource: NextecSchemeSrcGlobal, PasswordState: NextecPwNone}
++	scheme, source := NextecConnectSchemeAuto()
++	info := &NextecConnectInfo{Scheme: scheme, SchemeSource: source, PasswordState: NextecPwNone}
 +	d := &model.NextecDeviceSecret{}
 +	if peerID == "" || DB.Where("peer_id = ?", peerID).First(d).Error != nil || d.TokenHash == "" {
 +		return info

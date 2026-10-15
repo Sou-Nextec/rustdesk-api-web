@@ -9,6 +9,7 @@ Conectar abre o app instalado no seu computador.
 - **Protocolo do link vem do app de quem conecta, não do app da máquina remota:** o link `<protocolo>://<id>` é aberto no computador do analista, que tem o app global (por exemplo `Nextec-Connect`). Antes o painel usava o nome do app do servidor (`Cliente-Nextec-Connect`), que o analista não tem, e o app não abria. Agora vale o protocolo global configurado em Gerar cliente > Avançado.
 - **Nome do app da máquina é só informação:** continua aparecendo no estado do agente e vem como `machine_app_name` no link; não muda o protocolo.
 - **Aviso de abertura genérico:** "Abrindo o aplicativo..." em vez do nome do app do servidor.
+- **Protocolo automático (patch 0038):** sem protocolo configurado, o painel usa o nome do app publicado em Atualizações do app (arquivo sem a extensão). O analista não escolhe nada; o campo em Gerar cliente > Avançado continua como sobrescrita do administrador.
 
 ## 2.11.28
 

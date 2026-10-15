@@ -1,0 +1,103 @@
+Protocolo do link deduzido do app publicado para os analistas (sem escolha do analista)
+
+Nextec 0038: o link do botao Conectar abre no computador de quem conecta. Vale o protocolo que o admin configurou; sem
+ele, o do app publicado em Atualizacoes (nome do arquivo sem a extensao); sem ele, rustdesk. O nome do app da maquina
+remota nao entra (0037).
+
+diff --git a/service/nextec_connect_app.go b/service/nextec_connect_app.go
+new file mode 100644
+index 0000000..bdc48c5
+--- /dev/null
++++ b/service/nextec_connect_app.go
+@@ -0,0 +1,41 @@
++package service
++
++import (
++	"path/filepath"
++	"strings"
++
++	"github.com/lejianwen/rustdesk-api/v2/global"
++)
++
++// NextecSchemeSrcPublished: protocolo deduzido do app publicado para os analistas (o admin não definiu um).
++const NextecSchemeSrcPublished = "published"
++
++// Extensões dos instaladores publicados; o nome do app é o nome do arquivo sem elas.
++var nextecInstallerExt = map[string]bool{".msi": true, ".exe": true, ".deb": true, ".rpm": true, ".zip": true}
++
++// NextecPublishedAppScheme deduz o protocolo do app que o painel entrega aos analistas (Atualizações do app).
++// O RustDesk registra o protocolo com o nome do app em minúsculas; o gerador usa o mesmo nome para o arquivo e para o app.
++// Vazio quando nada foi publicado ou o nome não serve de protocolo.
++func NextecPublishedAppScheme() string {
++	r := NextecAvailableApp()
++	if r == nil {
++		return ""
++	}
++	name := strings.TrimSpace(r.FileName)
++	if ext := strings.ToLower(filepath.Ext(name)); nextecInstallerExt[ext] {
++		name = strings.TrimSuffix(name, filepath.Ext(name))
++	}
++	return NextecSchemeFromAppName(name)
++}
++
++// NextecConnectSchemeAuto devolve o protocolo do link e de onde veio. O link abre no computador de quem conecta:
++// vale o que o admin configurou; sem isso, o do app publicado para os analistas; sem isso, rustdesk.
++func NextecConnectSchemeAuto() (scheme, source string) {
++	if strings.TrimSpace(global.NextecSettingGet(settingConnectScheme)) != "" {
++		return NextecConnectSchemeGet(), NextecSchemeSrcGlobal
++	}
++	if s := NextecPublishedAppScheme(); s != "" {
++		return s, NextecSchemeSrcPublished
++	}
++	return NextecConnectSchemeGet(), NextecSchemeSrcGlobal
++}
+diff --git a/service/nextec_connect_app_test.go b/service/nextec_connect_app_test.go
+new file mode 100644
+index 0000000..988eae0
+--- /dev/null
++++ b/service/nextec_connect_app_test.go
+@@ -0,0 +1,44 @@
++package service
++
++import (
++	"strings"
++	"testing"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++)
++
++func TestConnectSchemeAutoFollowsPublishedAppUnlessAdminSetOne(t *testing.T) {
++	db := enrollSetup(t)
++	if err := db.AutoMigrate(&model.NextecAppRelease{}); err != nil {
++		t.Fatal(err)
++	}
++	// Nada configurado e nada publicado: padrão.
++	if s, src := NextecConnectSchemeAuto(); s != "rustdesk" || src != NextecSchemeSrcGlobal {
++		t.Fatalf("sem nada: %q %q", s, src)
++	}
++	// App publicado para os analistas: o protocolo vem do nome dele, sem o analista escolher nada.
++	rel := &model.NextecAppRelease{Version: "2.0.9", FileName: "Joao-da-Silva.msi", Sha256: strings.Repeat("a", 64), Internal: true, Profile: "analysts"}
++	if err := db.Create(rel).Error; err != nil {
++		t.Fatal(err)
++	}
++	if s, src := NextecConnectSchemeAuto(); s != "joao-da-silva" || src != NextecSchemeSrcPublished {
++		t.Fatalf("publicado: %q %q", s, src)
++	}
++	// O que o admin configurou vence.
++	if err := NextecConnectSchemeSet("meu-app"); err != nil {
++		t.Fatal(err)
++	}
++	if s, src := NextecConnectSchemeAuto(); s != "meu-app" || src != NextecSchemeSrcGlobal {
++		t.Fatalf("admin: %q %q", s, src)
++	}
++	// Nome publicado que não serve de protocolo é ignorado.
++	if err := NextecConnectSchemeSet(""); err != nil {
++		t.Fatal(err)
++	}
++	if err := db.Model(rel).Update("file_name", "Nome com espaco.msi").Error; err != nil {
++		t.Fatal(err)
++	}
++	if s, src := NextecConnectSchemeAuto(); s != "rustdesk" || src != NextecSchemeSrcGlobal {
++		t.Fatalf("nome inválido: %q %q", s, src)
++	}
++}
