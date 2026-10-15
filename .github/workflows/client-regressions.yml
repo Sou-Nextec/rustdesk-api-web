@@ -73,3 +73,8 @@ jobs:
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File "nextec/atualizacao/$test"
             if ($LASTEXITCODE -ne 0) { throw "Management regression failed: $test" }
           }
+      - name: Validar codigo de saida do teste do Sandbox (sem abrir o Sandbox)
+        shell: powershell
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File nextec/testes/sandbox/test_exitcode.ps1
+          if ($LASTEXITCODE -ne 0) { throw 'Sandbox exit code regression failed' }
