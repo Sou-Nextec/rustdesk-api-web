@@ -2,6 +2,13 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.30
+
+Transferência de arquivos sem pedir senha.
+
+- **Transferir arquivos pelo painel:** em Dispositivos, menu "..." > **Transferir arquivos**. Abre o app direto na transferência de arquivos (`<protocolo>://file-transfer/<id>`), com a mesma senha do cofre e as mesmas regras de permissão do Conectar.
+- **Motivo:** o botão de transferência de dentro da sessão abre uma conexão nova e, neste cliente, pedia a senha de novo ("Senha incorreta"). O link do painel já leva a senha vigente.
+
 ## 2.11.29
 
 Conectar abre o app instalado no seu computador.
