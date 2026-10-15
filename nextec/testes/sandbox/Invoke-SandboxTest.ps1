@@ -60,6 +60,8 @@ $sums = Get-ChildItem -LiteralPath $entrada -Recurse -File | ForEach-Object { '{
 $commit = (git -C $repo rev-parse HEAD).Trim()
 Write-Host ("Entrada pronta em $entrada (arvore do painel $commit)")
 
+# decisao do codigo de saida em arquivo proprio (testavel sem Sandbox)
+. (Join-Path $here 'Get-SandboxExitCode.ps1')
 $modelo = [IO.File]::ReadAllText((Join-Path $here 'modelo.wsb'))
 $resumo = @()
 foreach ($c in $Cenarios) {
@@ -81,11 +83,27 @@ foreach ($c in $Cenarios) {
   while ((Get-Date) -lt $end -and @(Get-Process -Name 'WindowsSandbox*' -ErrorAction SilentlyContinue).Count) { Start-Sleep -Seconds 3 }
   Get-Process -Name 'WindowsSandbox*' -ErrorAction SilentlyContinue | Where-Object { $_.StartTime -ge $t0 } | Stop-Process -Force -ErrorAction SilentlyContinue
   $res = Join-Path $out 'resultado.json'
-  $falhas = -1; $total = 0
-  if (Test-Path -LiteralPath $res) { $j = [IO.File]::ReadAllText($res) | ConvertFrom-Json; $falhas = $j.falhas; $total = $j.total }
-  $resumo += [pscustomobject]@{ Cenario = $c; Falhas = $falhas; Verificacoes = $total; Minutos = [math]::Round(((Get-Date) - $t0).TotalMinutes, 1) }
+  $falhas = -1; $total = 0; $resOk = $false
+  if (Test-Path -LiteralPath $res) {
+    try { $j = [IO.File]::ReadAllText($res) | ConvertFrom-Json; $falhas = [int]$j.falhas; $total = [int]$j.total; $resOk = $true }
+    catch { Write-Warning "[$c] resultado.json ilegivel: $($_.Exception.Message)" }
+  }
+  $resumo += [pscustomobject]@{ Cenario = $c; Falhas = $falhas; Verificacoes = $total; Minutos = [math]::Round(((Get-Date) - $t0).TotalMinutes, 1); FimOk = $ok; ResultadoOk = $resOk; TempoEsgotado = (-not $ok) }
 }
 $resumo | Format-Table -AutoSize | Out-String | Write-Host
 $resumo | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $Saida 'resumo.json') -Encoding UTF8
 
-& (Join-Path $here 'Resumir-Resultado.ps1') -Saida $Saida -Cenarios $Cenarios -Commit $commit
+# relatorios sempre preservados e gerados, mesmo com falha
+$decisao = Get-SandboxExitCode -Pedidos $Cenarios -Resumo $resumo
+try { & (Join-Path $here 'Resumir-Resultado.ps1') -Saida $Saida -Cenarios $Cenarios -Commit $commit }
+catch { Write-Warning ('Resumir-Resultado.ps1 falhou: ' + $_.Exception.Message) }
+$rm = @('# Resultado do teste no Windows Sandbox', '', ('Arvore do painel: ' + $commit), ('Codigo de saida: ' + $decisao.Codigo), '', '| Cenario | Fim | Resultado | Verificacoes | Falhas | Minutos |', '| --- | --- | --- | --- | --- | --- |')
+foreach ($r in $resumo) { $rm += ('| ' + $r.Cenario + ' | ' + $r.FimOk + ' | ' + $r.ResultadoOk + ' | ' + $r.Verificacoes + ' | ' + $r.Falhas + ' | ' + $r.Minutos + ' |') }
+$rm += ''
+if ($decisao.Codigo -eq 0) { $rm += 'APROVADO: todos os cenarios pedidos concluiram com verificacoes e sem falhas.' }
+else { $rm += 'REPROVADO:'; foreach ($m in $decisao.Mensagens) { $rm += ('- ' + $m) } }
+$rm += ''; $rm += 'Detalhe das verificacoes: verificacoes.md.'
+[IO.File]::WriteAllText((Join-Path $Saida 'RESULTADO.md'), (($rm -join "`r`n") + "`r`n"), (New-Object Text.UTF8Encoding($true)))
+if ($decisao.Codigo -eq 0) { Write-Host 'APROVADO: todos os cenarios passaram.'; exit 0 }
+foreach ($m in $decisao.Mensagens) { Write-Host ('REPROVADO: ' + $m) -ForegroundColor Red }
+exit $decisao.Codigo
