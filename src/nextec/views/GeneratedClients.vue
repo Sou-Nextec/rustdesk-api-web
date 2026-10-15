@@ -88,6 +88,12 @@
           </el-button>
         </div>
 
+        <div v-if="failedGeneration(row)" class="nx-generation-retry">
+          <el-button type="primary" plain @click="$emit('retry', row)">
+            <el-icon aria-hidden="true"><el-icon-RefreshRight /></el-icon><span>Tentar de novo</span>
+          </el-button>
+        </div>
+
         <div v-if="deletableGeneration(row)" class="nx-generation-remove">
           <el-button text type="danger" :loading="deleting === row.uuid" :disabled="!!deleting" @click="removeOne(row)">
             <el-icon v-if="deleting !== row.uuid" aria-hidden="true"><el-icon-Delete /></el-icon><span>Excluir</span>
@@ -119,7 +125,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { generationDownload, generationState, activeGeneration, validGenerationId, failedGeneration, deletableGeneration, deletionPrompt, deleteGeneration, deleteGenerations } from '@/nextec/generation-catalog.mjs'
 import { importGeneratedRelease } from '@/nextec/api'
-defineEmits(['create'])
+defineEmits(['create', 'retry'])
 const rows = ref([]), count = ref(0), page = ref(1), loading = ref(false), error = ref(''), importing = ref('')
 const router = useRouter()
 const selected = ref([]), deleting = ref('')
@@ -265,6 +271,7 @@ defineExpose({ reload: load })
   .nx-generated-bulk-actions { display: flex; gap: 8px; flex-wrap: wrap; .el-button { margin: 0; } } }
 .nx-generation.is-selected { border-color: var(--nx-focus); box-shadow: 0 0 0 1px var(--nx-focus); }
 .nx-generation-head > .el-checkbox { height: auto; margin-top: 2px; }
+.nx-generation-retry { display: flex; justify-content: flex-end; .el-button { margin: 0; } }
 .nx-generation-remove { display: flex; justify-content: flex-end; margin: -4px 0 -6px; .el-button { margin: 0; } }
 .nx-generation-title { display: grid; gap: 2px; min-width: 0; flex: 1 1 260px; strong { font-size: 15px; line-height: 1.35; color: var(--nx-text); } }
 .nx-generation-meta { color: var(--nx-text-muted); font-size: 13px; }
