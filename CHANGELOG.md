@@ -13,6 +13,13 @@ Convites de instalação (primeira parte: painel e servidor).
 - **Segurança:** código de 20 caracteres (só o hash é consultado), validade máxima de 7 dias, limite de usos, cancelamento, auditoria; sem senha em link ou comando. Patch 0041.
 - **Ainda não vale ponta a ponta:** a máquina só entra sozinha no cliente depois que o agente e o MSI passarem a ler o código do nome do arquivo (próximas etapas). Até lá o convite instala o app normalmente e a máquina entra como Pendente.
 
+## 2.11.42
+
+Conectar com Suporte rápido.
+
+- **Botão Conectar da barra de cima** ganhou duas abas: **Digitar o ID** (como antes) e **Suporte rápido**.
+- **Suporte rápido:** informe o cliente ou o chamado e a validade; o painel gera o link `/s/<código>` para mandar ao cliente (copiar link ou mensagem pronta). O cliente baixa o app de suporte, sem instalar, e a máquina aparece na fila já identificada.
+
 ## 2.11.41
 
 Acabamento de interface achado no teste ao vivo em produção.
