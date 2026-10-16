@@ -29,6 +29,27 @@
     <template v-if="isAdmin">
       <div class="nx-card">
         <div class="nx-card-head">
+          <div>
+            <h2 class="nx-h2">Endereço dos links</h2>
+            <p class="nx-sub">Domínio que aparece nos links de instalador e de atendimento enviados aos clientes.</p>
+          </div>
+        </div>
+        <form class="nx-url" @submit.prevent="savePublicUrl">
+          <label for="nx-public-url">Domínio público</label>
+          <div class="nx-url-row">
+            <el-input id="nx-public-url" v-model="publicUrl" placeholder="https://suporte.empresa.com.br" :disabled="savingUrl" aria-describedby="nx-public-url-help" @input="urlError = ''" />
+            <el-button type="primary" native-type="submit" :loading="savingUrl">Salvar</el-button>
+          </div>
+          <p v-if="urlError" class="nx-warn" role="alert">{{ urlError }}</p>
+          <p id="nx-public-url-help" class="nx-small nx-muted">
+            Os links ficam <code>{{ exampleBase }}/instalador/&lt;código&gt;</code> e <code>{{ exampleBase }}/atendimento/&lt;código&gt;</code>.
+            Deixe em branco para usar o endereço em que o painel está aberto. O domínio precisa encaminhar esses dois caminhos ao painel (proxy ou Cloudflare).
+          </p>
+        </form>
+      </div>
+
+      <div class="nx-card">
+        <div class="nx-card-head">
           <h2 class="nx-h2">Aplicativo de suporte</h2>
           <div class="nx-actions">
             <el-button v-if="app" @click="openPage">Ver a página do cliente</el-button>
@@ -96,7 +117,9 @@
   import WaitingList from '@/nextec/views/WaitingList.vue'
   import SupportLinks from '@/nextec/views/SupportLinks.vue'
   import { useUserStore } from '@/store/user'
-  import { supportInfo, supportDelete, supportSettings, supportWaiting } from '@/nextec/api'
+  import { supportInfo, supportDelete, supportSettings, supportWaiting, supportPublicUrlSave } from '@/nextec/api'
+  import { loadPublicBase, setConfiguredBase, configuredBase } from '@/nextec/public-base'
+  import { checkPublicUrl, publicBase } from '@/nextec/public-links.mjs'
   import { uploadFile } from '@/nextec/upload'
   import SupportGeneratedList from '@/nextec/views/SupportGeneratedList.vue'
   import { publishGeneratedApp } from '@/nextec/support-source.mjs'
@@ -150,6 +173,27 @@
   }
 
   const openPage = () => window.open('/suporte', '_blank', 'noopener')
+
+  // endereço público dos links (instalador e atendimento)
+  const publicUrl = ref('')
+  const savingUrl = ref(false)
+  const urlError = ref('')
+  const exampleBase = computed(() => publicBase(checkPublicUrl(publicUrl.value).value, window.location.origin) || window.location.origin)
+  loadPublicBase().then(() => { publicUrl.value = configuredBase.value })
+  const savePublicUrl = async () => {
+    const check = checkPublicUrl(publicUrl.value)
+    if (!check.ok) { urlError.value = check.message; return }
+    savingUrl.value = true
+    const res = await supportPublicUrlSave(check.value).catch(() => false)
+    savingUrl.value = false
+    if (res && res.code === 0) {
+      setConfiguredBase((res.data && res.data.public_url) || '')
+      publicUrl.value = (res.data && res.data.public_url) || ''
+      ElMessage.success('Endereço salvo. Os próximos links já saem com ele.')
+    } else {
+      urlError.value = (res && res.message) || 'Não foi possível salvar o endereço. Tente de novo.'
+    }
+  }
 
   const up = reactive({ visible: false, busy: false, progress: 0, file: null, error: '' })
   const gen = reactive({ using: '' })
@@ -208,6 +252,11 @@
   .nx-h2 { font-size: 16px; margin: 0; color: var(--nx-text); }
   .nx-sub { margin: 2px 0 0; font-size: 12px; color: var(--nx-text-muted); }
   .nx-actions { display: flex; gap: 8px; flex-wrap: wrap; .el-button { margin: 0; } }
+  .nx-url { display: grid; gap: 8px; padding: 16px 22px; }
+  .nx-url label { font-size: 13px; font-weight: 600; }
+  .nx-url-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .nx-url-row .el-input { flex: 1 1 280px; min-width: 0; }
+  .nx-url code { word-break: break-all; }
   .nx-link-row { display: flex; align-items: center; gap: 12px 16px; flex-wrap: wrap; padding: 16px 22px; }
   .nx-link-text {
     flex: 1 1 280px; min-width: 0; padding: 10px 14px; border-radius: 12px; background: var(--nx-field); color: var(--nx-text);

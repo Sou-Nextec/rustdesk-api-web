@@ -2,6 +2,15 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.45
+
+Links no domínio de suporte (instalador e atendimento).
+
+- **Novos endereços:** `<domínio>/instalador/<código>` (convite de instalação) e `<domínio>/atendimento/<código>` (suporte rápido). Os links antigos (`/i/` e `/s/`) continuam funcionando.
+- **Domínio configurável no painel:** em **Suporte avulso > Endereço dos links** o administrador define o domínio (ex.: `https://suporte.nex.tec.br`) e pode trocar quando quiser. Em branco, vale o endereço em que o painel está aberto. Só `https://dominio` é aceito (sem porta, caminho ou parâmetros). Links, mensagens, CSV do lote e o comando PowerShell passam a sair com esse domínio. Patch 0042.
+- **Proxy/Cloudflare:** o domínio precisa encaminhar só `/instalador/*` e `/atendimento/*` ao painel; o resto continua no portal de suporte.
+- As páginas públicas passam a baixar por endereço relativo, então funcionam em qualquer domínio.
+
 ## 2.11.44
 
 Convites de instalação (segunda parte: o agente).

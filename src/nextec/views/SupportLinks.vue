@@ -65,6 +65,8 @@
   import { supportLinks, supportLinkCreate, supportLinkRevoke } from '@/nextec/api'
   import { connectDevice } from '@/nextec/connect'
   import { fmtId } from '@/nextec/id'
+  import { usePublicBase } from '@/nextec/public-base'
+  import { supportLinkUrl } from '@/nextec/public-links.mjs'
 
   const rows = ref([])
   const loaded = ref(false)
@@ -76,8 +78,8 @@
   const form = reactive({ label: '', ticket: '', hours: 2 })
   let timer = null
 
-  const origin = computed(() => window.location.origin)
-  const linkOf = (row) => `${origin.value}/s/${row.token}`
+  const base = usePublicBase()
+  const linkOf = (row) => supportLinkUrl(base.value, row.token)
   const messageOf = (row) => `Olá! Para o atendimento remoto${row.ticket ? ' (chamado ' + row.ticket + ')' : ''}, abra este link, baixe o aplicativo de suporte da Nextec e me avise quando ele estiver aberto: ${linkOf(row)}`
   const fmt = (ts) => (ts ? new Date(ts * 1000).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : '')
 

@@ -32,6 +32,8 @@
   import { ElMessage } from 'element-plus'
   import { supportLinkCreate } from '@/nextec/api'
   import { useUserStore } from '@/store/user'
+  import { usePublicBase } from '@/nextec/public-base'
+  import { supportLinkUrl } from '@/nextec/public-links.mjs'
 
   defineEmits(['done'])
 
@@ -43,7 +45,8 @@
 
   // administrador acompanha em Dispositivos > Suporte avulso; usuário comum, em Minha área (rota própria)
   const supportPath = computed(() => ((useUserStore().route_names || []).includes('*') ? '/user/support' : '/my/support'))
-  const link = computed(() => (fresh.value ? `${window.location.origin}/s/${fresh.value.token}` : ''))
+  const base = usePublicBase()
+  const link = computed(() => (fresh.value ? supportLinkUrl(base.value, fresh.value.token) : ''))
   const message = computed(() => `Olá! Para o atendimento remoto, abra este link, baixe o aplicativo de suporte da Nextec e me avise quando ele estiver aberto: ${link.value}`)
   const until = computed(() => (fresh.value ? new Date(fresh.value.expires_at * 1000).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : ''))
 

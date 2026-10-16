@@ -104,6 +104,7 @@
   import { invitesList, inviteCreate, inviteBatch, inviteRevoke } from '@/nextec/api'
   import { inviteLink, inviteCommand, inviteMessage, inviteBatchCsv, parseBatchLines } from '@/nextec/invite-command.mjs'
   import InviteOptions from '@/nextec/views/InviteOptions.vue'
+  import { usePublicBase } from '@/nextec/public-base'
   import QuickSupportForm from '@/nextec/views/QuickSupportForm.vue'
 
   const props = defineProps({ modelValue: Boolean, clients: { type: Array, default: () => [] } })
@@ -125,7 +126,7 @@
   const many = reactive(base())
   let timer = null
 
-  const origin = computed(() => window.location.origin)
+  const origin = usePublicBase()
   const linkOf = (code) => inviteLink(origin.value, code)
   // o comando usa o MSI fixado no próprio convite (hash dele), nunca a versão que estiver publicada agora
   const cmdOf = (code, rel) => inviteCommand({ origin: origin.value, code, release: rel })
