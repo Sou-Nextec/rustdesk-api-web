@@ -2,6 +2,13 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.50
+
+Lista de dispositivos mais fácil de ler.
+
+- **Cor por cliente:** cada cliente tem o seu tom na coluna Cliente (subclientes herdam o do cliente). Os dez primeiros clientes nunca repetem cor, nos temas claro e escuro, com contraste de leitura.
+- **Nome do computador em maiúsculas** na lista e na ficha, para ficar padronizado. É só a exibição: o nome gravado, a busca e a exportação continuam como a máquina informou.
+
 ## 2.11.49
 
 Diálogo de convite que não cabia na tela e aviso "Abrindo o aplicativo".

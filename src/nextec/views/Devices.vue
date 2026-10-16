@@ -97,12 +97,12 @@
             <span v-else class="nx-muted">-</span>
           </template>
         </el-table-column>
-        <el-table-column label="Nome do computador" prop="hostname" min-width="150"/>
+        <el-table-column label="Nome do computador" prop="hostname" min-width="150" class-name="nx-upper"/>
         <el-table-column label="Usuário" prop="username" min-width="120"/>
         <el-table-column label="Cliente" min-width="170">
           <template #default="{ row }">
             <el-tooltip v-if="groupName(row.group_id)" :content="groupName(row.group_id)" placement="top" :show-after="500">
-              <el-tag class="nx-device-client-tag" disable-transitions>{{ groupName(row.group_id) }}</el-tag>
+              <el-tag class="nx-device-client-tag" :style="clientStyle(row.group_id)" disable-transitions>{{ groupName(row.group_id) }}</el-tag>
             </el-tooltip>
             <span v-else class="nx-muted">Sem cliente</span>
           </template>
@@ -300,6 +300,7 @@
   import { batchRemove, create, list, remove, update } from '@/api/peer'
   import { list as groupList } from '@/api/device_group'
   import InviteDialog from '@/nextec/views/InviteDialog.vue'
+  import { clientColorIndex, clientChipStyle } from '@/nextec/client-color.mjs'
   import SupportQuickDialog from '@/nextec/views/SupportQuickDialog.vue'
   import { batchCreateFromPeers } from '@/api/address_book'
   import { list as collectionList } from '@/api/address_book_collection'
@@ -339,6 +340,9 @@
   onMounted(load)
   onActivated(load)
   const groupName = id => (id && groups.value.find(g => g.id === id)?.name) || ''
+  // um tom por cliente na lista (subclientes herdam o do cliente)
+  const colorOf = computed(() => clientColorIndex(groups.value))
+  const clientStyle = id => clientChipStyle(colorOf.value.get(id))
   // subgrupos usam o nome "Cliente / Subgrupo": filtrar pelo cliente inclui os subgrupos dele
   const inClient = (groupId, filterId) => {
     if (groupId === filterId) return true
@@ -503,7 +507,7 @@
     const r = details.row
     if (!r) return []
     return [
-      { label: 'ID', value: fmtId(r.id) }, { label: 'Apelido', value: r.alias }, { label: 'Nome do computador', value: r.hostname },
+      { label: 'ID', value: fmtId(r.id) }, { label: 'Apelido', value: r.alias }, { label: 'Nome do computador', value: String(r.hostname || '').toUpperCase() },
       { label: 'Usuário', value: r.username }, { label: 'Cliente', value: groupName(r.group_id) || 'Sem cliente' },
       { label: 'Sistema operacional', value: r.os }, { label: 'Processador', value: r.cpu }, { label: 'Memória', value: r.memory },
       { label: 'Versão do app', value: r.version }, { label: 'Último IP', value: r.last_online_ip },
@@ -614,6 +618,9 @@
   .nx-id { font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; font-size: 13px; white-space: nowrap; }
   :deep(td .cell:has(.nx-id)) { white-space: nowrap; }
   :deep(.nx-device-client-tag) { display: inline-flex; max-width: 100%; white-space: nowrap; overflow: hidden; vertical-align: middle; }
+  // chip do cliente: cor por cliente (variáveis --nx-ct-*), com versão própria no tema escuro
+  :deep(.nx-device-client-tag) { --el-tag-bg-color: var(--nx-ct-bg, var(--nx-tint)); --el-tag-text-color: var(--nx-ct-fg, var(--nx-accent)); --el-tag-border-color: transparent; font-weight: 600; }
+  :deep(.nx-upper .cell) { text-transform: uppercase; }
   :deep(.nx-device-client-tag .el-tag__content) { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .nx-sec-head {
     display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap;
@@ -659,4 +666,9 @@
     .nx-bar-right { margin-left: 0; width: 100%; }
     .nx-form-grid { grid-template-columns: minmax(0, 1fr); }
   }
+</style>
+
+<style lang="scss">
+  // tema escuro do chip do cliente (fora do escopo: o seletor parte de html.dark)
+  html.dark .nx-device-client-tag { --el-tag-bg-color: var(--nx-ct-bg-dark, var(--nx-tint)); --el-tag-text-color: var(--nx-ct-fg-dark, var(--nx-text)); }
 </style>
