@@ -165,3 +165,26 @@ test('máquina offline também sai do passo a passo e do "baixar para reinstalar
   assert.equal(p.agentStalled, true)
   assert.equal(p.canAuthorize, true)
 })
+
+test('lista mista: máquina offline não rouba nem esconde a ação do topo', async () => {
+  const { overallSummary, firstNeeding } = await import('../../src/nextec/secrets-flow.mjs')
+  const now = 1_800_000_000
+  const base = { group_id: 4, enrolled: true, state: 'assigned' }
+  const offline = { ...base, peer_id: 'OFF', agent_state: 'parado', last_sync_at: now - 2460, peer_last_online: now - 2100 }
+  const noAgent = { group_id: 4, peer_id: 'SEM', enrolled: false, state: 'assigned' }
+  const rule = { ...base, peer_id: 'REGRA', agent_state: 'ativo', last_sync_at: now - 30, managed: false }
+  // offline vem primeiro na lista, mas o topo pede para instalar o agente da máquina que não tem
+  let s = overallSummary([offline, noAgent], now)
+  assert.equal(s.cta.action, 'install-agent')
+  assert.equal(firstNeeding([offline, noAgent], 'agent', now).peer_id, 'SEM')
+  assert.match(s.text, /1 máquina precisa do agente/)
+  assert.match(s.text, /offline/)
+  // offline + máquina só com a senha automática desligada: a ação do topo continua sendo ligar a regra
+  s = overallSummary([offline, rule], now)
+  assert.equal(s.cta.action, 'enable-rule')
+  assert.equal(firstNeeding([offline, rule], 'rule', now).peer_id, 'REGRA')
+  // só offline: sem botão
+  s = overallSummary([offline], now)
+  assert.equal(s.cta, null)
+  assert.match(s.text, /offline/)
+})

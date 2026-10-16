@@ -88,6 +88,8 @@ export function overallSummary(devices = [], now = nowSeconds()) {
     if (stage === 'agent' && isOfflineStall(d, now)) offline++
     else if (stage === 'agent' && isStalled(d, now)) stalled++
   }
+  // máquinas que de fato precisam do agente (sem agente): offline e parada têm tratamento próprio
+  const needAgent = c.agent - stalled - offline
   const total = rows.length
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`
   let cta = null
@@ -101,17 +103,19 @@ export function overallSummary(devices = [], now = nowSeconds()) {
   } else if (stalled) {
     text = `${plural(stalled, 'máquina com agente parado', 'máquinas com agente parado')}. Reinstale o agente.`
     cta = { action: 'reinstall-agent', label: 'Reinstalar agente' }
-  } else if (offline && offline === c.agent) {
-    text = `${plural(offline, 'máquina offline', 'máquinas offline')}. O agente volta sozinho quando ligar.`
-  } else if (c.agent) {
-    text = `${plural(c.agent, 'máquina precisa', 'máquinas precisam')} do agente.`
+  } else if (needAgent) {
+    text = `${plural(needAgent, 'máquina precisa', 'máquinas precisam')} do agente.`
     cta = { action: 'install-agent', label: 'Instalar agente' }
   } else if (c.rule) {
     text = `${plural(c.rule, 'máquina está', 'máquinas estão')} com a senha automática desligada.`
     cta = { action: 'enable-rule', label: 'Ligar senha automática' }
+  } else if (offline) {
+    text = `${plural(offline, 'máquina offline', 'máquinas offline')}. O agente volta sozinho quando ligar.`
   } else {
     text = `Tudo pronto: ${plural(c.ready, 'máquina troca', 'máquinas trocam')} a senha sozinha.`
   }
+  // Máquina desligada nunca esconde nem troca a ação do topo: só entra como aviso extra quando há outra coisa a fazer.
+  if (cta && offline) text += ` ${plural(offline, 'máquina está offline e volta sozinha', 'máquinas estão offline e voltam sozinhas')}.`
   return { total, counts: c, stalled, offline, text, cta }
 }
 
@@ -119,6 +123,8 @@ export function overallSummary(devices = [], now = nowSeconds()) {
 // stage 'stalled' pede a primeira máquina com agente cadastrado porém parado.
 export function firstNeeding(devices = [], stage, now = nowSeconds()) {
   if (stage === 'stalled') return devices.find(d => d && machineStage(d, now) === 'agent' && isStalled(d, now) && !isOfflineStall(d, now)) || null
+  // instalar agente: só quem ainda não tem agente (parado e offline têm ações próprias)
+  if (stage === 'agent') return devices.find(d => d && machineStage(d, now) === 'agent' && !isStalled(d, now)) || null
   return devices.find(d => d && machineStage(d, now) === stage) || null
 }
 
