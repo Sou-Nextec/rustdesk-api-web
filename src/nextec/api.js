@@ -65,6 +65,10 @@ export const supportDelete = () => request({ url: '/nextec/support/delete', meth
 export const supportLinks = () => request({ url: '/my/support/links' })
 export const supportLinkCreate = (data) => request({ url: '/my/support/links', method: 'post', data })
 export const supportLinkRevoke = (id) => request({ url: '/my/support/links/revoke', method: 'post', data: { id } })
+export const invitesList = () => request({ url: '/nextec/invites' })
+export const inviteCreate = (data) => request({ url: '/nextec/invites', method: 'post', data })
+export const inviteBatch = (data) => request({ url: '/nextec/invites/batch', method: 'post', data })
+export const inviteRevoke = (id) => request({ url: '/nextec/invites/revoke', method: 'post', data: { id } })
 export const supportWaiting = () => request({ url: '/my/support/waiting' })
 
 // patches 0011 a 0013: instalação por cliente, políticas do app, conexões ativas, chamado e relatório
