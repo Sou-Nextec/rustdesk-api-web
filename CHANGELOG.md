@@ -11,6 +11,14 @@ Adicionar e Conectar viram menus; Suporte rápido sem digitar.
 - **Suporte rápido sem digitar:** a tela já mostra um **ID do atendimento** aleatório (como `482 913 076`); basta clicar em **Gerar link**. O texto de cliente ou chamado é opcional e o ID vai junto no rótulo.
 - **Convite de instalação:** o padrão passou a ser **um link por cliente para várias máquinas**; a descrição ficou opcional (sem ela vale o apelido e, sem apelido, o nome do cliente). A aba "Em lote" saiu da tela. Ajuste no patch 0041.
 
+## 2.11.46
+
+Ajustes do servidor que não ficavam salvos.
+
+- **Causa:** "Sempre usar relay" e "Exigir login no app" mudam o hbbs em execução; quando a stack é reimplantada ou o servidor reinicia, ele volta ao que está escrito na stack (que fixava `MUST_LOGIN=N` e não tinha `ALWAYS_USE_RELAY`).
+- **Correção:** a stack agora lê `ALWAYS_USE_RELAY` e `MUST_LOGIN` das variáveis do Portainer (padrão `N`). Defina `Y` na stack e faça Pull and redeploy para manter depois de reiniciar.
+- A tela explica isso embaixo de cada opção.
+
 ## 2.11.45
 
 Links no domínio de suporte (instalador e atendimento).
