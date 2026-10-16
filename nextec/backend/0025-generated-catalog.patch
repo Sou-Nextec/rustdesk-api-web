@@ -450,7 +450,7 @@ new file mode 100644
 index 0000000..f4f7277
 --- /dev/null
 +++ b/service/nextec_scoped_updates.go
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,145 @@
 +package service
 +
 +import (
@@ -581,6 +581,9 @@ index 0000000..f4f7277
 +	}
 +	if r.Profile == "client" {
 +		return errors.New("Use a publicação específica para distribuir o pacote de um cliente.")
++	}
++	if enabled && r.Profile == "" && r.GenerationUUID == "" {
++		return errors.New("Defina o tipo da versão (Analistas ou Cliente padrão) antes de disponibilizá-la aos analistas.")
 +	}
 +	if enabled {
 +		// Change the active internal download atomically, preserving the previous one on failure.

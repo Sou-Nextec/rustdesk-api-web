@@ -47,6 +47,8 @@
         <div v-else class="nx-pick">
           <p class="nx-pick-lead"><strong>Nenhum aplicativo de suporte publicado.</strong> Escolha abaixo um aplicativo que já foi gerado em Gerar cliente; o link de suporte funciona assim que você publicar.</p>
           <SupportGeneratedList :busy="up.busy" :using="gen.using" @use="useGenerated"/>
+          <el-progress v-if="up.busy && !up.visible" class="nx-pick-progress" :percentage="up.progress" :stroke-width="10" aria-label="Progresso da publicação"/>
+          <p v-if="up.error && !up.visible" class="nx-error nx-pick-error" role="alert">{{ up.error }}</p>
           <p class="nx-pick-or"><el-button link type="primary" @click="openUpload">Prefiro enviar um arquivo .exe</el-button></p>
         </div>
       </div>
@@ -94,6 +96,7 @@
   import { supportInfo, supportDelete, supportSettings, supportWaiting } from '@/nextec/api'
   import { uploadFile } from '@/nextec/upload'
   import SupportGeneratedList from '@/nextec/views/SupportGeneratedList.vue'
+  import { publishGeneratedApp } from '@/nextec/support-source.mjs'
 
   const userStore = useUserStore()
   const isAdmin = computed(() => (userStore.route_names || []).includes('*'))
@@ -155,19 +158,21 @@
     up.error = ''
     gen.using = item.uuid + item.name
     up.busy = true; up.progress = 0
-    try {
-      const download = await fetch(item.url, { credentials: 'same-origin' })
-      if (!download.ok) throw new Error(`Não foi possível baixar o aplicativo gerado (HTTP ${download.status}).`)
-      const blob = await download.blob()
-      if (blob.size > maxSize.value) throw new Error(`O arquivo passa do limite de ${size(maxSize.value)}.`)
-      const file = new File([blob], item.name, { type: 'application/octet-stream' })
-      const r = await uploadFile('/nextec/support/upload', {}, file, (p) => { up.progress = p })
-      if (!r.ok) throw new Error(r.message)
+    const r = await publishGeneratedApp({
+      item, maxSize: maxSize.value, sizeLabel: size,
+      upload: (file, onProgress) => uploadFile('/nextec/support/upload', {}, file, onProgress),
+      onProgress: (p) => { up.progress = p },
+    })
+    up.busy = false; gen.using = ''
+    if (r.ok) {
       up.visible = false
       ElMessage.success('Aplicativo publicado. O link de suporte já funciona.')
       load()
-    } catch (e) { up.error = e.message || 'Não foi possível publicar este aplicativo.' }
-    finally { up.busy = false; gen.using = '' }
+      return
+    }
+    up.error = r.message
+    // com o diálogo fechado (fluxo inline) o erro precisa aparecer onde o usuário está olhando
+    if (!up.visible) ElMessage.error(r.message)
   }
   const beforeClose = (done) => { if (!up.busy) done() }
   const onFile = (e) => {
@@ -229,6 +234,8 @@
   .nx-pick { padding: 18px 22px; }
   .nx-pick-lead { margin: 0 0 12px; font-size: 14px; line-height: 1.5; color: var(--nx-text-muted); strong { color: var(--nx-text); } }
   .nx-pick-or { margin: 12px 0 0; }
+  .nx-pick-progress { margin-top: 12px; }
+  .nx-pick-error { margin-top: 12px; }
   .nx-file { width: 100%; font: inherit; font-size: 13px; color: var(--nx-text); }
   .nx-error { margin: 12px 0 0; padding: 10px 12px; border-radius: 10px; font-size: 13px; background: #FDECEA; color: #8C1D18; }
   html.dark .nx-error { background: rgba(255, 138, 128, 0.14); color: #FFB4AB; }

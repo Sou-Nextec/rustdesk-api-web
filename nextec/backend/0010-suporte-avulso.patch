@@ -83,15 +83,16 @@ index 0000000..db65014
 +}
 diff --git a/http/controller/api/nextec_support.go b/http/controller/api/nextec_support.go
 new file mode 100644
-index 0000000..9126f7e
+index 0000000..071f632
 --- /dev/null
 +++ b/http/controller/api/nextec_support.go
-@@ -0,0 +1,87 @@
+@@ -0,0 +1,137 @@
 +package api
 +
 +import (
 +	"fmt"
 +	"net/http"
++	"strings"
 +
 +	"github.com/gin-gonic/gin"
 +	"github.com/lejianwen/rustdesk-api/v2/service"
@@ -100,49 +101,97 @@ index 0000000..9126f7e
 +// NextecSupport: página pública do suporte avulso (/suporte) e o download do app de suporte.
 +type NextecSupport struct{}
 +
++// Logo da Nextec embutido (data URI): a página não depende de nenhum outro arquivo nem de rede externa.
++const supportLogo = "data:image/png;base64,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"
++
++// Página pública, só HTML e CSS (sem script): identidade Nextec, claro/escuro automático, leitura em celular e desktop.
++// Os marcadores {{LOGO}} e {{BODY}} são trocados em Page; o corpo muda conforme o app esteja ou não publicado.
 +const supportPageTpl = `<!doctype html>
 +<html lang="pt-BR">
 +<head>
 +<meta charset="utf-8">
 +<meta name="viewport" content="width=device-width, initial-scale=1">
 +<meta name="robots" content="noindex">
-+<title>Suporte remoto Nextec</title>
++<meta name="color-scheme" content="light dark">
++<title>Suporte remoto | Nextec</title>
 +<style>
-+:root{--bg:#f4f4f4;--card:#fff;--text:#1a1c1c;--muted:#464556;--accent:#613cb3;--on:#fff;--soft:#efecf7}
-+@media (prefers-color-scheme:dark){:root{--bg:#121214;--card:#1b1b1f;--text:#ececef;--muted:#bdbdc6;--accent:#b899ff;--on:#14121a;--soft:#2c2740}}
++:root{--navy:#0d0035;--bg:#f3f2f7;--card:#fff;--text:#1a1c1c;--muted:#515062;--accent:#613cb3;--accent-hover:#52309c;--on:#fff;--soft:#efeafb;--line:#e4e1ee}
++@media (prefers-color-scheme:dark){:root{--bg:#0f0f12;--card:#1a1a1f;--text:#ececf1;--muted:#bdbcc9;--accent:#b79cff;--accent-hover:#cdb8ff;--on:#130d2b;--soft:#2a2440;--line:#34303f}}
 +*{box-sizing:border-box}
-+body{margin:0;min-height:100vh;display:grid;place-items:center;padding:24px 16px;background:var(--bg);color:var(--text);font:16px/1.55 "Open Sans",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
-+main{width:100%%;max-width:520px;background:var(--card);border-radius:20px;padding:32px 28px;box-shadow:0 0 32px rgba(0,0,0,.08)}
-+h1{margin:0 0 6px;font-size:24px;line-height:1.25}
-+p{margin:0 0 16px;color:var(--muted)}
-+ol{margin:20px 0;padding:0;list-style:none;counter-reset:s}
-+li{counter-increment:s;display:flex;gap:12px;margin:0 0 14px;color:var(--text)}
-+li::before{content:counter(s);flex:none;width:28px;height:28px;border-radius:50%%;background:var(--soft);color:var(--accent);font-weight:700;display:grid;place-items:center;font-size:14px}
-+a.btn{display:block;text-align:center;text-decoration:none;font-weight:700;padding:14px 18px;border-radius:12px;background:var(--accent);color:var(--on);margin:8px 0 6px}
-+a.btn:focus-visible{outline:3px solid var(--text);outline-offset:2px}
-+small{display:block;color:var(--muted);font-size:13px}
-+.note{margin-top:18px;padding:12px 14px;border-radius:12px;background:var(--soft);font-size:14px;color:var(--text)}
++html{-webkit-text-size-adjust:100%}
++body{margin:0;min-height:100vh;background:var(--bg);color:var(--text);font:16px/1.6 "Open Sans",system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
++.top{background:var(--navy);padding:20px 0 76px}
++.top .in{max-width:560px;margin:0 auto;padding:0 32px}
++.top img{display:block;height:34px;width:auto}
++main{max-width:560px;margin:-52px auto 0;padding:0 16px 32px}
++.card{background:var(--card);border-radius:20px;padding:32px 28px;box-shadow:0 8px 32px rgba(13,0,53,.14)}
++.eyebrow{margin:0 0 6px;font-size:13px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
++h1{margin:0 0 10px;font-size:26px;line-height:1.25;letter-spacing:-.01em}
++h2{margin:28px 0 12px;font-size:16px}
++.lead{margin:0 0 22px;color:var(--muted)}
++a.btn{display:flex;align-items:center;justify-content:center;gap:10px;min-height:56px;padding:14px 20px;border-radius:14px;background:var(--accent);color:var(--on);font-size:17px;font-weight:700;text-decoration:none;transition:background .15s}
++a.btn:hover{background:var(--accent-hover)}
++a.btn:focus-visible,summary:focus-visible{outline:3px solid var(--text);outline-offset:3px}
++a.btn svg{flex:none}
++.meta{margin:10px 0 0;font-size:13px;color:var(--muted);text-align:center}
++.steps{list-style:none;margin:0;padding:0;counter-reset:s}
++.steps li{counter-increment:s;display:grid;grid-template-columns:36px 1fr;gap:2px 14px;margin:0 0 16px}
++.steps li::before{content:counter(s);grid-row:span 2;width:36px;height:36px;border-radius:50%;background:var(--soft);color:var(--accent);font-weight:700;display:grid;place-items:center}
++.steps strong{align-self:end}
++.steps span{color:var(--muted);font-size:15px}
++details{margin:6px 0 0;border:1px solid var(--line);border-radius:12px;padding:0 14px}
++summary{cursor:pointer;padding:12px 0;font-weight:600;list-style:none;display:flex;justify-content:space-between;gap:12px}
++summary::-webkit-details-marker{display:none}
++summary::after{content:"+";font-weight:700;color:var(--accent)}
++details[open] summary::after{content:"\2212"}
++details p{margin:0 0 14px;color:var(--muted);font-size:15px}
++.note{display:flex;gap:12px;margin-top:22px;padding:14px 16px;border-radius:14px;background:var(--soft);font-size:14.5px}
++.note svg{flex:none;margin-top:2px;color:var(--accent)}
++.empty{text-align:center;padding:12px 0 4px}
++.empty svg{color:var(--accent);margin-bottom:8px}
++.foot{margin:18px 8px 0;text-align:center;font-size:13px;color:var(--muted)}
++@media (max-width:420px){.card{padding:26px 20px}h1{font-size:23px}}
++@media (prefers-reduced-motion:reduce){*{transition:none!important}}
 +</style>
 +</head>
 +<body>
++<header class="top"><div class="in"><img src="{{LOGO}}" alt="Nextec" width="125" height="34"></div></header>
 +<main>
-+<h1>Suporte remoto Nextec</h1>
-+%s
++<section class="card" aria-labelledby="titulo">
++{{BODY}}
++</section>
++<p class="foot">Atendimento remoto Nextec. Conexão protegida. Em caso de dúvida, fale com o técnico que enviou este link.</p>
 +</main>
 +</body>
 +</html>`
 +
-+const supportPageReady = `<p>Para que a Nextec atenda você, baixe e abra o aplicativo de suporte. Leva menos de um minuto.</p>
-+<a class="btn" href="/suporte/baixar" download>Baixar o aplicativo de suporte</a>
-+<small>Windows · %s</small>
-+<ol>
-+<li><span>Abra o arquivo <strong>Suporte-Nextec.exe</strong> que foi baixado. Se o Windows mostrar um aviso, clique em <strong>Mais informações</strong> e depois em <strong>Executar assim mesmo</strong>.</span></li>
-+<li><span>Avise o técnico da Nextec que o aplicativo está aberto.</span></li>
-+<li><span>Quando ele pedir a conexão, clique em <strong>Aceitar</strong> na janela do aplicativo.</span></li>
++const supportPageReady = `<p class="eyebrow">Suporte remoto</p>
++<h1 id="titulo">Vamos atender você à distância</h1>
++<p class="lead">Baixe e abra o aplicativo de suporte. Leva menos de um minuto e você acompanha tudo pela tela.</p>
++<a class="btn" href="/suporte/baixar" download>
++<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/></svg>
++Baixar aplicativo de suporte</a>
++<p class="meta">Para Windows 10 ou 11 &middot; {{SIZE}} &middot; Suporte-Nextec.exe</p>
++<h2>Como funciona</h2>
++<ol class="steps">
++<li><strong>Abra o arquivo baixado</strong><span>Procure Suporte-Nextec.exe na pasta Downloads e dê dois cliques.</span></li>
++<li><strong>Avise o técnico</strong><span>Diga que o aplicativo está aberto. Ele aparece para a Nextec na hora.</span></li>
++<li><strong>Aceite a conexão</strong><span>Quando o técnico pedir, clique em Aceitar na janela do aplicativo.</span></li>
 +</ol>
-+<div class="note">Ninguém entra no seu computador sem você aceitar. Ao final do atendimento, feche o aplicativo.</div>`
++<details>
++<summary>O Windows mostrou um aviso?</summary>
++<p>É normal para programas que não vêm da loja do Windows. Clique em <strong>Mais informações</strong> e depois em <strong>Executar assim mesmo</strong>.</p>
++</details>
++<div class="note">
++<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.2 8-8 9-4.8-1-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg>
++<div><strong>Você está no controle.</strong> Ninguém entra no seu computador sem você aceitar. Para encerrar o atendimento, feche o aplicativo.</div>
++</div>`
 +
-+const supportPageUnavailable = `<p>Este link de suporte não está disponível no momento. Fale com a Nextec pelo canal em que você abriu o chamado.</p>`
++const supportPageUnavailable = `<div class="empty">
++<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6"/><path d="M12 16.5v.5"/></svg>
++<h1 id="titulo">Este link ainda não está disponível</h1>
++<p class="lead">Fale com a Nextec pelo canal em que você abriu o chamado. Assim que o aplicativo de suporte for publicado, esta página mostra o botão de download.</p>
++</div>`
 +
 +func supportMB(n int64) string {
 +	return fmt.Sprintf("%.1f MB", float64(n)/1048576)
@@ -152,7 +201,7 @@ index 0000000..9126f7e
 +	c.Header("Cache-Control", "no-store")
 +	c.Header("X-Content-Type-Options", "nosniff")
 +	c.Header("Referrer-Policy", "no-referrer")
-+	c.Header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
++	c.Header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 +}
 +
 +// Page GET /suporte
@@ -160,9 +209,10 @@ index 0000000..9126f7e
 +	supportHeaders(c)
 +	body := supportPageUnavailable
 +	if a := service.NextecSupportAppGet(); a != nil {
-+		body = fmt.Sprintf(supportPageReady, supportMB(a.Size))
++		body = strings.Replace(supportPageReady, "{{SIZE}}", supportMB(a.Size), 1)
 +	}
-+	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(fmt.Sprintf(supportPageTpl, body)))
++	page := strings.NewReplacer("{{LOGO}}", supportLogo, "{{BODY}}", body).Replace(supportPageTpl)
++	c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(page))
 +}
 +
 +// Download GET /suporte/baixar

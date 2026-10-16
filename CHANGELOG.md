@@ -2,19 +2,32 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
-## 2.11.34
+## 2.11.37
 
 Suporte avulso: publicar o app direto da tela.
 
 - **Escolha na própria tela:** sem app publicado, o cartão "Aplicativo de suporte" já lista os `.exe` gerados (os que parecem app de suporte primeiro) com **Usar este** e **Carregar mais**, sem abrir diálogo. "Prefiro enviar um arquivo .exe" continua disponível.
 - **Menos repetição:** a tela dizia três vezes que o app não foi enviado e um dos links apontava para a própria página. Agora há uma frase no topo, e a fila "Aguardando atendimento" não repete o alerta nem os botões de copiar.
 
+## 2.11.35
+
+Página pública de suporte (`/suporte`) com a identidade da Nextec.
+
+- **Visual:** faixa azul-marinho com a marca Nextec, cartão com título claro, botão grande de download (com tamanho e plataforma), três passos curtos e aviso de segurança. Claro e escuro automáticos, leitura confortável no celular, foco visível e sem script.
+- **Menos ansiedade, mais clareza:** o aviso do Windows (SmartScreen) vira uma pergunta recolhível "O Windows mostrou um aviso?"; o texto diz onde achar o arquivo (pasta Downloads) e que o cliente continua no controle.
+- **Estado indisponível amigável:** sem app publicado, a página explica o que fazer em vez de uma frase seca.
+- **Autossuficiente:** logo embutido (data URI); a página continua sem depender de arquivos externos. CSP passa a permitir só `img-src data:`.
+- **Patch 0010 reescrito** (página); o teste de execução `nextec/testes/suporte.ps1` continua válido (botão `/suporte/baixar`, nome do arquivo, texto "não está disponível").
+- **Endereço mais amigável:** a página responde em qualquer hostname que chegue ao painel. Para um alias (por exemplo `suporte.nex.tec.br`), ver o passo a passo no PR; o painel ainda mostra o link com o endereço em uso.
+
 ## 2.11.33
 
 Tipo da versão correto para versões enviadas à mão e layout da coluna Versão.
 
 - **Não chuta mais "Cliente padrão":** uma versão enviada à mão (antes de o gerador registrar o tipo) aparece como **Tipo não registrado**, com o botão **Definir tipo** (Analistas ou Cliente padrão). Versões vindas do gerador mostram o "Destinado a" escolhido lá e não podem ser alteradas por aqui.
-- **Patch 0039:** `POST /nextec/updates/profile` define o tipo só em versão sem geração e sem tipo; audita `update_profile`.
+- **Patch 0039:** `POST /nextec/updates/profile` define o tipo só em versão sem geração e sem tipo; audita `update_profile`. A trava é um UPDATE condicional: duas requisições simultâneas não sobrescrevem a primeira escolha.
+- **Sem tipo não disponibiliza:** "Disponibilizar aos analistas" fica bloqueado para versão com tipo não registrado (a tela pede para definir o tipo; o servidor também recusa, patch 0025).
+- **Tipo não muda com a versão publicada:** `POST /nextec/updates/profile` recusa enquanto a versão estiver em publicação (padrão ou por cliente/máquina); se uma publicação entrar no meio da gravação, a escolha é desfeita.
 - **Coluna Versão:** número, etiquetas (tipo e "Download dos analistas") lado a lado e nome do arquivo embaixo, sem quebrar em colunas estreitas.
 
 ## 2.11.32

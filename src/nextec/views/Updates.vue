@@ -579,6 +579,11 @@
   const setInternal = async (row) => {
     if (!row.internal) {
       const notice = analystsDownloadNotice(row, releases.value.find(r => r.internal))
+      if (notice.blocked) {
+        ElMessage.warning(notice.message)
+        await chooseKind(row)
+        return
+      }
       try {
         await ElMessageBox.confirm(notice.message, notice.title, {
           type: notice.danger ? 'warning' : 'info', confirmButtonText: 'Disponibilizar', cancelButtonText: 'Cancelar', dangerouslyUseHTMLString: false,
