@@ -9,6 +9,7 @@ Tipo da versão claro, confirmação ao disponibilizar e app de suporte a partir
 - **Tipo da versão em Atualizações do app:** cada linha mostra a etiqueta **Analistas**, **Cliente padrão** ou **Cliente específico** (o "Destinado a" escolhido no gerador), separada do nome do app.
 - **Confirmação em "Disponibilizar aos analistas":** o painel explica que a versão passa a ser o app que os analistas baixam, qual versão ela substitui e que o protocolo do Conectar passa a seguir o nome do arquivo. Se a versão não foi gerada como "Analistas", aparece um aviso explícito (por exemplo, o cliente dos servidores com agente).
 - **Suporte avulso usa os itens gerados:** em Suporte avulso > Aplicativo de suporte, o diálogo lista os `.exe` já gerados (os que parecem app de suporte primeiro) e **Usar este** publica o arquivo sem baixar e subir à mão. O envio manual do `.exe` continua disponível.
+- **Lista com "Carregar mais":** o diálogo consulta 50 itens por vez e mostra "N de M itens consultados"; um app de suporte mais antigo aparece depois de carregar mais, e a mensagem "nenhum .exe" só vale quando não há mais páginas.
 - **Atualizador no agente (adiado):** registrar a tarefa de atualização pelo `.cmd` do agente exige ajustar o pacote embutido e os testes do `.cmd`; fica como tarefa própria. Antes, confira nas máquinas se a tarefa `Nextec Acesso - Atualizacao` já existe.
 
 ## 2.11.31
