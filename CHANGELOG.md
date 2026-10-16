@@ -2,6 +2,17 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.35
+
+Página pública de suporte (`/suporte`) com a identidade da Nextec.
+
+- **Visual:** faixa azul-marinho com a marca Nextec, cartão com título claro, botão grande de download (com tamanho e plataforma), três passos curtos e aviso de segurança. Claro e escuro automáticos, leitura confortável no celular, foco visível e sem script.
+- **Menos ansiedade, mais clareza:** o aviso do Windows (SmartScreen) vira uma pergunta recolhível "O Windows mostrou um aviso?"; o texto diz onde achar o arquivo (pasta Downloads) e que o cliente continua no controle.
+- **Estado indisponível amigável:** sem app publicado, a página explica o que fazer em vez de uma frase seca.
+- **Autossuficiente:** logo embutido (data URI); a página continua sem depender de arquivos externos. CSP passa a permitir só `img-src data:`.
+- **Patch 0010 reescrito** (página); o teste de execução `nextec/testes/suporte.ps1` continua válido (botão `/suporte/baixar`, nome do arquivo, texto "não está disponível").
+- **Endereço mais amigável:** a página responde em qualquer hostname que chegue ao painel. Para um alias (por exemplo `suporte.nex.tec.br`), ver o passo a passo no PR; o painel ainda mostra o link com o endereço em uso.
+
 ## 2.11.33
 
 Tipo da versão correto para versões enviadas à mão e layout da coluna Versão.
