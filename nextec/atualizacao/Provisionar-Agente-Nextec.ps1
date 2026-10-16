@@ -64,6 +64,7 @@ function Get-NextecProvisionPaths {
     Log = Join-Path $Root 'provisionamento-agente.log'
     Enroll = Join-Path $Root 'inscricao.json'
     SelfState = Join-Path $Root 'inscricao-estado.json'
+    Invite = Join-Path $Root 'convite.json'
   }
 }
 
@@ -206,7 +207,7 @@ function Get-NextecProvisionLogCodes {
     'identity_changed', 'bootstrap_discarded', 'old_agent_replaced', 'old_agent_kept', 'panel_unreachable',
     'pending_other_panel', 'pending_expired', 'pending_authorization',
     'old_agent_replace_formato_antigo', 'old_agent_replace_outro_id', 'old_agent_replace_token_recusado',
-    'old_agent_replace_agente_parado', 'agent_repaired', 'unknown_code'
+    'old_agent_replace_agente_parado', 'agent_repaired', 'invite_claimed', 'invite_retry', 'invite_discarded', 'unknown_code'
   )
 }
 
@@ -634,6 +635,71 @@ function Invoke-NextecSelfEnrollment {
   return 'network_retry'
 }
 
+function Invoke-NextecInvitePost {
+  # Retorna o status HTTP (0 em falha de rede); nunca lanca por status. TestOrigin so aceita http://127.0.0.1:porta.
+  param([Parameter(Mandatory)][string]$Panel, [Parameter(Mandatory)]$Body, [string]$TestOrigin)
+  if ($TestOrigin) {
+    if ($TestOrigin -notmatch '^http://127\.0\.0\.1:\d{2,5}$') { throw 'invalid_panel' }
+    $target = $TestOrigin + '/api/nextec/agent/invite'
+  } else {
+    $uri = [Uri]::new($Panel.TrimEnd('/') + '/api/nextec/agent/invite')
+    if ($uri.Scheme -cne 'https' -or $uri.Host -cne ([Uri]$script:NextecPainelFixo).Host -or $uri.UserInfo -or $uri.Query -or $uri.Fragment) { throw 'invalid_panel' }
+    $target = $uri.AbsoluteUri
+  }
+  try {
+    Invoke-RestMethod -Uri $target -Method Post -ContentType 'application/json' -Body ($Body | ConvertTo-Json -Compress) -TimeoutSec 30 -MaximumRedirection 0 -UserAgent 'Nextec-Connect-Agent/1' | Out-Null
+    return 200
+  } catch {
+    if ($_.Exception.Response -and $_.Exception.Response.StatusCode) { return [int]$_.Exception.Response.StatusCode }
+    return 0
+  }
+}
+
+# Convite de instalacao (convite.json, gravado pelo coordenador quando o MSI veio de um link do painel): depois da inscricao
+# a maquina apresenta o codigo com a propria credencial e o painel a atribui ao cliente do convite. Nunca derruba o fluxo:
+# resposta definitiva (aceito, invalido, vencido, conflito) apaga o arquivo; falha temporaria tenta de novo no proximo ciclo,
+# ate 3 dias, depois a maquina fica como Pendente.
+function Invoke-NextecInviteClaim {
+  param(
+    [Parameter(Mandatory)][string]$Root,
+    [Parameter(Mandatory)][scriptblock]$PostInvite,
+    [DateTime]$Now = [DateTime]::UtcNow
+  )
+  $paths = Get-NextecProvisionPaths -Root $Root
+  try {
+    if (-not (Test-Path -LiteralPath $paths.Invite -PathType Leaf)) { return 'none' }
+    $invite = Read-NextecProvisionJson -Path $paths.Invite
+    $code = [string]$invite.codigo
+    $created = [DateTime]::MinValue
+    $valid = $code -cmatch '^[A-HJ-NP-Z2-9]{20}$' -and [DateTime]::TryParse([string]$invite.criado_utc, [Globalization.CultureInfo]::InvariantCulture, [Globalization.DateTimeStyles]::RoundtripKind, [ref]$created)
+    $age = ($Now.ToUniversalTime() - $created.ToUniversalTime()).TotalHours
+    if (-not $valid -or $age -ge 72 -or $age -lt -1) {
+      Remove-Item -LiteralPath $paths.Invite -Force -ErrorAction SilentlyContinue
+      Write-NextecProvisionLog 'invite_discarded' -Root $Root
+      return 'discarded'
+    }
+    if (-not (Test-Path -LiteralPath $paths.AgentConfig -PathType Leaf)) { return 'waiting' }
+    $config = Read-NextecAgentTokenConfig -Path $paths.AgentConfig
+    if (-not $config) { return 'waiting' }
+    $status = [int](& $PostInvite $config.painel @{ id=$config.id; token=$config.token; code=$code })
+    if ($status -eq 200) {
+      Remove-Item -LiteralPath $paths.Invite -Force -ErrorAction SilentlyContinue
+      Write-NextecProvisionLog 'invite_claimed' -Root $Root
+      return 'claimed'
+    }
+    if ($status -in @(403, 409)) {
+      Remove-Item -LiteralPath $paths.Invite -Force -ErrorAction SilentlyContinue
+      Write-NextecProvisionLog 'invite_discarded' -Root $Root
+      return 'discarded'
+    }
+    Write-NextecProvisionLog 'invite_retry' -Root $Root
+    return 'retry'
+  } catch {
+    try { Write-NextecProvisionLog 'invite_retry' -Root $Root } catch { }
+    return 'retry'
+  }
+}
+
 function Invoke-NextecProvisioning {
   [CmdletBinding()]
   param(
@@ -645,7 +711,8 @@ function Invoke-NextecProvisioning {
     [scriptblock]$NewToken = { New-NextecProposedToken },
     [scriptblock]$PostSelfEnroll = { param($panel,$body) Invoke-NextecSelfEnrollPost -Panel $panel -Body $body },
     [scriptblock]$GetUuid = { Get-NextecMachineUuid },
-    [scriptblock]$AgentTaskReady = { param($root) Test-NextecAgentTaskReady -Root $root }
+    [scriptblock]$AgentTaskReady = { param($root) Test-NextecAgentTaskReady -Root $root },
+    [scriptblock]$PostInvite = { param($panel,$body) Invoke-NextecInvitePost -Panel $panel -Body $body }
   )
   $paths = Get-NextecProvisionPaths -Root $Root
   Initialize-NextecProvisionDirectory -Root $Root
@@ -743,10 +810,13 @@ function Invoke-NextecProvisioning {
         }
       }
       Write-NextecProvisionLog 'already_configured' -Root $Root
+      Invoke-NextecInviteClaim -Root $Root -PostInvite $PostInvite -Now $Now | Out-Null
       return 'already_configured'
     }
     # Sem bootstrap.json e sem agente-senha.json: inscricao global (inscricao.json do MSI).
-    return (Invoke-NextecSelfEnrollment -Root $Root -LocalId $localId -Now $Now -PostSelfEnroll $PostSelfEnroll -NewToken $NewToken -RegisterAgent $RegisterAgent -GetUuid $GetUuid)
+    $enrollResult = Invoke-NextecSelfEnrollment -Root $Root -LocalId $localId -Now $Now -PostSelfEnroll $PostSelfEnroll -NewToken $NewToken -RegisterAgent $RegisterAgent -GetUuid $GetUuid
+    if ($enrollResult -eq 'complete') { Invoke-NextecInviteClaim -Root $Root -PostInvite $PostInvite -Now $Now | Out-Null }
+    return $enrollResult
   }
 
   if ($journal.painel -cne $script:NextecPainelFixo -or $journal.id -cne $localId) { Write-NextecProvisionLog 'identity_conflict' -Root $Root; throw 'identity_conflict' }

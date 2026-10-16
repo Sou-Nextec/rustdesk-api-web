@@ -2,6 +2,14 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.44
+
+Convites de instalação (segunda parte: o agente).
+
+- **O agente lê o código do convite.** Quando o MSI baixado de um link `/i/<código>` é instalado, o coordenador tira o código do nome do arquivo e o guarda em `convite.json` (só administradores e SYSTEM leem). Depois da inscrição, a máquina apresenta o código ao painel com a própria credencial e entra direto no cliente do convite.
+- **Segurança:** só o código de 20 caracteres sai do nome; nome sem código ou renomeado não grava nada (a máquina entra como Pendente, como antes). Resposta definitiva do painel (aceito, inválido, vencido, conflito) apaga o arquivo; falha temporária tenta de novo por até 3 dias.
+- **Ainda falta:** o instalador (MSI) passar o caminho do próprio arquivo ao agente (mudança no gerador de clientes).
+
 ## 2.11.43
 
 Convites de instalação (primeira parte: painel e servidor).
