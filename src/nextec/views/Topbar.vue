@@ -30,13 +30,18 @@
     </div>
 
     <!-- conexão rápida por ID -->
-    <el-popover v-model:visible="quick.visible" placement="bottom-end" :width="300" trigger="click">
+    <el-popover v-model:visible="quick.visible" placement="bottom-end" :width="340" trigger="click">
       <template #reference>
         <el-button type="primary" class="nx-quick-btn" aria-label="Conectar por ID">
           <el-icon><el-icon-Plus/></el-icon><span class="nx-quick-label">Conectar</span>
         </el-button>
       </template>
-      <form class="nx-quick" @submit.prevent="quickConnect">
+      <div class="nx-quick-tabs" role="tablist" aria-label="Como conectar">
+        <button type="button" role="tab" :aria-selected="quick.tab === 'id'" :class="{ 'is-on': quick.tab === 'id' }" @click="quick.tab = 'id'">Digitar o ID</button>
+        <button type="button" role="tab" :aria-selected="quick.tab === 'support'" :class="{ 'is-on': quick.tab === 'support' }" @click="quick.tab = 'support'">Suporte rápido</button>
+      </div>
+      <QuickSupportForm v-if="quick.tab === 'support'" @done="quick.visible = false" />
+      <form v-else class="nx-quick" @submit.prevent="quickConnect">
         <label for="nx-quick-id">ID do dispositivo</label>
         <el-input id="nx-quick-id" ref="quickInput" v-model="quick.id" :formatter="fmtId" :parser="rawId" placeholder="ex.: 123 456 789" inputmode="numeric"/>
         <p>Abre o app RustDesk instalado neste computador.</p>
@@ -59,6 +64,7 @@
 <script setup>
   import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
   import { fmtId, rawId } from '@/nextec/id'
+  import QuickSupportForm from '@/nextec/views/QuickSupportForm.vue'
   import { useRoute, useRouter } from 'vue-router'
   import { T } from '@/utils/i18n'
   import { useUserStore } from '@/store/user'
@@ -171,9 +177,9 @@
   onBeforeUnmount(() => { document.removeEventListener('mousedown', onDocClick); document.removeEventListener('keydown', onKey) })
 
   // ---------- conexão rápida ----------
-  const quick = reactive({ visible: false, id: '' })
+  const quick = reactive({ visible: false, id: '', tab: 'id' })
   const quickInput = ref()
-  watch(() => quick.visible, v => { if (v) nextTick(() => quickInput.value?.focus()) })
+  watch(() => quick.visible, v => { if (v) { quick.tab = 'id'; nextTick(() => quickInput.value?.focus()) } })
   const quickConnect = () => {
     const id = quick.id.replace(/\s/g, '')
     if (!id) return
@@ -210,6 +216,12 @@
     flex: none; width: 8px; height: 8px; border-radius: 50%;
     &.is-on { background: #0F7B55; box-shadow: 0 0 0 3px #D1FAE5; }
     &.is-off { background: #9A97AD; }
+  }
+  .nx-quick-tabs {
+    display: flex; gap: 4px; padding: 3px; margin-bottom: 12px; border-radius: 12px; background: var(--nx-field);
+    button { flex: 1; min-height: 34px; border: 0; border-radius: 9px; background: transparent; color: var(--nx-text-muted); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+    button.is-on { background: var(--nx-surface); color: var(--nx-accent); box-shadow: 0 1px 4px rgba(26, 28, 28, .12); }
+    button:focus-visible { outline: 2px solid var(--nx-focus, #4230E6); outline-offset: 1px; }
   }
   .nx-quick-btn { flex: none; .nx-quick-label { margin-left: 4px; } }
   .nx-help-btn { flex: none; margin-left: 0 !important; }
