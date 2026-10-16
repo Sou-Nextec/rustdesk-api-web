@@ -35,6 +35,7 @@
         <li v-for="row in releases" :key="row.id" class="nx-mcard">
           <div class="nx-mcard-top">
             <strong class="nx-ver nx-mcard-title">{{ row.version }}{{ row.client_name ? ' · ' + row.client_name : '' }}</strong>
+            <el-tag size="small" :type="releaseKind(row).tone" disable-transitions>{{ releaseKind(row).label }}</el-tag>
             <el-tag v-if="isPublished(row)" :type="rollout.mode === 'all' ? 'success' : 'warning'" disable-transitions>{{ publishedTag(row) }}</el-tag>
             <span v-else class="nx-muted nx-small">Não publicada</span>
           </div>
@@ -50,7 +51,7 @@
       </ul>
       <el-table v-else-if="!isMobile" :data="releases" v-loading="loading" row-key="id" aria-label="Versões enviadas" empty-text=" ">
         <el-table-column label="Versão" min-width="110">
-          <template #default="{ row }"><strong class="nx-ver">{{ row.version }}</strong><div class="nx-muted nx-small">{{ row.client_name || (row.profile === 'analysts' ? 'Analistas' : 'Cliente padrão') }}</div><el-tag v-if="row.internal" size="small">Download dos analistas</el-tag></template>
+          <template #default="{ row }"><strong class="nx-ver">{{ row.version }}</strong><div><el-tag size="small" :type="releaseKind(row).tone" disable-transitions>{{ releaseKind(row).label }}</el-tag></div><div class="nx-muted nx-small">{{ row.client_name || row.file_name }}</div><el-tag v-if="row.internal" size="small" type="success">Download dos analistas</el-tag></template>
         </el-table-column>
         <el-table-column label="Situação" min-width="190">
           <template #default="{ row }">
@@ -274,6 +275,7 @@
   import { timeAgo } from '@/utils/time'
   import { updatesOverview, updatesRollout, updatesDelete, updatesSignature, updatesInternal, updatesSignRequest } from '@/nextec/api'
   import { signingRequest, downloadLocalJson } from '@/nextec/local-requests.mjs'
+  import { releaseKind, analystsDownloadNotice } from '@/nextec/release-kind.mjs'
   import { openPrivateKey, buildManifest, signManifest, checkAsset, bytesToBase64 } from '@/nextec/assinatura-navegador.mjs'
   import { updateState } from '@/nextec/update-status.mjs'
 
@@ -549,6 +551,14 @@
 
   // ---------- instalar ----------
   const setInternal = async (row) => {
+    if (!row.internal) {
+      const notice = analystsDownloadNotice(row, releases.value.find(r => r.internal))
+      try {
+        await ElMessageBox.confirm(notice.message, notice.title, {
+          type: notice.danger ? 'warning' : 'info', confirmButtonText: 'Disponibilizar', cancelButtonText: 'Cancelar', dangerouslyUseHTMLString: false,
+        })
+      } catch (e) { return }
+    }
     const result = await updatesInternal(row.id, !row.internal).catch(() => false)
     if (result) { ok(row.internal ? 'Download suspenso.' : 'Versão disponível para os analistas baixarem.'); load() }
   }

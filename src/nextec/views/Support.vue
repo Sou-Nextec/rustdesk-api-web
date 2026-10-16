@@ -45,7 +45,8 @@
           <el-button class="nx-remove" @click="remove"><span class="nx-danger-text">Tirar do ar</span></el-button>
         </div>
         <el-empty v-else :image-size="64" description="Nenhum aplicativo de suporte publicado.">
-          <p class="nx-empty-hint">Envie o aplicativo (.exe) aqui. O link de suporte só funciona depois disso.</p>
+          <p class="nx-empty-hint">Escolha um aplicativo que já foi gerado em Gerar cliente, ou envie o arquivo (.exe). O link de suporte só funciona depois disso.</p>
+          <el-button type="primary" @click="openUpload">Escolher o aplicativo</el-button>
         </el-empty>
       </div>
 
@@ -63,6 +64,21 @@
     </template>
 
     <el-dialog v-model="up.visible" title="Enviar aplicativo de suporte" width="min(520px, 92vw)" align-center :close-on-click-modal="false" :before-close="beforeClose">
+      <div class="nx-gen">
+        <p class="nx-gen-title">Usar um aplicativo já gerado</p>
+        <el-skeleton v-if="gen.loading" animated :rows="2"/>
+        <ul v-else-if="gen.items.length" class="nx-gen-list" aria-label="Aplicativos gerados">
+          <li v-for="item in gen.items" :key="item.uuid + item.name">
+            <div class="nx-gen-text">
+              <strong>{{ item.label }}</strong>
+              <span class="nx-small nx-muted">{{ item.name }}{{ item.looksLikeSupport ? ' · parece o app de suporte' : '' }}</span>
+            </div>
+            <el-button size="small" type="primary" :loading="gen.using === item.uuid + item.name" :disabled="up.busy" @click="useGenerated(item)">Usar este</el-button>
+          </li>
+        </ul>
+        <p v-else class="nx-help-form">{{ gen.error || 'Nenhum .exe gerado ainda. Gere o app de suporte em Gerar cliente (nome Suporte-Nextec).' }}</p>
+        <p class="nx-gen-title nx-gen-or">Ou envie um arquivo</p>
+      </div>
       <el-form label-position="top" class="nx-form" @submit.prevent>
         <el-form-item label="Aplicativo (.exe)" required class="is-required">
           <input type="file" accept=".exe" class="nx-file" :disabled="up.busy" @change="onFile">
@@ -86,6 +102,7 @@
   import { useUserStore } from '@/store/user'
   import { supportInfo, supportDelete, supportSettings, supportWaiting } from '@/nextec/api'
   import { uploadFile } from '@/nextec/upload'
+  import { supportCandidates } from '@/nextec/support-source.mjs'
 
   const userStore = useUserStore()
   const isAdmin = computed(() => (userStore.route_names || []).includes('*'))
@@ -138,7 +155,39 @@
   const openPage = () => window.open('/suporte', '_blank', 'noopener')
 
   const up = reactive({ visible: false, busy: false, progress: 0, file: null, error: '' })
-  const openUpload = () => Object.assign(up, { visible: true, busy: false, progress: 0, file: null, error: '' })
+  const gen = reactive({ loading: false, items: [], error: '', using: '' })
+  const loadGenerated = async () => {
+    gen.loading = true; gen.error = ''
+    try {
+      const response = await fetch('/gerador/nextec/geracoes/?page=1&page_size=50', { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+      if (!response.ok || !response.headers.get('content-type')?.includes('application/json')) throw new Error('Não foi possível consultar os itens gerados agora.')
+      gen.items = supportCandidates((await response.json()).results)
+    } catch (e) { gen.items = []; gen.error = e.message || 'Não foi possível consultar os itens gerados agora.' }
+    finally { gen.loading = false }
+  }
+  const openUpload = () => {
+    Object.assign(up, { visible: true, busy: false, progress: 0, file: null, error: '' })
+    loadGenerated()
+  }
+  // Baixa o .exe gerado (download autorizado do próprio gerador) e publica pelo mesmo envio de sempre.
+  const useGenerated = async (item) => {
+    up.error = ''
+    gen.using = item.uuid + item.name
+    up.busy = true; up.progress = 0
+    try {
+      const download = await fetch(item.url, { credentials: 'same-origin' })
+      if (!download.ok) throw new Error(`Não foi possível baixar o aplicativo gerado (HTTP ${download.status}).`)
+      const blob = await download.blob()
+      if (blob.size > maxSize.value) throw new Error(`O arquivo passa do limite de ${size(maxSize.value)}.`)
+      const file = new File([blob], item.name, { type: 'application/octet-stream' })
+      const r = await uploadFile('/nextec/support/upload', {}, file, (p) => { up.progress = p })
+      if (!r.ok) throw new Error(r.message)
+      up.visible = false
+      ElMessage.success('Aplicativo publicado. O link de suporte já funciona.')
+      load()
+    } catch (e) { up.error = e.message || 'Não foi possível publicar este aplicativo.' }
+    finally { up.busy = false; gen.using = '' }
+  }
   const beforeClose = (done) => { if (!up.busy) done() }
   const onFile = (e) => {
     const f = e.target.files && e.target.files[0]
@@ -193,6 +242,12 @@
   .nx-help { margin: 0; padding: 0 22px 18px; font-size: 12px; line-height: 1.5; color: var(--nx-text-muted); }
   .nx-help-in { padding: 10px 0 12px !important; }
   .nx-help-form { margin: 6px 0 0; font-size: 12px; color: var(--nx-text-muted); }
+  .nx-gen { margin-bottom: 14px; }
+  .nx-gen-title { margin: 0 0 8px; font-size: 13px; font-weight: 700; color: var(--nx-text); }
+  .nx-gen-or { margin-top: 16px; }
+  .nx-gen-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-height: 220px; overflow: auto; }
+  .nx-gen-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: 12px; background: var(--nx-field); }
+  .nx-gen-text { min-width: 0; display: grid; gap: 2px; strong { color: var(--nx-text); overflow-wrap: anywhere; } }
   .nx-file { width: 100%; font: inherit; font-size: 13px; color: var(--nx-text); }
   .nx-error { margin: 12px 0 0; padding: 10px 12px; border-radius: 10px; font-size: 13px; background: #FDECEA; color: #8C1D18; }
   html.dark .nx-error { background: rgba(255, 138, 128, 0.14); color: #FFB4AB; }
