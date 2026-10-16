@@ -9,6 +9,15 @@ Diálogo de convite que não cabia na tela e aviso "Abrindo o aplicativo".
 - **Convite de instalação:** quando o convite criado deixava o diálogo mais alto que a janela, o título e o X saíam da tela e não dava para fechar. Agora só o **corpo rola**, com o título e o X sempre à vista.
 - **Avisos de andamento** ("Abrindo o Nextec Connect...", "Baixando Nextec Connect..."): deixam de ser a caixa cinza com "i", que parecia erro. Passam a usar o lilás da marca com um ícone girando e o link em roxo.
 
+## 2.11.48
+
+Suporte rápido mais simples e máquina offline não é "agente parado".
+
+- **Suporte rápido:** sai o campo de cliente ou chamado da frente (fica em "Opções", junto com a validade). A tela mostra só o **código do atendimento**; ao clicar em **Gerar link** o link já é **copiado para a área de transferência** e a tela avisa.
+- **Código diferente do ID do RustDesk:** seis dígitos com hífen (`482-913`), para não confundir com o ID de nove dígitos da máquina. A página que o cliente abre mostra esse código em destaque.
+- **Página do cliente:** o código mostrado vem do rótulo do link (patch 0043); link criado pelo formulário antigo, sem código, mostra o rótulo inteiro.
+- **Senhas dos servidores:** quando o agente fica sem contato **e a própria máquina também está offline** (o servidor do RustDesk não a vê há mais de 3 minutos), a tela diz "Máquina offline há X. Desligada ou sem internet; o agente volta sozinho; não precisa reinstalar" em vez de mandar reinstalar o agente. Máquina online com agente quieto continua como "agente parado". O resumo do topo conta as offline à parte.
+
 ## 2.11.47
 
 Adicionar e Conectar viram menus; Suporte rápido sem digitar.

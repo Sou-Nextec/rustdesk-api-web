@@ -5,8 +5,9 @@
         <h2 class="nx-hero-title">{{ summary.text }}</h2>
         <ul v-if="summary.total" class="nx-chips" aria-label="Resumo das máquinas">
           <li v-if="summary.counts.client" class="nx-chip is-warn">{{ summary.counts.client }} sem cliente</li>
-          <li v-if="summary.counts.agent - summary.stalled" class="nx-chip is-warn">{{ summary.counts.agent - summary.stalled }} sem agente</li>
+          <li v-if="summary.counts.agent - summary.stalled - summary.offline" class="nx-chip is-warn">{{ summary.counts.agent - summary.stalled - summary.offline }} sem agente</li>
           <li v-if="summary.stalled" class="nx-chip is-warn">{{ summary.stalled }} {{ summary.stalled === 1 ? 'agente parado' : 'agentes parados' }}</li>
+          <li v-if="summary.offline" class="nx-chip">{{ summary.offline }} {{ summary.offline === 1 ? 'máquina offline' : 'máquinas offline' }}</li>
           <li v-if="summary.counts.rule" class="nx-chip is-warn">{{ summary.counts.rule }} sem senha automática</li>
           <li v-if="summary.counts.ready" class="nx-chip is-ok">{{ summary.counts.ready }} {{ summary.counts.ready === 1 ? 'pronta' : 'prontas' }}</li>
         </ul>
@@ -166,6 +167,7 @@
             </div>
             <div v-else class="nx-muted"><span class="nx-dot is-off" aria-hidden="true"></span>{{ contact(row).headline }}</div>
             <div v-if="row.managed && contact(row).state === 'ativo'" class="nx-small"><span class="nx-dot is-on" aria-hidden="true"></span>Senha troca a cada {{ every(row.interval_minutes) }}</div>
+            <div v-else-if="row.managed && contact(row).offline" class="nx-small nx-muted"><span class="nx-dot is-off" aria-hidden="true"></span>Regra pronta; a troca volta quando a máquina ligar</div>
             <div v-else-if="row.managed && contact(row).state === 'parado'" class="nx-small nx-warn-text"><span class="nx-dot is-warn" aria-hidden="true"></span>Regra pronta, mas o agente está parado</div>
             <div v-else-if="row.managed" class="nx-small nx-warn-text"><span class="nx-dot is-warn" aria-hidden="true"></span>Regra pronta, falta o agente</div>
             <div v-else class="nx-small nx-muted"><span class="nx-dot is-off" aria-hidden="true"></span>Senha automática desligada</div>
@@ -418,6 +420,7 @@
   import { buildActivationCmd, activationFileName, downloadActivationCmd } from '@/nextec/activation-cmd.mjs'
   import { getAgentPackage } from '@/nextec/agent-package-sources.js'
   import { connectDevice } from '@/nextec/connect'
+  import { list as adminPeers } from '@/api/peer'
   import { nextCheck, createAutoRefresh } from '@/nextec/agent-cycle.mjs'
   import { createRotationWatch, ROTATION_NOTICE } from '@/nextec/rotation-watch.mjs'
   import { agentContact, agentError, lastContactAt, REMOVE_AGENT_HELP } from '@/nextec/agent-state.mjs'
@@ -454,19 +457,27 @@
   const every = (m) => (m % 60 === 0 ? (m / 60 === 1 ? 'hora' : `${m / 60} h`) : `${m} min`)
 
   let inflight = false
+  const lastSeen = ref(new Map())
   // silent: atualização automática, sem spinner e sem trocar a lista por erro se uma rodada falhar.
   const load = async (silent = false) => {
     if (silent && inflight) return
     inflight = true
     if (!silent) loading.value = true
-    const [ov, g] = await Promise.all([secretsOverview().catch(() => false), groupList({ page: 1, page_size: 9999 }).catch(() => false)])
+    const [ov, g, peers] = await Promise.all([
+      secretsOverview().catch(() => false),
+      groupList({ page: 1, page_size: 9999 }).catch(() => false),
+      // última vez que o app de cada máquina falou com o servidor: separa "máquina offline" de "agente parado"
+      adminPeers({ page: 1, page_size: 10000 }).catch(() => false),
+    ])
     inflight = false
     if (!silent) loading.value = false
     if (!silent || ov) loadError.value = !ov
     if (ov) loaded.value = true
     if (ov) {
       const n = normalizeOverview(ov)
-      devices.value = n.devices
+      // presença: só troca quando a lista de máquinas respondeu; se falhar, vale o último valor conhecido
+      if (peers && peers.data && Array.isArray(peers.data.list)) lastSeen.value = new Map(peers.data.list.map(p => [String(p.id), Number(p.last_online_time) || 0]))
+      devices.value = n.devices.map(d => (lastSeen.value.has(String(d.peer_id)) ? { ...d, peer_last_online: lastSeen.value.get(String(d.peer_id)) } : d))
       policies.value = n.policies
       agentKeySet.value = n.agentKeySet
       blocked.value = n.blocked
@@ -531,6 +542,7 @@
     else if (a === 'install-agent' || a === 'reinstall-agent') openAgent(row.peer_id)
     else if (a === 'enable-rule') await enableRule(row)
     else if (a === 'connect') await connectDevice(row.peer_id)
+    else if (a === 'wait-machine') ElMessage.info('A máquina está desligada ou sem internet. O agente volta sozinho quando ela ligar; não precisa reinstalar.')
   }
   const enableRule = async (row) => {
     const r = await secretsPolicy({ kind: 'peer', ref: row.peer_id, enabled: true, interval_minutes: row.interval_minutes || 180 }).catch(() => false)
