@@ -104,7 +104,7 @@
   import { invitesList, inviteCreate, inviteBatch, inviteRevoke } from '@/nextec/api'
   import { inviteLink, inviteCommand, inviteMessage, inviteBatchCsv, parseBatchLines } from '@/nextec/invite-command.mjs'
   import InviteOptions from '@/nextec/views/InviteOptions.vue'
-  import { usePublicBase } from '@/nextec/public-base'
+  import { usePublicBase, publicBaseReady, loadPublicBase } from '@/nextec/public-base'
   import QuickSupportForm from '@/nextec/views/QuickSupportForm.vue'
 
   const props = defineProps({ modelValue: Boolean, clients: { type: Array, default: () => [] } })
@@ -179,6 +179,7 @@
     }
   }
   const downloadCsv = () => {
+    if (!publicBaseReady.value) { loadPublicBase(true); ElMessage.warning('Ainda carregando o endereço dos links. Tente de novo em instantes.'); return }
     let csv
     try { csv = inviteBatchCsv({ origin: origin.value, release: batchRelease.value, rows: batchOut.value }) } catch (e) { ElMessage.error(e.message || 'Não foi possível montar o CSV.'); return }
     const url = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }))
@@ -187,6 +188,7 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
   const copy = async (text, msg) => {
+    if (!publicBaseReady.value) { loadPublicBase(true); ElMessage.warning('Ainda carregando o endereço dos links. Tente copiar de novo em instantes.'); return }
     try { await navigator.clipboard.writeText(text); ElMessage.success(msg) } catch (e) { ElMessage.error('Não foi possível copiar.') }
   }
   const revoke = async (r) => {

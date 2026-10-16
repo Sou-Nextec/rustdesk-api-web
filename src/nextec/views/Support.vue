@@ -37,9 +37,10 @@
         <form class="nx-url" @submit.prevent="savePublicUrl">
           <label for="nx-public-url">Domínio público</label>
           <div class="nx-url-row">
-            <el-input id="nx-public-url" v-model="publicUrl" placeholder="https://suporte.empresa.com.br" :disabled="savingUrl" aria-describedby="nx-public-url-help" @input="urlError = ''" />
-            <el-button type="primary" native-type="submit" :loading="savingUrl">Salvar</el-button>
+            <el-input id="nx-public-url" v-model="publicUrl" placeholder="https://suporte.empresa.com.br" :disabled="savingUrl || !publicBaseReady" aria-describedby="nx-public-url-help" @input="urlError = ''" />
+            <el-button type="primary" native-type="submit" :loading="savingUrl" :disabled="!publicBaseReady">Salvar</el-button>
           </div>
+          <p v-if="publicBaseFailed" class="nx-warn" role="alert">Não foi possível carregar o endereço salvo. <el-button link type="primary" @click="retryPublicUrl">Tentar de novo</el-button></p>
           <p v-if="urlError" class="nx-warn" role="alert">{{ urlError }}</p>
           <p id="nx-public-url-help" class="nx-small nx-muted">
             Os links ficam <code>{{ exampleBase }}/instalador/&lt;código&gt;</code> e <code>{{ exampleBase }}/atendimento/&lt;código&gt;</code>.
@@ -118,7 +119,7 @@
   import SupportLinks from '@/nextec/views/SupportLinks.vue'
   import { useUserStore } from '@/store/user'
   import { supportInfo, supportDelete, supportSettings, supportWaiting, supportPublicUrlSave } from '@/nextec/api'
-  import { loadPublicBase, setConfiguredBase, configuredBase } from '@/nextec/public-base'
+  import { loadPublicBase, setConfiguredBase, configuredBase, publicBaseReady, publicBaseFailed } from '@/nextec/public-base'
   import { checkPublicUrl, publicBase } from '@/nextec/public-links.mjs'
   import { uploadFile } from '@/nextec/upload'
   import SupportGeneratedList from '@/nextec/views/SupportGeneratedList.vue'
@@ -179,8 +180,12 @@
   const savingUrl = ref(false)
   const urlError = ref('')
   const exampleBase = computed(() => publicBase(checkPublicUrl(publicUrl.value).value, window.location.origin) || window.location.origin)
-  loadPublicBase().then(() => { publicUrl.value = configuredBase.value })
+  const fillPublicUrl = (ok) => { if (ok) publicUrl.value = configuredBase.value }
+  loadPublicBase().then(fillPublicUrl)
+  const retryPublicUrl = () => loadPublicBase(true).then(fillPublicUrl)
   const savePublicUrl = async () => {
+    // nunca grava sem ter lido o valor salvo: uma falha de carga não pode virar "limpar o endereço"
+    if (!publicBaseReady.value) { urlError.value = 'O endereço salvo ainda não foi carregado. Tente carregar de novo antes de salvar.'; return }
     const check = checkPublicUrl(publicUrl.value)
     if (!check.ok) { urlError.value = check.message; return }
     savingUrl.value = true

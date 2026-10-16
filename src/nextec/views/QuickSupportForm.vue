@@ -32,7 +32,7 @@
   import { ElMessage } from 'element-plus'
   import { supportLinkCreate } from '@/nextec/api'
   import { useUserStore } from '@/store/user'
-  import { usePublicBase } from '@/nextec/public-base'
+  import { usePublicBase, publicBaseReady, loadPublicBase } from '@/nextec/public-base'
   import { supportLinkUrl } from '@/nextec/public-links.mjs'
 
   defineEmits(['done'])
@@ -63,6 +63,7 @@
   }
   const reset = () => { fresh.value = null; form.label = ''; nextTick(() => labelInput.value?.focus()) }
   const copy = async (text, msg) => {
+    if (!publicBaseReady.value) { loadPublicBase(true); ElMessage.warning('Ainda carregando o endereço dos links. Tente copiar de novo em instantes.'); return }
     try { await navigator.clipboard.writeText(text); ElMessage.success(msg) } catch (e) { ElMessage.error('Não foi possível copiar.') }
   }
   onMounted(() => nextTick(() => labelInput.value?.focus()))

@@ -65,7 +65,7 @@
   import { supportLinks, supportLinkCreate, supportLinkRevoke } from '@/nextec/api'
   import { connectDevice } from '@/nextec/connect'
   import { fmtId } from '@/nextec/id'
-  import { usePublicBase } from '@/nextec/public-base'
+  import { usePublicBase, publicBaseReady, loadPublicBase } from '@/nextec/public-base'
   import { supportLinkUrl } from '@/nextec/public-links.mjs'
 
   const rows = ref([])
@@ -120,6 +120,7 @@
     }
   }
   const copy = async (text, msg) => {
+    if (!publicBaseReady.value) { loadPublicBase(true); ElMessage.warning('Ainda carregando o endereço dos links. Tente copiar de novo em instantes.'); return }
     try { await navigator.clipboard.writeText(text); ElMessage.success(msg) } catch (e) { ElMessage.error('Não foi possível copiar.') }
   }
   const revoke = async (row) => {
