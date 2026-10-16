@@ -74,7 +74,7 @@
 
         <p v-if="row.notes" class="nx-generation-notes">{{ row.notes }}</p>
 
-        <div v-if="(row.files && row.files.length) || msi(row) || row.github_run_id || row.log_url" class="nx-generation-actions">
+        <div v-if="(row.files && row.files.length) || msi(row) || row.github_run_id || row.log_url || deletableGeneration(row)" class="nx-generation-actions">
           <a v-for="file in row.files || []" :key="file.name" :href="generationDownload(file.url) || undefined"
             class="nx-download" :aria-label="'Baixar ' + file.name" :title="file.name">
             <el-icon aria-hidden="true"><el-icon-Download /></el-icon><span>Baixar {{ fileKind(file.name) }}</span>
@@ -86,17 +86,14 @@
             :disabled="!!importing || row.status !== 'success'" @click="sendToUpdates(row)">
             <el-icon v-if="importing !== row.uuid" aria-hidden="true"><el-icon-Upload /></el-icon><span>Enviar para Atualizações</span>
           </el-button>
+          <el-button v-if="deletableGeneration(row)" text type="danger" class="nx-remove" :loading="deleting === row.uuid" :disabled="!!deleting" @click="removeOne(row)">
+            <el-icon v-if="deleting !== row.uuid" aria-hidden="true"><el-icon-Delete /></el-icon><span>Excluir</span>
+          </el-button>
         </div>
 
         <div v-if="failedGeneration(row)" class="nx-generation-retry">
           <el-button type="primary" plain @click="$emit('retry', row)">
             <el-icon aria-hidden="true"><el-icon-RefreshRight /></el-icon><span>Tentar de novo</span>
-          </el-button>
-        </div>
-
-        <div v-if="deletableGeneration(row)" class="nx-generation-remove">
-          <el-button text type="danger" :loading="deleting === row.uuid" :disabled="!!deleting" @click="removeOne(row)">
-            <el-icon v-if="deleting !== row.uuid" aria-hidden="true"><el-icon-Delete /></el-icon><span>Excluir</span>
           </el-button>
         </div>
 
@@ -272,13 +269,12 @@ defineExpose({ reload: load })
 .nx-generation.is-selected { border-color: var(--nx-focus); box-shadow: 0 0 0 1px var(--nx-focus); }
 .nx-generation-head > .el-checkbox { height: auto; margin-top: 2px; }
 .nx-generation-retry { display: flex; justify-content: flex-end; .el-button { margin: 0; } }
-.nx-generation-remove { display: flex; justify-content: flex-end; margin: -4px 0 -6px; .el-button { margin: 0; } }
 .nx-generation-title { display: grid; gap: 2px; min-width: 0; flex: 1 1 260px; strong { font-size: 15px; line-height: 1.35; color: var(--nx-text); } }
 .nx-generation-meta { color: var(--nx-text-muted); font-size: 13px; }
 .nx-generation-progress { p { margin: 6px 0 0; font-size: 13px; color: var(--nx-text); span { margin-left: 8px; color: var(--nx-text-muted); } } }
 .nx-generation-notes { margin: 0; padding: 8px 12px; border-radius: 10px; background: var(--nx-field); color: var(--nx-text); font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
 .nx-generation-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding-top: 12px; border-top: 1px solid var(--nx-divider);
-  .el-button { margin: 0; } .nx-send { margin-left: auto; } }
+  .el-button { margin: 0; } .nx-send { margin-left: auto; } .nx-remove { margin-left: auto; } .nx-send + .nx-remove { margin-left: 0; } }
 .nx-download { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 14px; border: 1px solid var(--nx-border); border-radius: var(--nx-radius-btn); color: var(--nx-text); background: var(--nx-surface); font-size: 13px; font-weight: 600; text-decoration: none; box-sizing: border-box;
   &:hover { background: var(--nx-field); } }
 .nx-generation-tech { margin: 0; color: var(--nx-text-subtle); font-size: 12px; line-height: 1.5; }

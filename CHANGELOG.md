@@ -2,6 +2,12 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.40
+
+Acabamento da lista de Itens gerados (item P3 da revisão de UX). Par do gerador 2.3.9.
+
+- **Excluir na linha de ações:** o botão deixa de ficar sozinho numa linha abaixo do item e passa para a linha dos downloads e de Enviar para Atualizações, alinhado à direita. Itens que só podem ser excluídos (por exemplo, com falha) também ganham essa linha. O comportamento e as confirmações de exclusão não mudaram.
+
 ## 2.11.39
 
 Refino da tela Gerar cliente, itens P2 do painel. Funciona com qualquer gerador; as mudanças do formulário vêm no gerador 2.3.8.
