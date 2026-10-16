@@ -3,7 +3,7 @@
 // Etapas: 1 Cliente, 2 Agente, 3 Senha automática. Nada aqui libera acesso: aprovação, identidade (UUID) e regras
 // continuam sendo decididas pelo backend; este módulo só escolhe o texto e o botão certos para cada estado.
 // A etapa 2 só conta como concluída com CONTATO REAL do agente (agent-state.mjs): cadastro sem consulta é "parado".
-import { agentState, AGENT_STATE, ACTIVE_AGENT_NOTICE } from './agent-state.mjs'
+import { agentState, AGENT_STATE, ACTIVE_AGENT_NOTICE, machineOffline } from './agent-state.mjs'
 
 export const STEPS = [
   { key: 'client', label: 'Cliente' },
@@ -30,6 +30,9 @@ export function machineStage(d = {}, now = nowSeconds()) {
 
 export const isStalled = (d = {}, now = nowSeconds()) => agentState(d, now) === AGENT_STATE.STALLED
 
+// Agente quieto porque a máquina está desligada ou sem internet: nada a reinstalar, é só esperar ela ligar.
+export const isOfflineStall = (d = {}, now = nowSeconds()) => isStalled(d, now) && machineOffline(d, now)
+
 // Três etapas com estado 'done' | 'current' | 'todo' e o rótulo da etapa atual para o stepper compacto.
 export function machineSteps(d = {}, now = nowSeconds()) {
   const stage = machineStage(d, now)
@@ -53,6 +56,12 @@ const NEXT = {
   ready: { action: 'connect', label: 'Conectar', hint: 'Pronta. Conecte sem digitar a senha.' },
 }
 
+const NEXT_OFFLINE = {
+  action: 'wait-machine',
+  label: 'Aguardando a máquina',
+  hint: 'A máquina está desligada ou sem internet. O agente volta sozinho quando ela ligar.',
+}
+
 const NEXT_STALLED = {
   action: 'reinstall-agent',
   label: 'Reinstalar agente',
@@ -62,7 +71,7 @@ const NEXT_STALLED = {
 // Um único botão primário por máquina. Pronta: Conectar, com "Trocar agora" como ação secundária.
 export function nextStep(d = {}, now = nowSeconds()) {
   const stage = machineStage(d, now)
-  const base = { stage, ...(stage === 'agent' && isStalled(d, now) ? NEXT_STALLED : NEXT[stage]) }
+  const base = { stage, ...(stage === 'agent' && isOfflineStall(d, now) ? NEXT_OFFLINE : stage === 'agent' && isStalled(d, now) ? NEXT_STALLED : NEXT[stage]) }
   if (stage === 'ready') return { ...base, secondary: { action: 'rotate', label: 'Trocar agora' } }
   return { ...base, secondary: null }
 }
@@ -72,10 +81,12 @@ export function overallSummary(devices = [], now = nowSeconds()) {
   const rows = devices.filter(d => d && typeof d === 'object')
   const c = { client: 0, agent: 0, rule: 0, ready: 0 }
   let stalled = 0
+  let offline = 0
   for (const d of rows) {
     const stage = machineStage(d, now)
     c[stage]++
-    if (stage === 'agent' && isStalled(d, now)) stalled++
+    if (stage === 'agent' && isOfflineStall(d, now)) offline++
+    else if (stage === 'agent' && isStalled(d, now)) stalled++
   }
   const total = rows.length
   const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`
@@ -90,6 +101,8 @@ export function overallSummary(devices = [], now = nowSeconds()) {
   } else if (stalled) {
     text = `${plural(stalled, 'máquina com agente parado', 'máquinas com agente parado')}. Reinstale o agente.`
     cta = { action: 'reinstall-agent', label: 'Reinstalar agente' }
+  } else if (offline && offline === c.agent) {
+    text = `${plural(offline, 'máquina offline', 'máquinas offline')}. O agente volta sozinho quando ligar.`
   } else if (c.agent) {
     text = `${plural(c.agent, 'máquina precisa', 'máquinas precisam')} do agente.`
     cta = { action: 'install-agent', label: 'Instalar agente' }
@@ -99,13 +112,13 @@ export function overallSummary(devices = [], now = nowSeconds()) {
   } else {
     text = `Tudo pronto: ${plural(c.ready, 'máquina troca', 'máquinas trocam')} a senha sozinha.`
   }
-  return { total, counts: c, stalled, text, cta }
+  return { total, counts: c, stalled, offline, text, cta }
 }
 
 // Primeira máquina que ainda precisa da etapa pedida (ordem da lista recebida), para o CTA do topo.
 // stage 'stalled' pede a primeira máquina com agente cadastrado porém parado.
 export function firstNeeding(devices = [], stage, now = nowSeconds()) {
-  if (stage === 'stalled') return devices.find(d => d && machineStage(d, now) === 'agent' && isStalled(d, now)) || null
+  if (stage === 'stalled') return devices.find(d => d && machineStage(d, now) === 'agent' && isStalled(d, now) && !isOfflineStall(d, now)) || null
   return devices.find(d => d && machineStage(d, now) === stage) || null
 }
 

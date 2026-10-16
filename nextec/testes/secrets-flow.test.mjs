@@ -130,3 +130,19 @@ test('transições: depois de vincular o cliente a máquina segue para a próxim
   d = { ...d, managed: true }; seq.push(machineStage(d))
   assert.deepEqual(seq, ['client', 'agent', 'rule', 'ready'])
 })
+
+test('máquina offline: botão de espera, resumo próprio e fora do "reinstalar"', async () => {
+  const { nextStep, overallSummary, firstNeeding } = await import('../../src/nextec/secrets-flow.mjs')
+  const now = 1_800_000_000
+  const mk = (peer, online) => ({ peer_id: peer, group_id: 4, enrolled: true, state: 'assigned', agent_state: 'parado', last_sync_at: now - 2460, peer_last_online: online })
+  const offline = mk('215969168', now - 2100)
+  const online = mk('111111111', now - 10)
+  assert.equal(nextStep(offline, now).action, 'wait-machine')
+  assert.equal(nextStep(online, now).action, 'reinstall-agent')
+  const s = overallSummary([offline], now)
+  assert.equal(s.offline, 1)
+  assert.equal(s.stalled, 0)
+  assert.equal(s.cta, null)
+  assert.match(s.text, /offline/)
+  assert.equal(firstNeeding([offline, online], 'stalled', now).peer_id, '111111111')
+})
