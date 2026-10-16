@@ -68,7 +68,7 @@
               <div>
                 <label>Sempre usar relay</label>
                 <p class="nx-help">Todas as conexões passam pelo relay, mesmo quando daria para conectar direto. Resolve redes com firewall restritivo, mas aumenta o uso de banda do servidor.</p>
-                <p class="nx-env">Permanente: variável <code>ALWAYS_USE_RELAY=Y</code></p>
+                <p class="nx-env">Vale até o servidor reiniciar. Para manter: variável <code>ALWAYS_USE_RELAY=Y</code> na stack (Portainer) e Pull and redeploy.</p>
               </div>
               <el-switch v-model="alwaysRelay" :disabled="!idOk" :loading="saving.aur" aria-label="Sempre usar relay" @change="saveAlwaysRelay"/>
             </div>
@@ -77,7 +77,7 @@
               <div>
                 <label>Exigir login no app</label>
                 <p class="nx-help">O app RustDesk só consegue acessar outros dispositivos depois que a pessoa entra com uma conta deste servidor.</p>
-                <p class="nx-env">Permanente: variável <code>MUST_LOGIN=Y</code></p>
+                <p class="nx-env">Vale até o servidor reiniciar. Para manter: variável <code>MUST_LOGIN=Y</code> na stack (Portainer) e Pull and redeploy.</p>
               </div>
               <el-switch v-model="mustLogin" :disabled="!idOk" :loading="saving.ml" aria-label="Exigir login no app" @change="saveMustLogin"/>
             </div>

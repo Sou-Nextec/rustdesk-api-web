@@ -2,6 +2,14 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.46
+
+Ajustes do servidor que não ficavam salvos.
+
+- **Causa:** "Sempre usar relay" e "Exigir login no app" mudam o hbbs em execução; quando a stack é reimplantada ou o servidor reinicia, ele volta ao que está escrito na stack (que fixava `MUST_LOGIN=N` e não tinha `ALWAYS_USE_RELAY`).
+- **Correção:** a stack agora lê `ALWAYS_USE_RELAY` e `MUST_LOGIN` das variáveis do Portainer (padrão `N`). Defina `Y` na stack e faça Pull and redeploy para manter depois de reiniciar.
+- A tela explica isso embaixo de cada opção.
+
 ## 2.11.44
 
 Convites de instalação (segunda parte: o agente).
