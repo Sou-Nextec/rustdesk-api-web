@@ -83,6 +83,30 @@
             </div>
           </div>
 
+          <!-- Botão Conectar do painel -->
+          <div class="nx-card">
+            <div class="nx-card-head">
+              <h2>Botão Conectar do painel</h2>
+              <p>Endereço que o botão Conectar abre no computador de quem usa o painel.</p>
+            </div>
+            <div class="nx-field">
+              <label for="nx-scheme">Protocolo do app</label>
+              <p class="nx-help">
+                O app gerado com o nome <code>Nextec-Connect</code> usa <code>nextec-connect://</code> (o nome em minúsculas).
+                O RustDesk oficial usa <code>rustdesk://</code>. Se o Windows pedir para "obter um aplicativo para abrir este link",
+                o protocolo salvo aqui não é o do app instalado.
+                <strong>Deixe em branco para o painel usar sozinho o app publicado em Atualizações do app.</strong>
+              </p>
+              <p v-if="effectiveScheme" class="nx-help">Em uso agora: <code>{{ effectiveScheme }}://</code> ({{ schemeSourceLabel }}).</p>
+              <div class="nx-row">
+                <el-input id="nx-scheme" v-model="scheme" maxlength="32" :placeholder="effectiveScheme ? 'Automático: ' + effectiveScheme : 'Automático'" :disabled="loadingScheme" @keyup.enter="saveScheme">
+                  <template #append>://</template>
+                </el-input>
+                <el-button type="primary" :loading="savingScheme" @click="saveScheme">Salvar</el-button>
+              </div>
+            </div>
+          </div>
+
           <!-- Limites de banda -->
           <div class="nx-card" v-loading="loading.bw">
             <div class="nx-card-head">
@@ -179,7 +203,7 @@
   import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { sendCmd } from '@/api/rustdesk'
-  import { setWebClient } from '@/nextec/api'
+  import { connectScheme, connectSchemeSave, setWebClient } from '@/nextec/api'
   import UpstreamControl from '@/views/rustdesk/control.vue'
   import { useAppStore } from '@/store/app'
 
@@ -187,6 +211,32 @@
   const RELAY = '21117'
 
   const tab = ref('simple')
+
+  // protocolo do botão Conectar (antes ficava em Gerar cliente, mas é do painel e não da geração)
+  const scheme = ref('')
+  const effectiveScheme = ref('')
+  const schemeSource = ref('')
+  const schemeSourceLabel = computed(() => ({ manual: 'definido por você', published: 'automático, do app publicado', default: 'padrão' }[schemeSource.value] || ''))
+  const applyScheme = (data) => { scheme.value = data.scheme || ''; effectiveScheme.value = data.effective || data.scheme || ''; schemeSource.value = data.source || '' }
+  const loadingScheme = ref(true)
+  const savingScheme = ref(false)
+  const loadScheme = async () => {
+    const res = await connectScheme().catch(() => false)
+    if (res && res.data) applyScheme(res.data)
+    loadingScheme.value = false
+  }
+  const saveScheme = async () => {
+    savingScheme.value = true
+    const res = await connectSchemeSave(scheme.value.trim()).catch(() => false)
+    savingScheme.value = false
+    if (res && res.data) {
+      applyScheme(res.data)
+      ElMessage.success(res.data.scheme
+        ? 'Protocolo salvo. O botão Conectar já usa ' + res.data.scheme + '://'
+        : 'Protocolo automático. O botão Conectar usa ' + effectiveScheme.value + '://')
+    }
+  }
+  onMounted(loadScheme)
 
   const appStore = useAppStore()
 

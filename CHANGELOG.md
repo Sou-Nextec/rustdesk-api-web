@@ -2,6 +2,13 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.39
+
+Refino da tela Gerar cliente, itens P2 do painel. Funciona com qualquer gerador; as mudanças do formulário vêm no gerador 2.3.8.
+
+- **Menos orientação repetida:** o guia "O que preencher e o que já vem pronto" sai da aba Novo instalador (as dicas ficam nos próprios campos do gerador).
+- **Etapa 3 vira atalho:** "Atualizar" nas etapas leva direto a Atualizações do app.
+- **Protocolo do botão Conectar mudou de lugar:** é uma configuração do painel, não da geração; agora fica em Ajustes do servidor, no cartão "Botão Conectar do painel", com o mesmo modo automático.
 ## 2.11.38
 
 Suporte avulso: link por atendimento e página no tema claro.
