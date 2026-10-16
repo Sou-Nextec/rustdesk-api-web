@@ -57,7 +57,7 @@
   .nx-generator-tabs { flex: 1 1 auto; min-width: 0; }
   .nx-gen-flow { list-style: none; display: flex; gap: 8px; margin: 12px 22px 6px; padding: 0; }
   .nx-gen-flow li { display: grid; grid-template-columns: auto 1fr; column-gap: 8px; align-items: center; flex: 1 1 0; min-width: 0; padding: 4px 0; color: var(--nx-text-subtle); }
-  .nx-gen-flow li > span { grid-row: span 2; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--nx-border); font-size: 12px; font-weight: 700; }
+  .nx-gen-flow li > span, .nx-gen-flow li.is-link a > span { grid-row: span 2; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--nx-border); font-size: 12px; font-weight: 700; }
   .nx-gen-flow strong { font-size: 13px; color: var(--nx-text-muted); }
   .nx-gen-flow small { font-size: 12px; line-height: 1.35; color: var(--nx-text-subtle); }
   .nx-gen-flow li.is-link a { display: grid; grid-template-columns: auto 1fr; column-gap: 8px; align-items: center; width: 100%; color: inherit; text-decoration: none; border-radius: 10px; }
