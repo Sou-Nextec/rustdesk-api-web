@@ -1,5 +1,5 @@
 <template>
-  <el-dialog :model-value="modelValue" title="Convite de instalação" width="720px" align-center :close-on-click-modal="false"
+  <el-dialog :model-value="modelValue" title="Convite de instalação" width="720px" align-center class="nx-scroll" :close-on-click-modal="false"
              @update:model-value="$emit('update:modelValue', $event)" @opened="load">
     <el-alert v-if="loaded && !release" type="warning" show-icon :closable="false" class="nx-add-alert"
               title="Nenhuma versão está publicada para todos."

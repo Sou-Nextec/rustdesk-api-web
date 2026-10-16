@@ -2,6 +2,13 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.49
+
+Diálogo de convite que não cabia na tela e aviso "Abrindo o aplicativo".
+
+- **Convite de instalação:** quando o convite criado deixava o diálogo mais alto que a janela, o título e o X saíam da tela e não dava para fechar. Agora só o **corpo rola**, com o título e o X sempre à vista.
+- **Avisos de andamento** ("Abrindo o Nextec Connect...", "Baixando Nextec Connect..."): deixam de ser a caixa cinza com "i", que parecia erro. Passam a usar o lilás da marca com um ícone girando e o link em roxo.
+
 ## 2.11.48
 
 Suporte rápido mais simples e máquina offline não é "agente parado".
