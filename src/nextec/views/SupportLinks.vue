@@ -47,12 +47,15 @@
         </div>
         <el-tag :type="tone(row.status)" size="small" disable-transitions>{{ statusLabel(row) }}</el-tag>
         <div class="nx-sl-actions">
-          <el-button v-if="row.status === 'connected' && row.peer_id" size="small" type="primary" @click="connectDevice(row.peer_id)">Conectar</el-button>
+          <el-button v-if="queueEnabled && row.status === 'connected' && row.peer_id" size="small" type="primary" @click="connectDevice(row.peer_id)">Conectar</el-button>
           <el-button v-if="canCopy(row)" size="small" @click="copy(linkOf(row), 'Link copiado.')">Copiar link</el-button>
           <el-button v-if="canRevoke(row)" size="small" @click="revoke(row)"><span class="nx-danger-text">Cancelar</span></el-button>
         </div>
       </li>
     </ul>
+    <p v-if="loaded && rows.length && !queueEnabled" class="nx-sl-hint" role="status">
+      A fila de atendimento não está liberada para a sua conta, então as máquinas não aparecem associadas aos links. Peça a um administrador para conectar.
+    </p>
   </section>
 </template>
 
@@ -66,6 +69,7 @@
   const rows = ref([])
   const loaded = ref(false)
   const hasApp = ref(true)
+  const queueEnabled = ref(true)
   const creating = ref(false)
   const error = ref('')
   const fresh = ref(null)
@@ -95,6 +99,7 @@
     if (res && res.data) {
       rows.value = res.data.list || []
       hasApp.value = res.data.has_app !== false
+      queueEnabled.value = res.data.queue_enabled !== false
     }
     loaded.value = true
   }
@@ -147,6 +152,7 @@
   .nx-sl-fresh { display: flex; justify-content: space-between; align-items: center; gap: 12px 16px; flex-wrap: wrap; margin: 0 22px 14px; padding: 14px 16px; border-radius: 14px; background: var(--nx-tint, #E9DDFF); }
   .nx-sl-fresh-text { min-width: 0; display: grid; gap: 4px; strong { color: var(--nx-text); } code { overflow-wrap: anywhere; font-size: 13px; } }
   .nx-sl-actions { display: flex; gap: 8px; flex-wrap: wrap; .el-button { margin: 0; } }
+  .nx-sl-hint { margin: 0; padding: 4px 22px 12px; font-size: 12.5px; line-height: 1.5; color: var(--nx-text-muted); }
   .nx-sl-list { list-style: none; margin: 0; padding: 0 22px 14px; display: grid; gap: 8px; }
   .nx-sl-list li { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; padding: 10px 12px; border-radius: 12px; background: var(--nx-field); }
   .nx-sl-main { flex: 1 1 220px; min-width: 0; display: grid; gap: 2px; strong { color: var(--nx-text); overflow-wrap: anywhere; } }

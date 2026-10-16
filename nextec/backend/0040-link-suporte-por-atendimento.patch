@@ -1,6 +1,6 @@
 Link de suporte por atendimento (/s/<token>) e associacao da maquina que abre o app
 
-Nextec 0040: o tecnico cria um link para um cliente ou chamado (validade de 15 min a 72 h, padrao 2 h). A pagina
+Nextec 0040: o tecnico cria um link para um cliente ou chamado (validade de 1 a 24 h, padrao 2 h). A pagina
 publica /s/<token> entrega o app de suporte e registra o IP/hora do download; a maquina nova que aparece em
 Aguardando atendimento e associada ao link pelo IP (matched_by=ip) ou, se for inequivoco, pelo horario
 (matched_by=time). Rotas: GET/POST /my/support/links, POST /my/support/links/revoke, GET /s/:token e
@@ -8,10 +8,10 @@ Aguardando atendimento e associada ao link pelo IP (matched_by=ip) ou, se for in
 
 diff --git a/http/controller/admin/my/nextec_support_links.go b/http/controller/admin/my/nextec_support_links.go
 new file mode 100644
-index 0000000..68d5453
+index 0000000..9e4c0cd
 --- /dev/null
 +++ b/http/controller/admin/my/nextec_support_links.go
-@@ -0,0 +1,90 @@
+@@ -0,0 +1,92 @@
 +package my
 +
 +import (
@@ -52,12 +52,14 @@ index 0000000..68d5453
 +	if u != nil && !service.AllService.UserService.IsAdmin(u) {
 +		owner = u.Username
 +	}
-+	links, err := service.NextecSupportLinkList(owner)
++	// A associação com máquinas segue a mesma política da fila (patch 0014): desligada ou só administradores.
++	queue := service.NextecWaitingAllowed(u)
++	links, err := service.NextecSupportLinkList(owner, queue)
 +	if err != nil {
 +		response.Fail(c, 101, "Não foi possível listar os links.")
 +		return
 +	}
-+	response.Success(c, &gin.H{"list": links, "has_app": service.NextecSupportAppGet() != nil})
++	response.Success(c, &gin.H{"list": links, "has_app": service.NextecSupportAppGet() != nil, "queue_enabled": queue})
 +}
 +
 +// Create cria um link por atendimento
@@ -216,10 +218,10 @@ index 0000000..900ce91
 +}
 diff --git a/service/nextec_support_link.go b/service/nextec_support_link.go
 new file mode 100644
-index 0000000..d1324da
+index 0000000..57eb10a
 --- /dev/null
 +++ b/service/nextec_support_link.go
-@@ -0,0 +1,259 @@
+@@ -0,0 +1,303 @@
 +package service
 +
 +import (
@@ -240,8 +242,8 @@ index 0000000..d1324da
 +const (
 +	nextecSupportLinkAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" // sem 0, 1, I, O: ditado por telefone sem erro
 +	nextecSupportLinkLen      = 8
-+	nextecSupportLinkMinTTL   = 15 * time.Minute
-+	nextecSupportLinkMaxTTL   = 72 * time.Hour
++	nextecSupportLinkMinTTL   = 1 * time.Hour
++	nextecSupportLinkMaxTTL   = 24 * time.Hour
 +	nextecSupportLinkDefTTL   = 2 * time.Hour
 +	nextecSupportLinkWindow   = int64(2 * 3600) // associa downloads das últimas 2 horas
 +	nextecSupportLinkList     = 50
@@ -251,6 +253,7 @@ index 0000000..d1324da
 +	ErrNextecSupportLinkLabel  = errors.New("Informe o cliente ou o chamado (até 120 caracteres).")
 +	ErrNextecSupportLinkTicket = errors.New("Chamado inválido. Use letras, números, hífen ou sublinhado (até 40 caracteres).")
 +	ErrNextecSupportLinkNone   = errors.New("Link não encontrado.")
++	ErrNextecSupportLinkTTL    = errors.New("A validade deve ficar entre 1 e 24 horas.")
 +
 +	nextecSupportLinkTokenRe  = regexp.MustCompile("^[A-HJ-NP-Z2-9]{8}$")
 +	nextecSupportLinkTicketRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$`)
@@ -285,7 +288,7 @@ index 0000000..d1324da
 +	return string(out), nil
 +}
 +
-+// NextecSupportLinkCreate cria o link. ttl fora de 15 min a 72 h vira o padrão de 2 horas.
++// NextecSupportLinkCreate cria o link. ttl zero vale o padrão de 2 horas; fora de 1 a 24 horas é recusado.
 +func NextecSupportLinkCreate(u *model.User, label, ticket string, ttl time.Duration) (*model.NextecSupportLink, error) {
 +	label = strings.TrimSpace(label)
 +	ticket = strings.TrimSpace(ticket)
@@ -295,8 +298,11 @@ index 0000000..d1324da
 +	if ticket != "" && !nextecSupportLinkTicketRe.MatchString(ticket) {
 +		return nil, ErrNextecSupportLinkTicket
 +	}
-+	if ttl < nextecSupportLinkMinTTL || ttl > nextecSupportLinkMaxTTL {
++	if ttl == 0 {
 +		ttl = nextecSupportLinkDefTTL
++	}
++	if ttl < nextecSupportLinkMinTTL || ttl > nextecSupportLinkMaxTTL {
++		return nil, ErrNextecSupportLinkTTL
 +	}
 +	if err := supportLinksReady(); err != nil {
 +		return nil, err
@@ -366,13 +372,14 @@ index 0000000..d1324da
 +	return nil
 +}
 +
-+// nextecSupportLinkMatch associa links baixados recentemente às máquinas novas que estão online agora.
-+// Primeiro pelo IP (o mesmo do download); se o IP não coincidir (proxy, rede móvel) e houver exatamente um link e uma
-+// máquina livres na janela, associa pelo horário e marca matched_by = "time".
++// nextecSupportLinkMatch associa links válidos baixados recentemente às máquinas novas que estão online agora.
++// Só associa quando a correspondência é inequívoca: pelo IP, exatamente um link e uma máquina livre com aquele IP
++// (duas máquinas atrás do mesmo NAT ficam pendentes); senão, pelo horário, exatamente um link e uma máquina livres
++// (matched_by = "time"). Link vencido ou cancelado nunca consome uma máquina.
 +func nextecSupportLinkMatch() {
 +	now := time.Now().Unix()
 +	var links []model.NextecSupportLink
-+	DB.Where("downloaded_at > ? AND peer_id = '' AND revoked = ?", now-nextecSupportLinkWindow, false).
++	DB.Where("downloaded_at > ? AND peer_id = '' AND revoked = ? AND expires_at > ?", now-nextecSupportLinkWindow, false, now).
 +		Order("downloaded_at asc").Find(&links)
 +	if len(links) == 0 {
 +		return
@@ -394,38 +401,58 @@ index 0000000..d1324da
 +		}
 +		free = append(free, p)
 +	}
++	assigned := map[uint]bool{}
 +	assign := func(link *model.NextecSupportLink, peer *model.Peer, how string) {
-+		DB.Model(&model.NextecSupportLink{}).Where("id = ? AND peer_id = ''", link.Id).
++		res := DB.Model(&model.NextecSupportLink{}).Where("id = ? AND peer_id = ''", link.Id).
 +			Updates(map[string]interface{}{"peer_id": peer.Id, "matched_by": how})
-+		used[peer.Id] = true
-+		link.PeerId = peer.Id
++		if res.Error == nil && res.RowsAffected > 0 {
++			used[peer.Id] = true
++			assigned[link.Id] = true
++		}
 +	}
++	createdAfter := func(p *model.Peer, l *model.NextecSupportLink) bool {
++		return time.Time(p.CreatedAt).Unix() >= l.DownloadedAt-60
++	}
++
++	// 1) pelo IP, só quando há um único link e uma única máquina livre com aquele IP
++	byIP := map[string][]*model.NextecSupportLink{}
 +	for i := range links {
-+		link := &links[i]
-+		if link.DownloadIP == "" {
++		if links[i].DownloadIP != "" {
++			byIP[links[i].DownloadIP] = append(byIP[links[i].DownloadIP], &links[i])
++		}
++	}
++	for ip, group := range byIP {
++		if len(group) != 1 {
 +			continue
 +		}
++		var candidates []*model.Peer
 +		for _, p := range free {
-+			// a máquina precisa ter sido criada depois do download (com 1 minuto de folga)
-+			if !used[p.Id] && p.LastOnlineIp == link.DownloadIP && time.Time(p.CreatedAt).Unix() >= link.DownloadedAt-60 {
-+				assign(link, p, "ip")
-+				break
++			if !used[p.Id] && p.LastOnlineIp == ip && createdAfter(p, group[0]) {
++				candidates = append(candidates, p)
 +			}
 +		}
++		if len(candidates) == 1 {
++			assign(group[0], candidates[0], "ip")
++		}
 +	}
++
++	// 2) pelo horário, só quando sobrou exatamente um link e exatamente uma máquina livre
 +	var pendingLinks []*model.NextecSupportLink
 +	for i := range links {
-+		if links[i].PeerId == "" {
++		if !assigned[links[i].Id] {
 +			pendingLinks = append(pendingLinks, &links[i])
 +		}
 +	}
++	if len(pendingLinks) != 1 {
++		return
++	}
 +	var freePeers []*model.Peer
 +	for _, p := range free {
-+		if !used[p.Id] && time.Time(p.CreatedAt).Unix() >= now-nextecSupportLinkWindow {
++		if !used[p.Id] && createdAfter(p, pendingLinks[0]) {
 +			freePeers = append(freePeers, p)
 +		}
 +	}
-+	if len(pendingLinks) == 1 && len(freePeers) == 1 && time.Time(freePeers[0].CreatedAt).Unix() >= pendingLinks[0].DownloadedAt-60 {
++	if len(freePeers) == 1 {
 +		assign(pendingLinks[0], freePeers[0], "time")
 +	}
 +}
@@ -438,12 +465,15 @@ index 0000000..d1324da
 +	Online   bool   `json:"online"`
 +}
 +
-+// NextecSupportLinkList lista os links recentes (do usuário; admin vê todos), já com a associação atualizada.
-+func NextecSupportLinkList(owner string) ([]NextecSupportLinkView, error) {
++// NextecSupportLinkList lista os links recentes (do usuário; admin vê todos). withPeers é a política da fila
++// "Aguardando atendimento" (NextecWaitingAllowed): sem ela não se associa nem se expõe nenhuma máquina.
++func NextecSupportLinkList(owner string, withPeers bool) ([]NextecSupportLinkView, error) {
 +	if err := supportLinksReady(); err != nil {
 +		return nil, err
 +	}
-+	nextecSupportLinkMatch()
++	if withPeers {
++		nextecSupportLinkMatch()
++	}
 +	var links []model.NextecSupportLink
 +	q := DB.Order("id desc").Limit(nextecSupportLinkList)
 +	if owner != "" {
@@ -453,8 +483,27 @@ index 0000000..d1324da
 +		return nil, err
 +	}
 +	now := time.Now().Unix()
++	peerByID := map[string]*model.Peer{}
++	if withPeers {
++		var ids []string
++		for _, l := range links {
++			if l.PeerId != "" {
++				ids = append(ids, l.PeerId)
++			}
++		}
++		if len(ids) > 0 {
++			var peers []*model.Peer
++			DB.Where("id IN ?", ids).Find(&peers)
++			for _, p := range peers {
++				peerByID[p.Id] = p
++			}
++		}
++	}
 +	out := make([]NextecSupportLinkView, 0, len(links))
 +	for _, l := range links {
++		if !withPeers {
++			l.PeerId, l.MatchedBy = "", ""
++		}
 +		v := NextecSupportLinkView{NextecSupportLink: l}
 +		switch {
 +		case l.Revoked:
@@ -468,12 +517,9 @@ index 0000000..d1324da
 +		default:
 +			v.Status = "waiting"
 +		}
-+		if l.PeerId != "" {
-+			p := &model.Peer{}
-+			if DB.Where("id = ?", l.PeerId).First(p).Error == nil {
-+				v.PeerName = p.Hostname
-+				v.Online = p.LastOnlineTime >= now-nextecWaitingOnlineSecs
-+			}
++		if p := peerByID[l.PeerId]; p != nil {
++			v.PeerName = p.Hostname
++			v.Online = p.LastOnlineTime >= now-nextecWaitingOnlineSecs
 +		}
 +		out = append(out, v)
 +	}
@@ -481,10 +527,10 @@ index 0000000..d1324da
 +}
 diff --git a/service/nextec_support_link_test.go b/service/nextec_support_link_test.go
 new file mode 100644
-index 0000000..5c75e24
+index 0000000..29902b8
 --- /dev/null
 +++ b/service/nextec_support_link_test.go
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,219 @@
 +package service
 +
 +import (
@@ -529,8 +575,16 @@ index 0000000..5c75e24
 +	if NextecSupportLinkByToken("ZZZZZZZZ") != nil || NextecSupportLinkByToken("../etc") != nil {
 +		t.Fatal("token inexistente ou invalido resolveu")
 +	}
-+	if l2, _ := NextecSupportLinkCreate(nil, "X", "", 10*time.Second); l2 == nil || l2.ExpiresAt-l2.CreatedAt != int64(nextecSupportLinkDefTTL/time.Second) {
-+		t.Fatal("ttl fora da faixa deveria virar o padrao")
++	if l2, err := NextecSupportLinkCreate(nil, "X", "", 0); err != nil || l2.ExpiresAt-l2.CreatedAt != int64(nextecSupportLinkDefTTL/time.Second) {
++		t.Fatal("ttl zero deveria virar o padrao de 2 horas")
++	}
++	for _, bad := range []time.Duration{10 * time.Second, 30 * time.Minute, 25 * time.Hour, 72 * time.Hour} {
++		if _, err := NextecSupportLinkCreate(nil, "X", "", bad); err != ErrNextecSupportLinkTTL {
++			t.Fatalf("validade %v deveria ser recusada: %v", bad, err)
++		}
++	}
++	if l3, err := NextecSupportLinkCreate(nil, "X", "", 24*time.Hour); err != nil || l3 == nil {
++		t.Fatalf("24 horas deveria valer: %v", err)
 +	}
 +}
 +
@@ -568,7 +622,7 @@ index 0000000..5c75e24
 +	NextecSupportLinkMarkDownload(b.Id, "200.2.2.2")
 +	mk("111111111", "200.2.2.2")
 +	mk("222222222", "200.1.1.1")
-+	views, err := NextecSupportLinkList("")
++	views, err := NextecSupportLinkList("", true)
 +	if err != nil {
 +		t.Fatal(err)
 +	}
@@ -589,7 +643,7 @@ index 0000000..5c75e24
 +	l, _ := NextecSupportLinkCreate(nil, "Cliente C", "", time.Hour)
 +	NextecSupportLinkMarkDownload(l.Id, "200.9.9.9")
 +	supportTestPeer(t, db, "333333333", "10.0.0.5")
-+	views, _ := NextecSupportLinkList("")
++	views, _ := NextecSupportLinkList("", true)
 +	if len(views) != 1 || views[0].PeerId != "333333333" || views[0].MatchedBy != "time" || views[0].Status != "connected" {
 +		t.Fatalf("fallback por horario: %#v", views)
 +	}
@@ -599,11 +653,101 @@ index 0000000..5c75e24
 +	for _, id := range []string{"444444444", "555555555"} {
 +		supportTestPeer(t, db, id, "10.0.0.9")
 +	}
-+	views, _ = NextecSupportLinkList("")
++	views, _ = NextecSupportLinkList("", true)
 +	for _, v := range views {
 +		if v.Label == "Cliente D" && v.PeerId != "" {
 +			t.Fatalf("associou de forma ambigua: %#v", v)
 +		}
++	}
++}
++
++// Duas máquinas atrás do mesmo NAT (mesmo IP) e dois links baixados do mesmo IP: nada é associado por palpite,
++// qualquer que seja a ordem dos heartbeats.
++func TestSupportLinkSameIPTwoLinksTwoPeersStayPending(t *testing.T) {
++	db := securityDB(t)
++	if err := db.AutoMigrate(&model.Peer{}); err != nil {
++		t.Fatal(err)
++	}
++	a, _ := NextecSupportLinkCreate(nil, "Cliente A", "", time.Hour)
++	b, _ := NextecSupportLinkCreate(nil, "Cliente B", "", time.Hour)
++	NextecSupportLinkMarkDownload(a.Id, "200.7.7.7")
++	NextecSupportLinkMarkDownload(b.Id, "200.7.7.7")
++	supportTestPeer(t, db, "666666666", "200.7.7.7")
++	supportTestPeer(t, db, "777777777", "200.7.7.7")
++	db.Model(&model.Peer{}).Where("id = ?", "666666666").Update("last_online_time", time.Now().Unix()-30)
++	views, err := NextecSupportLinkList("", true)
++	if err != nil {
++		t.Fatal(err)
++	}
++	for _, v := range views {
++		if v.PeerId != "" {
++			t.Fatalf("associou por palpite com IP compartilhado: %#v", v)
++		}
++	}
++	// um link, duas máquinas livres com o mesmo IP: também fica pendente
++	db.Model(&model.NextecSupportLink{}).Where("id = ?", b.Id).Update("revoked", true)
++	views, _ = NextecSupportLinkList("", true)
++	for _, v := range views {
++		if v.PeerId != "" {
++			t.Fatalf("um link com duas maquinas do mesmo IP deveria ficar pendente: %#v", v)
++		}
++	}
++}
++
++// Link vencido nunca consome a máquina de um atendimento ativo.
++func TestSupportLinkExpiredDoesNotConsumeActivePeer(t *testing.T) {
++	db := securityDB(t)
++	if err := db.AutoMigrate(&model.Peer{}); err != nil {
++		t.Fatal(err)
++	}
++	old, _ := NextecSupportLinkCreate(nil, "Antigo", "", time.Hour)
++	NextecSupportLinkMarkDownload(old.Id, "200.5.5.5")
++	db.Model(&model.NextecSupportLink{}).Where("id = ?", old.Id).Update("expires_at", time.Now().Unix()-1)
++	active, _ := NextecSupportLinkCreate(nil, "Ativo", "", time.Hour)
++	NextecSupportLinkMarkDownload(active.Id, "200.5.5.5")
++	supportTestPeer(t, db, "888888888", "200.5.5.5")
++	views, err := NextecSupportLinkList("", true)
++	if err != nil {
++		t.Fatal(err)
++	}
++	for _, v := range views {
++		switch v.Label {
++		case "Antigo":
++			if v.PeerId != "" || v.Status != "expired" {
++				t.Fatalf("link vencido associado: %#v", v)
++			}
++		case "Ativo":
++			if v.PeerId != "888888888" || v.MatchedBy != "ip" {
++				t.Fatalf("link ativo deveria receber a maquina: %#v", v)
++			}
++		}
++	}
++}
++
++// Sem permissão para a fila (patch 0014), a listagem não associa nem expõe máquina alguma.
++func TestSupportLinkListHidesPeersWhenQueueNotAllowed(t *testing.T) {
++	db := securityDB(t)
++	if err := db.AutoMigrate(&model.Peer{}); err != nil {
++		t.Fatal(err)
++	}
++	l, _ := NextecSupportLinkCreate(&model.User{Username: "ana"}, "Cliente E", "", time.Hour)
++	NextecSupportLinkMarkDownload(l.Id, "200.4.4.4")
++	supportTestPeer(t, db, "999999999", "200.4.4.4")
++	views, err := NextecSupportLinkList("ana", false)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if len(views) != 1 || views[0].PeerId != "" || views[0].PeerName != "" || views[0].Online || views[0].Status != "downloaded" {
++		t.Fatalf("expos maquina sem permissao da fila: %#v", views)
++	}
++	var stored model.NextecSupportLink
++	db.First(&stored, l.Id)
++	if stored.PeerId != "" {
++		t.Fatalf("associou sem permissao da fila: %#v", stored)
++	}
++	views, _ = NextecSupportLinkList("ana", true)
++	if views[0].PeerId != "999999999" {
++		t.Fatalf("com permissao deveria associar: %#v", views[0])
 +	}
 +}
 diff --git a/http/router/admin.go b/http/router/admin.go
