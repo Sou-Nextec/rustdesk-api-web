@@ -31,9 +31,18 @@
             </el-dropdown-menu>
           </template>
         </el-dropdown>
-        <el-button type="primary" @click="addVisible = true">
-          <el-icon><el-icon-Plus/></el-icon><span>Adicionar</span>
-        </el-button>
+        <el-dropdown trigger="click" @command="onAdd">
+          <el-button type="primary">
+            <el-icon><el-icon-Plus/></el-icon><span>Adicionar</span><el-icon class="el-icon--right"><el-icon-ArrowDown/></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="quick">Suporte rápido</el-dropdown-item>
+              <el-dropdown-item command="invite">Convite de instalação</el-dropdown-item>
+              <el-dropdown-item command="manual" divided>Cadastrar pelo ID</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
       </div>
     </div>
 
@@ -142,7 +151,8 @@
     </div>
 
     <!-- editar / adicionar -->
-    <AddDeviceDialog v-model="addVisible" :clients="groups" @manual="openForm()"/>
+    <SupportQuickDialog v-model="quickVisible" />
+    <InviteDialog v-model="addVisible" :clients="groups" />
 
     <el-dialog v-model="form.visible" :title="form.data.row_id ? 'Editar dispositivo' : 'Adicionar dispositivo'" width="640px">
       <el-form label-position="top" class="nx-form" @submit.prevent>
@@ -289,7 +299,8 @@
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { batchRemove, create, list, remove, update } from '@/api/peer'
   import { list as groupList } from '@/api/device_group'
-  import AddDeviceDialog from '@/nextec/views/AddDeviceDialog.vue'
+  import InviteDialog from '@/nextec/views/InviteDialog.vue'
+  import SupportQuickDialog from '@/nextec/views/SupportQuickDialog.vue'
   import { batchCreateFromPeers } from '@/api/address_book'
   import { list as collectionList } from '@/api/address_book_collection'
   import { loadAllUsers } from '@/global'
@@ -308,6 +319,12 @@
   const all = ref([])
   const groups = ref([])
   const addVisible = ref(false)
+  const quickVisible = ref(false)
+  const onAdd = (command) => {
+    if (command === 'quick') quickVisible.value = true
+    else if (command === 'invite') addVisible.value = true
+    else openForm()
+  }
   const loading = ref(false)
   const load = async () => {
     loading.value = true

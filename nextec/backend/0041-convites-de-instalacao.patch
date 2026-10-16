@@ -337,10 +337,10 @@ index 0000000..8669742
 +}
 diff --git a/service/nextec_install_invite.go b/service/nextec_install_invite.go
 new file mode 100644
-index 0000000..390a369
+index 0000000..d7fa036
 --- /dev/null
 +++ b/service/nextec_install_invite.go
-@@ -0,0 +1,467 @@
+@@ -0,0 +1,475 @@
 +package service
 +
 +import (
@@ -374,7 +374,7 @@ index 0000000..390a369
 +
 +var (
 +	ErrNextecInviteInvalid = errors.New("Convite inválido, vencido, cancelado ou já usado.")
-+	ErrNextecInviteLabel   = errors.New("Informe o cliente ou a descrição do convite (até 120 caracteres).")
++	ErrNextecInviteLabel   = errors.New("A descrição do convite pode ter até 120 caracteres.")
 +	ErrNextecInviteAlias   = errors.New("Apelido inválido. Use letras, números, espaço, ponto, hífen ou sublinhado (até 64 caracteres).")
 +	ErrNextecInviteClient  = errors.New("Escolha um cliente existente.")
 +	ErrNextecInviteKind    = errors.New("Tipo inválido. Use servidor ou estação.")
@@ -444,7 +444,7 @@ index 0000000..390a369
 +	if in.Version == "" || len(in.Version) > 32 {
 +		return ErrNextecInviteRelease
 +	}
-+	if in.Label == "" || len([]rune(in.Label)) > 120 {
++	if len([]rune(in.Label)) > 120 {
 +		return ErrNextecInviteLabel
 +	}
 +	if in.Alias != "" && !nextecInviteAliasRe.MatchString(in.Alias) {
@@ -496,6 +496,14 @@ index 0000000..390a369
 +	if in.ClientID == 0 || tx.First(&group, in.ClientID).Error != nil || group.Id == 0 {
 +		return nil, ErrNextecInviteClient
 +	}
++	// descrição é opcional: sem ela vale o apelido e, sem apelido, o nome do cliente
++	label := in.Label
++	if label == "" {
++		label = in.Alias
++	}
++	if label == "" {
++		label = group.Name
++	}
 +	rule := "none"
 +	if in.AutoPassword {
 +		rule = "peer"
@@ -511,7 +519,7 @@ index 0000000..390a369
 +			return nil, err
 +		}
 +		inv := &model.NextecInstallInvite{
-+			CodeHash: sha256Hex(code), CodeEnc: enc, Hint: code[len(code)-4:], Label: in.Label, Alias: in.Alias,
++			CodeHash: sha256Hex(code), CodeEnc: enc, Hint: code[len(code)-4:], Label: label, Alias: in.Alias,
 +			ClientId: in.ClientID, Kind: in.Kind, Rule: rule, Interval: in.Interval, Mode: in.Mode, MaxUses: in.MaxUses, Version: in.Version,
 +			ExpiresAt: now.Add(in.TTL).Unix(), CreatedBy: creator, CreatedAt: now.Unix(),
 +		}
@@ -810,10 +818,10 @@ index 0000000..390a369
 +}
 diff --git a/service/nextec_install_invite_test.go b/service/nextec_install_invite_test.go
 new file mode 100644
-index 0000000..a372c0f
+index 0000000..4336b70
 --- /dev/null
 +++ b/service/nextec_install_invite_test.go
-@@ -0,0 +1,251 @@
+@@ -0,0 +1,261 @@
 +package service
 +
 +import (
@@ -843,9 +851,19 @@ index 0000000..a372c0f
 +func TestInviteCreateValidatesAndCodeIsLongAndStoredHashed(t *testing.T) {
 +	enrollSetup(t)
 +	bad := inviteBase()
-+	bad.Label = " "
++	bad.Label = strings.Repeat("a", 121)
 +	if _, err := NextecInviteCreate(nil, bad); err != ErrNextecInviteLabel {
 +		t.Fatalf("label: %v", err)
++	}
++	// descrição é opcional: vale o apelido e, sem ele, o nome do cliente
++	noLabel := inviteBase()
++	noLabel.Label = " "
++	if c, err := NextecInviteCreate(nil, noLabel); err != nil || c.Invite.Label != "Servidor" {
++		t.Fatalf("sem descricao com apelido: %#v err=%v", c, err)
++	}
++	noLabel.Alias = ""
++	if c, err := NextecInviteCreate(nil, noLabel); err != nil || c.Invite.Label != "Cliente A" {
++		t.Fatalf("sem descricao e sem apelido: %#v err=%v", c, err)
 +	}
 +	bad = inviteBase()
 +	bad.ClientID = 99
@@ -880,7 +898,7 @@ index 0000000..a372c0f
 +		t.Fatalf("padroes: %#v", c.Invite)
 +	}
 +	views, err := NextecInviteList()
-+	if err != nil || len(views) != 1 || views[0].Code != c.Code || views[0].ClientName != "Cliente A" || views[0].Status != "active" {
++	if err != nil || len(views) != 3 || views[0].Code != c.Code || views[0].ClientName != "Cliente A" || views[0].Status != "active" {
 +		t.Fatalf("lista: %#v err=%v", views, err)
 +	}
 +}
@@ -1042,7 +1060,7 @@ index 0000000..a372c0f
 +	if err != nil || len(out) != 2 || out[0].Code == out[1].Code || out[0].Invite.MaxUses != 1 {
 +		t.Fatalf("lote: %#v err=%v", out, err)
 +	}
-+	if _, err := NextecInviteCreateBatch(nil, base, []NextecInviteBatchItem{{Label: "Ok"}, {Label: ""}}); err == nil || !strings.Contains(err.Error(), "linha 2") {
++	if _, err := NextecInviteCreateBatch(nil, base, []NextecInviteBatchItem{{Label: "Ok"}, {Label: "Ruim", Alias: "a/b"}}); err == nil || !strings.Contains(err.Error(), "linha 2") {
 +		t.Fatalf("linha invalida deveria falhar o lote: %v", err)
 +	}
 +	views, _ := NextecInviteList()
