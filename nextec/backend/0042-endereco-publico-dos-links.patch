@@ -1,0 +1,205 @@
+Endereco publico dos links (instalador e atendimento) configuravel no painel
+
+Nextec 0042: o administrador define o dominio publico dos links (ex.: https://suporte.nex.tec.br) em POST
+/nextec/support/public-url (vazio = endereco em que o painel foi aberto); qualquer usuario logado le o valor em GET
+/my/support/public-url para montar os links. Somente https://dominio (sem porta, caminho ou parametros). Novas rotas
+publicas: /instalador/:code[/baixar] e /atendimento/:token[/baixar] (mesmos handlers de /i e /s, que continuam).
+
+diff --git a/http/controller/admin/my/nextec_support_public.go b/http/controller/admin/my/nextec_support_public.go
+new file mode 100644
+index 0000000..2b5ee80
+--- /dev/null
++++ b/http/controller/admin/my/nextec_support_public.go
+@@ -0,0 +1,16 @@
++package my
++
++import (
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/http/response"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++)
++
++// NextecSupportPublic: endereço público dos links (qualquer usuário logado monta os links com ele; não é segredo).
++type NextecSupportPublic struct{}
++
++// Get devolve o endereço público configurado ("" = usar o endereço em que o painel foi aberto)
++// @Router /admin/my/support/public-url [get]
++func (n *NextecSupportPublic) Get(c *gin.Context) {
++	response.Success(c, &gin.H{"public_url": service.NextecSupportPublicURL()})
++}
+diff --git a/http/controller/admin/nextec_support_public_url.go b/http/controller/admin/nextec_support_public_url.go
+new file mode 100644
+index 0000000..715de37
+--- /dev/null
++++ b/http/controller/admin/nextec_support_public_url.go
+@@ -0,0 +1,28 @@
++package admin
++
++import (
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/http/response"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++)
++
++type nextecPublicURLForm struct {
++	PublicURL string `json:"public_url"`
++}
++
++// PublicURL define o endereço público dos links de instalador e atendimento (vazio = endereço do painel)
++// @Router /admin/nextec/support/public-url [post]
++func (n *NextecSupport) PublicURL(c *gin.Context) {
++	f := &nextecPublicURLForm{}
++	if err := c.ShouldBindJSON(f); err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError"))
++		return
++	}
++	value, err := service.NextecSupportPublicURLSet(f.PublicURL)
++	if err != nil {
++		response.Fail(c, 101, err.Error())
++		return
++	}
++	service.NextecSecretAuditAdd(service.AllService.UserService.CurUser(c), "", "support_public_url", nextecIP(c), value)
++	response.Success(c, &gin.H{"public_url": value})
++}
+diff --git a/service/nextec_support_public_url.go b/service/nextec_support_public_url.go
+new file mode 100644
+index 0000000..e4c0875
+--- /dev/null
++++ b/service/nextec_support_public_url.go
+@@ -0,0 +1,64 @@
++package service
++
++import (
++	"errors"
++	"net/url"
++	"regexp"
++	"strings"
++
++	"github.com/lejianwen/rustdesk-api/v2/global"
++)
++
++// Endereço público dos links de instalador (/instalador/<código>) e de atendimento (/atendimento/<código>).
++// O administrador define o domínio no painel (ex.: https://suporte.nex.tec.br); vazio = o endereço em que o painel foi aberto.
++// Só o domínio é configurável: os caminhos são fixos, para o proxy poder repassar apenas esses prefixos ao painel.
++
++const settingSupportPublicURL = "support_public_url"
++
++var (
++	ErrNextecPublicURL = errors.New("Endereço inválido. Use https://dominio, sem porta, caminho ou parâmetros (ex.: https://suporte.empresa.com.br).")
++
++	nextecPublicHostRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$`)
++)
++
++// NextecPublicURLNormalize valida e normaliza o endereço público. Vazio é válido (usa o endereço do painel).
++func NextecPublicURLNormalize(raw string) (string, error) {
++	raw = strings.TrimSpace(raw)
++	if raw == "" {
++		return "", nil
++	}
++	if len(raw) > 200 {
++		return "", ErrNextecPublicURL
++	}
++	u, err := url.Parse(raw)
++	if err != nil || u.Scheme != "https" || u.Opaque != "" || u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" ||
++		(u.Path != "" && u.Path != "/") || u.Port() != "" {
++		return "", ErrNextecPublicURL
++	}
++	host := strings.ToLower(u.Hostname())
++	if len(host) > 253 || !nextecPublicHostRe.MatchString(host) {
++		return "", ErrNextecPublicURL
++	}
++	return "https://" + host, nil
++}
++
++// NextecSupportPublicURL devolve o endereço público configurado ("" = usar o endereço em que o painel foi aberto).
++func NextecSupportPublicURL() string {
++	v, err := NextecPublicURLNormalize(global.NextecSettingGet(settingSupportPublicURL))
++	if err != nil {
++		return ""
++	}
++	return v
++}
++
++// NextecSupportPublicURLSet grava o endereço público (vazio limpa) e devolve o valor normalizado.
++func NextecSupportPublicURLSet(raw string) (string, error) {
++	v, err := NextecPublicURLNormalize(raw)
++	if err != nil {
++		return "", err
++	}
++	if err := global.NextecSettingSet(settingSupportPublicURL, v); err != nil {
++		return "", err
++	}
++	return v, nil
++}
+diff --git a/service/nextec_support_public_url_test.go b/service/nextec_support_public_url_test.go
+new file mode 100644
+index 0000000..a369985
+--- /dev/null
++++ b/service/nextec_support_public_url_test.go
+@@ -0,0 +1,29 @@
++package service
++
++import "testing"
++
++func TestNextecPublicURLNormalize(t *testing.T) {
++	ok := map[string]string{
++		"":                                "",
++		"   ":                             "",
++		"https://suporte.nex.tec.br":      "https://suporte.nex.tec.br",
++		"https://Suporte.Nex.Tec.br/":     "https://suporte.nex.tec.br",
++		"  https://suporte.nex.tec.br  ":  "https://suporte.nex.tec.br",
++		"https://a-b.exemplo.com.br":      "https://a-b.exemplo.com.br",
++	}
++	for in, want := range ok {
++		got, err := NextecPublicURLNormalize(in)
++		if err != nil || got != want {
++			t.Fatalf("%q: got %q err=%v, want %q", in, got, err, want)
++		}
++	}
++	for _, in := range []string{
++		"http://suporte.nex.tec.br", "suporte.nex.tec.br", "https://suporte.nex.tec.br/instalador", "https://suporte.nex.tec.br:8443",
++		"https://suporte.nex.tec.br?x=1", "https://suporte.nex.tec.br#a", "https://user:pw@suporte.nex.tec.br", "https://localhost",
++		"https://-ruim.nex.tec.br", "javascript:alert(1)", "https://a b.com", "//suporte.nex.tec.br",
++	} {
++		if got, err := NextecPublicURLNormalize(in); err == nil {
++			t.Fatalf("%q deveria ser recusado (veio %q)", in, got)
++		}
++	}
++}
+diff --git a/http/router/admin.go b/http/router/admin.go
+--- a/http/router/admin.go
++++ b/http/router/admin.go
+@@ -90,5 +90,6 @@ func NextecBind(adg *gin.RouterGroup) {
+ 	rg.POST("/support/delete", sup.Delete)
+ 	rg.POST("/support/settings", sup.Settings)
++	rg.POST("/support/public-url", sup.PublicURL)
+ 
+ 	inv := &admin.NextecInvites{}
+ 	rg.GET("/invites", inv.List)
+diff --git a/http/router/admin.go b/http/router/admin.go
+--- a/http/router/admin.go
++++ b/http/router/admin.go
+@@ -358,5 +358,9 @@ func MyBind(rg *gin.RouterGroup) {
+ 		rg.POST("/my/support/links", sl.Create)
+ 		rg.POST("/my/support/links/revoke", sl.Revoke)
++
++		// Nextec: endereço público dos links de instalador e atendimento
++		spu := &my.NextecSupportPublic{}
++		rg.GET("/my/support/public-url", spu.Get)
+ 
+ 		// Nextec: chamado informado ao conectar
+ 		note := &my.NextecNote{}
+diff --git a/http/router/api.go b/http/router/api.go
+--- a/http/router/api.go
++++ b/http/router/api.go
+@@ -33,5 +33,10 @@ func ApiInit(g *gin.Engine) {
+ 	g.GET("/i/:code", invp.Page)
+ 	g.GET("/i/:code/baixar", invp.Download)
++	// endereços do domínio de suporte (o proxy repassa só estes prefixos ao painel)
++	g.GET("/atendimento/:token", slp.Page)
++	g.GET("/atendimento/:token/baixar", slp.Download)
++	g.GET("/instalador/:code", invp.Page)
++	g.GET("/instalador/:code/baixar", invp.Download)
+ 
+ 	frg := g.Group("/api")
+ 

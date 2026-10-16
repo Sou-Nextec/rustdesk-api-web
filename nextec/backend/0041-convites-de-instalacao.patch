@@ -207,7 +207,7 @@ index 0000000..a9269b9
 +}
 diff --git a/http/controller/api/nextec_invite_public.go b/http/controller/api/nextec_invite_public.go
 new file mode 100644
-index 0000000..d1a1877
+index 0000000..702d575
 --- /dev/null
 +++ b/http/controller/api/nextec_invite_public.go
 @@ -0,0 +1,83 @@
@@ -231,7 +231,7 @@ index 0000000..d1a1877
 +const supportInvitePageReady = `<p class="eyebrow">Instalação</p>
 +<h1 id="titulo">Instalar o aplicativo Nextec</h1>
 +<p class="who">Instalação para <strong>{{WHO}}</strong></p>
-+<a class="btn" href="/i/{{CODE}}/baixar" download>
++<a class="btn" href="{{CODE}}/baixar" download>
 +<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/></svg>
 +Baixar o instalador</a>
 +<p class="meta">Para Windows 10 ou 11 &middot; versão {{VERSION}} &middot; {{SIZE}}</p>

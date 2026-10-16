@@ -2,13 +2,15 @@
 // O MSI sai com o código no nome (<app>-<código>.msi): é por esse nome que o instalador sabe de qual convite veio.
 // O comando confere o SHA-256 que já vai escrito nele (um painel adulterado não consegue trocar o arquivo) e só então instala.
 
+import { installerLinkUrl } from './public-links.mjs'
+
 const SAFE_NAME = /[^A-Za-z0-9._-]/g
 const CODE_RE = /^[A-HJ-NP-Z2-9]{20}$/
 const SHA_RE = /^[a-f0-9]{64}$/i
 
 export function inviteLink (origin, code) {
   if (!CODE_RE.test(code)) throw new Error('Código de convite inválido.')
-  return `${String(origin).replace(/\/+$/, '')}/i/${code}`
+  return installerLinkUrl(origin, code)
 }
 
 export function inviteFileName (fileName, code) {
