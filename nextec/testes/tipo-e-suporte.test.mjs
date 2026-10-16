@@ -12,6 +12,13 @@ test('tipo da versão vem do "Destinado a" declarado', () => {
   assert.equal(releaseKind({}).key, 'unknown')
 })
 
+test('tipo não registrado bloqueia disponibilizar até definir o tipo', () => {
+  const n = analystsDownloadNotice({ id: 5, version: '2.0.9' }, { id: 1, version: '2.0.7', profile: 'analysts' })
+  assert.equal(n.blocked, true)
+  assert.match(n.message, /Defina o tipo/)
+  assert.equal(analystsDownloadNotice({ id: 6, version: '2.4.0', profile: 'analysts' }, null).blocked, false)
+})
+
 test('confirmação de disponibilizar avisa a substituição e o tipo errado', () => {
   const current = { id: 1, version: '2.0.9', profile: 'analysts' }
   const clientApp = { id: 2, version: '2.3.6', profile: 'default', client_name: 'Cliente-Nextec-Connect' }

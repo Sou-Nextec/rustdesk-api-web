@@ -20,11 +20,16 @@ export function analystsDownloadNotice (row, current) {
     parts.push(`Ela substitui a versão ${label(current)}, que deixa de ser oferecida aos analistas.`)
   }
   parts.push('O protocolo do botão Conectar passa a seguir o nome deste arquivo, e ninguém é atualizado por isso (para atualizar máquinas, use Publicar).')
+  // Tipo não registrado: bloqueia. O servidor também recusa; o admin precisa definir o tipo antes.
+  if (kind.key === 'unknown') {
+    return {
+      title: 'Defina o tipo antes de disponibilizar', blocked: true, danger: true,
+      message: `A versão ${label(row)} foi enviada à mão e o tipo não foi registrado. Defina o tipo (Analistas ou Cliente padrão) antes de disponibilizá-la aos analistas.`,
+    }
+  }
   const danger = kind.key === 'default' || kind.key === 'client'
   if (danger) {
     parts.push('Atenção: esta versão NÃO foi gerada como "Analistas". Se ela é o cliente dos servidores (com agente de senha), não disponibilize aos analistas.')
-  } else if (kind.key === 'unknown') {
-    parts.push('O tipo desta versão não foi registrado (ela foi enviada à mão). Confirme que é o app dos analistas; depois use "Definir tipo" para registrar.')
   }
-  return { title: 'Disponibilizar aos analistas', message: parts.join('\n\n'), danger }
+  return { title: 'Disponibilizar aos analistas', message: parts.join('\n\n'), danger, blocked: false }
 }
