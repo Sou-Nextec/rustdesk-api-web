@@ -2,7 +2,7 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
-## 2.11.36
+## 2.11.38
 
 Suporte avulso: link por atendimento e página no tema claro.
 
@@ -11,6 +11,13 @@ Suporte avulso: link por atendimento e página no tema claro.
 - **Lista de links** com a situação (aguardando, baixado, na fila, vencido, cancelado), **Conectar** direto na máquina associada e **Cancelar**. Cada técnico vê os seus; administrador vê todos.
 - **Página pública no tema claro com a identidade do painel:** barra branca com a marca, cartão com cantos arredondados, roxo Nextec e fonte Open Sans.
 - **Patch 0040** (link por atendimento) e patch 0010 (página); o app e o consentimento não mudam: a pessoa continua precisando clicar em Aceitar.
+
+## 2.11.37
+
+Suporte avulso: publicar o app direto da tela.
+
+- **Escolha na própria tela:** sem app publicado, o cartão "Aplicativo de suporte" já lista os `.exe` gerados (os que parecem app de suporte primeiro) com **Usar este** e **Carregar mais**, sem abrir diálogo. "Prefiro enviar um arquivo .exe" continua disponível.
+- **Menos repetição:** a tela dizia três vezes que o app não foi enviado e um dos links apontava para a própria página. Agora há uma frase no topo, e a fila "Aguardando atendimento" não repete o alerta nem os botões de copiar.
 
 ## 2.11.35
 

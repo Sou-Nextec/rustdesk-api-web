@@ -6,12 +6,14 @@
         <p class="nx-sub">Quem abre o app de suporte aparece aqui na hora.</p>
       </div>
       <div class="nx-head-actions">
-        <el-button :disabled="!hasApp" @click="copy(link, 'Link copiado.')">Copiar link de suporte</el-button>
-        <el-button :disabled="!hasApp" type="primary" @click="copy(message, 'Mensagem copiada.')">Copiar mensagem</el-button>
+        <template v-if="!compact">
+          <el-button :disabled="!hasApp" @click="copy(link, 'Link copiado.')">Copiar link de suporte</el-button>
+          <el-button :disabled="!hasApp" type="primary" @click="copy(message, 'Mensagem copiada.')">Copiar mensagem</el-button>
+        </template>
       </div>
     </div>
 
-    <el-alert v-if="loaded && !hasApp" type="warning" show-icon :closable="false" class="nx-alert"
+    <el-alert v-if="loaded && !hasApp && !compact" type="warning" show-icon :closable="false" class="nx-alert"
               title="O app de suporte ainda não foi enviado.">
       <template #default>
         <router-link v-if="isAdmin" to="/user/support" class="nx-link">Enviar o app em Dispositivos &gt; Suporte avulso</router-link>
@@ -46,6 +48,8 @@
   import { connectDevice } from '@/nextec/connect'
   import { supportWaiting } from '@/nextec/api'
 
+  // compact: sem o alerta de "app não enviado" e sem os botões de copiar (a tela de Suporte avulso já mostra os dois).
+  defineProps({ compact: { type: Boolean, default: false } })
   const userStore = useUserStore()
   const isAdmin = computed(() => (userStore.route_names || []).includes('*'))
   const list = ref([])
