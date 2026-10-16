@@ -86,6 +86,8 @@ export const connectScheme = () => request({ url: '/nextec/connect-scheme' })
 export const connectSchemeSave = (scheme) => request({ url: '/nextec/connect-scheme', method: 'post', data: { scheme } })
 export const connectNote = (id, ticket, note) => request({ url: '/my/connect-note', method: 'post', data: { id, ticket, note } })
 export const supportSettings = (waiting_mode) => request({ url: '/nextec/support/settings', method: 'post', data: { waiting_mode } })
+export const supportPublicUrl = () => request({ url: '/my/support/public-url' })
+export const supportPublicUrlSave = (public_url) => request({ url: '/nextec/support/public-url', method: 'post', data: { public_url } })
 
 // patch 0031: inscrição global (a máquina se inscreve sozinha como pendente; o admin atribui a um cliente)
 export const secretsAssign = (data) => request({ url: '/nextec/secrets/assign', method: 'post', data })
