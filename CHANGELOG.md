@@ -2,6 +2,16 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.36
+
+Suporte avulso: link por atendimento e página no tema claro.
+
+- **Link por atendimento:** em Suporte avulso, "Link por atendimento" cria um link para cada cliente ou chamado (validade de 1 a 24 horas). A pessoa abre `/s/<código>`, vê "Atendimento para <cliente>" e baixa o app. O código usa só letras e números fáceis de ditar por telefone.
+- **A máquina aparece identificada:** quando o app abre, a máquina que entra em "Aguardando atendimento" é associada ao link pelo IP e pelo horário do download. Se o IP não bater e houver só um link e uma máquina possíveis, associa pelo horário e mostra "(provável)". Em caso de dúvida (duas máquinas para um link), não associa.
+- **Lista de links** com a situação (aguardando, baixado, na fila, vencido, cancelado), **Conectar** direto na máquina associada e **Cancelar**. Cada técnico vê os seus; administrador vê todos.
+- **Página pública no tema claro com a identidade do painel:** barra branca com a marca, cartão com cantos arredondados, roxo Nextec e fonte Open Sans.
+- **Patch 0040** (link por atendimento) e patch 0010 (página); o app e o consentimento não mudam: a pessoa continua precisando clicar em Aceitar.
+
 ## 2.11.35
 
 Página pública de suporte (`/suporte`) com a identidade da Nextec.

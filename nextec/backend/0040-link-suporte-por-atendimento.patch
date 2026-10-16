@@ -1,0 +1,638 @@
+Link de suporte por atendimento (/s/<token>) e associacao da maquina que abre o app
+
+Nextec 0040: o tecnico cria um link para um cliente ou chamado (validade de 15 min a 72 h, padrao 2 h). A pagina
+publica /s/<token> entrega o app de suporte e registra o IP/hora do download; a maquina nova que aparece em
+Aguardando atendimento e associada ao link pelo IP (matched_by=ip) ou, se for inequivoco, pelo horario
+(matched_by=time). Rotas: GET/POST /my/support/links, POST /my/support/links/revoke, GET /s/:token e
+/s/:token/baixar. Tabela criada na primeira utilizacao (AutoMigrate).
+
+diff --git a/http/controller/admin/my/nextec_support_links.go b/http/controller/admin/my/nextec_support_links.go
+new file mode 100644
+index 0000000..68d5453
+--- /dev/null
++++ b/http/controller/admin/my/nextec_support_links.go
+@@ -0,0 +1,90 @@
++package my
++
++import (
++	"fmt"
++	"strings"
++	"time"
++
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/http/response"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++)
++
++// NextecSupportLinks: links de suporte por atendimento. Qualquer usuário logado cria e vê os seus; administrador vê todos.
++type NextecSupportLinks struct{}
++
++type nextecSupportLinkForm struct {
++	Label  string `json:"label"`
++	Ticket string `json:"ticket"`
++	Hours  int    `json:"hours"`
++}
++
++type nextecSupportLinkRevokeForm struct {
++	Id uint `json:"id" binding:"required"`
++}
++
++func nextecSupportLinkIP(c *gin.Context) string {
++	if ip := c.GetHeader("CF-Connecting-IP"); ip != "" {
++		return ip
++	}
++	return c.ClientIP()
++}
++
++// List devolve os links recentes com a máquina associada
++// @Router /admin/my/support/links [get]
++func (n *NextecSupportLinks) List(c *gin.Context) {
++	u := service.AllService.UserService.CurUser(c)
++	owner := ""
++	if u != nil && !service.AllService.UserService.IsAdmin(u) {
++		owner = u.Username
++	}
++	links, err := service.NextecSupportLinkList(owner)
++	if err != nil {
++		response.Fail(c, 101, "Não foi possível listar os links.")
++		return
++	}
++	response.Success(c, &gin.H{"list": links, "has_app": service.NextecSupportAppGet() != nil})
++}
++
++// Create cria um link por atendimento
++// @Router /admin/my/support/links [post]
++func (n *NextecSupportLinks) Create(c *gin.Context) {
++	var f nextecSupportLinkForm
++	if err := c.ShouldBindJSON(&f); err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError"))
++		return
++	}
++	if service.NextecSupportAppGet() == nil {
++		response.Fail(c, 101, "O aplicativo de suporte ainda não foi publicado. Peça a um administrador para publicá-lo.")
++		return
++	}
++	u := service.AllService.UserService.CurUser(c)
++	link, err := service.NextecSupportLinkCreate(u, f.Label, f.Ticket, time.Duration(f.Hours)*time.Hour)
++	if err != nil {
++		response.Fail(c, 101, err.Error())
++		return
++	}
++	service.NextecSecretAuditAdd(u, "", "support_link_create", nextecSupportLinkIP(c), fmt.Sprintf("%s %s", link.Token, strings.TrimSpace(link.Label)))
++	response.Success(c, link)
++}
++
++// Revoke cancela um link (o dono ou um administrador)
++// @Router /admin/my/support/links/revoke [post]
++func (n *NextecSupportLinks) Revoke(c *gin.Context) {
++	var f nextecSupportLinkRevokeForm
++	if err := c.ShouldBindJSON(&f); err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError"))
++		return
++	}
++	u := service.AllService.UserService.CurUser(c)
++	owner := ""
++	if u != nil && !service.AllService.UserService.IsAdmin(u) {
++		owner = u.Username
++	}
++	if err := service.NextecSupportLinkRevoke(f.Id, owner); err != nil {
++		response.Fail(c, 101, err.Error())
++		return
++	}
++	service.NextecSecretAuditAdd(u, "", "support_link_revoke", nextecSupportLinkIP(c), fmt.Sprintf("%d", f.Id))
++	response.Success(c, nil)
++}
+diff --git a/http/controller/api/nextec_support_link.go b/http/controller/api/nextec_support_link.go
+new file mode 100644
+index 0000000..f61bf20
+--- /dev/null
++++ b/http/controller/api/nextec_support_link.go
+@@ -0,0 +1,82 @@
++package api
++
++import (
++	"html"
++	"net/http"
++	"strings"
++
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++)
++
++// NextecSupportLinkPublic: página pública de um link de suporte por atendimento (/s/<token>) e o download do app.
++type NextecSupportLinkPublic struct{}
++
++const supportLinkPageReady = `<p class="eyebrow">Atendimento remoto</p>
++<h1 id="titulo">Vamos atender você à distância</h1>
++<p class="who">Atendimento para <strong>{{WHO}}</strong></p>
++<a class="btn" href="/s/{{TOKEN}}/baixar" download>
++<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/></svg>
++Baixar aplicativo de suporte</a>
++<p class="meta">Para Windows 10 ou 11 &middot; {{SIZE}} &middot; Suporte-Nextec.exe</p>
++<h2>Como funciona</h2>
++<ol class="steps">
++<li><strong>Abra o arquivo baixado</strong><span>Procure Suporte-Nextec.exe na pasta Downloads e dê dois cliques.</span></li>
++<li><strong>Deixe a janela aberta</strong><span>A Nextec vê que o aplicativo abriu e pede a conexão sozinha.</span></li>
++<li><strong>Aceite a conexão</strong><span>Quando o técnico pedir, clique em Aceitar na janela do aplicativo.</span></li>
++</ol>
++<details>
++<summary>O Windows mostrou um aviso?</summary>
++<p>É normal para programas que não vêm da loja do Windows. Clique em <strong>Mais informações</strong> e depois em <strong>Executar assim mesmo</strong>.</p>
++</details>
++<div class="note">
++<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.2 8-8 9-4.8-1-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg>
++<div><strong>Você está no controle.</strong> Ninguém entra no seu computador sem você aceitar. Para encerrar o atendimento, feche o aplicativo.</div>
++</div>`
++
++const supportLinkPageGone = `<div class="empty">
++<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6"/><path d="M12 16.5v.5"/></svg>
++<h1 id="titulo">Este link venceu ou foi cancelado</h1>
++<p class="lead">Peça um novo link ao técnico da Nextec que está atendendo você. Leva só um instante.</p>
++</div>`
++
++func supportLinkIP(c *gin.Context) string {
++	if ip := c.GetHeader("CF-Connecting-IP"); ip != "" {
++		return ip
++	}
++	return c.ClientIP()
++}
++
++func supportLinkRender(c *gin.Context, status int, body string) {
++	page := strings.NewReplacer("{{LOGO}}", supportLogo, "{{BODY}}", body).Replace(supportPageTpl)
++	c.Data(status, "text/html; charset=utf-8", []byte(page))
++}
++
++// Page GET /s/:token
++func (s *NextecSupportLinkPublic) Page(c *gin.Context) {
++	supportHeaders(c)
++	link := service.NextecSupportLinkByToken(c.Param("token"))
++	app := service.NextecSupportAppGet()
++	if link == nil || app == nil {
++		supportLinkRender(c, http.StatusNotFound, supportLinkPageGone)
++		return
++	}
++	body := strings.NewReplacer(
++		"{{WHO}}", html.EscapeString(link.Label),
++		"{{TOKEN}}", link.Token,
++		"{{SIZE}}", supportMB(app.Size),
++	).Replace(supportLinkPageReady)
++	supportLinkRender(c, http.StatusOK, body)
++}
++
++// Download GET /s/:token/baixar: registra o download (IP e hora) para associar a máquina que vai aparecer na fila.
++func (s *NextecSupportLinkPublic) Download(c *gin.Context) {
++	supportHeaders(c)
++	link := service.NextecSupportLinkByToken(c.Param("token"))
++	if link == nil || service.NextecSupportAppGet() == nil {
++		c.Status(http.StatusNotFound)
++		return
++	}
++	service.NextecSupportLinkMarkDownload(link.Id, supportLinkIP(c))
++	c.FileAttachment(service.NextecSupportPath(), service.NextecSupportDownload)
++}
+diff --git a/model/nextec_support_link.go b/model/nextec_support_link.go
+new file mode 100644
+index 0000000..900ce91
+--- /dev/null
++++ b/model/nextec_support_link.go
+@@ -0,0 +1,18 @@
++package model
++
++// NextecSupportLink é um link de suporte por atendimento (/s/<token>): criado pelo técnico para um cliente ou chamado,
++// com validade. Quando a pessoa baixa o app, a máquina que aparece na fila é associada ao link pelo IP e pelo horário.
++type NextecSupportLink struct {
++	Id           uint   `json:"id" gorm:"primaryKey"`
++	Token        string `json:"token" gorm:"size:16;uniqueIndex;not null"`
++	Label        string `json:"label" gorm:"size:120;not null"`
++	Ticket       string `json:"ticket" gorm:"size:40"`
++	CreatedBy    string `json:"created_by" gorm:"size:64;index"`
++	CreatedAt    int64  `json:"created_at"`
++	ExpiresAt    int64  `json:"expires_at"`
++	Revoked      bool   `json:"revoked"`
++	DownloadedAt int64  `json:"downloaded_at"`
++	DownloadIP   string `json:"-" gorm:"size:64"`
++	PeerId       string `json:"peer_id" gorm:"size:64;index"`
++	MatchedBy    string `json:"matched_by" gorm:"size:8"`
++}
+diff --git a/service/nextec_support_link.go b/service/nextec_support_link.go
+new file mode 100644
+index 0000000..d1324da
+--- /dev/null
++++ b/service/nextec_support_link.go
+@@ -0,0 +1,259 @@
++package service
++
++import (
++	"crypto/rand"
++	"errors"
++	"regexp"
++	"strings"
++	"sync"
++	"time"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"gorm.io/gorm"
++)
++
++// Links de suporte por atendimento (Nextec). O técnico cria um link para um cliente ou chamado; a pessoa abre /s/<token>,
++// baixa o app de suporte e a máquina que aparece em "Aguardando atendimento" é associada ao link.
++
++const (
++	nextecSupportLinkAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" // sem 0, 1, I, O: ditado por telefone sem erro
++	nextecSupportLinkLen      = 8
++	nextecSupportLinkMinTTL   = 15 * time.Minute
++	nextecSupportLinkMaxTTL   = 72 * time.Hour
++	nextecSupportLinkDefTTL   = 2 * time.Hour
++	nextecSupportLinkWindow   = int64(2 * 3600) // associa downloads das últimas 2 horas
++	nextecSupportLinkList     = 50
++)
++
++var (
++	ErrNextecSupportLinkLabel  = errors.New("Informe o cliente ou o chamado (até 120 caracteres).")
++	ErrNextecSupportLinkTicket = errors.New("Chamado inválido. Use letras, números, hífen ou sublinhado (até 40 caracteres).")
++	ErrNextecSupportLinkNone   = errors.New("Link não encontrado.")
++
++	nextecSupportLinkTokenRe  = regexp.MustCompile("^[A-HJ-NP-Z2-9]{8}$")
++	nextecSupportLinkTicketRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$`)
++
++	supportLinksMu     sync.Mutex
++	supportLinksMigrated *gorm.DB
++)
++
++// supportLinksReady cria a tabela na primeira utilização (e quando o banco muda, nos testes).
++func supportLinksReady() error {
++	supportLinksMu.Lock()
++	defer supportLinksMu.Unlock()
++	if supportLinksMigrated == DB {
++		return nil
++	}
++	if err := DB.AutoMigrate(&model.NextecSupportLink{}); err != nil {
++		return err
++	}
++	supportLinksMigrated = DB
++	return nil
++}
++
++func nextecSupportLinkToken() (string, error) {
++	raw := make([]byte, nextecSupportLinkLen)
++	if _, err := rand.Read(raw); err != nil {
++		return "", err
++	}
++	out := make([]byte, nextecSupportLinkLen)
++	for i, b := range raw {
++		out[i] = nextecSupportLinkAlphabet[int(b)%len(nextecSupportLinkAlphabet)]
++	}
++	return string(out), nil
++}
++
++// NextecSupportLinkCreate cria o link. ttl fora de 15 min a 72 h vira o padrão de 2 horas.
++func NextecSupportLinkCreate(u *model.User, label, ticket string, ttl time.Duration) (*model.NextecSupportLink, error) {
++	label = strings.TrimSpace(label)
++	ticket = strings.TrimSpace(ticket)
++	if label == "" || len([]rune(label)) > 120 {
++		return nil, ErrNextecSupportLinkLabel
++	}
++	if ticket != "" && !nextecSupportLinkTicketRe.MatchString(ticket) {
++		return nil, ErrNextecSupportLinkTicket
++	}
++	if ttl < nextecSupportLinkMinTTL || ttl > nextecSupportLinkMaxTTL {
++		ttl = nextecSupportLinkDefTTL
++	}
++	if err := supportLinksReady(); err != nil {
++		return nil, err
++	}
++	now := time.Now()
++	link := &model.NextecSupportLink{Label: label, Ticket: ticket, CreatedAt: now.Unix(), ExpiresAt: now.Add(ttl).Unix()}
++	if u != nil {
++		link.CreatedBy = u.Username
++	}
++	for attempt := 0; attempt < 5; attempt++ {
++		token, err := nextecSupportLinkToken()
++		if err != nil {
++			return nil, err
++		}
++		link.Token = token
++		if err := DB.Create(link).Error; err == nil {
++			return link, nil
++		}
++	}
++	return nil, errors.New("Não foi possível gerar o link. Tente de novo.")
++}
++
++// NextecSupportLinkByToken devolve o link só se estiver válido (existe, não foi cancelado e não venceu).
++func NextecSupportLinkByToken(token string) *model.NextecSupportLink {
++	token = strings.ToUpper(strings.TrimSpace(token))
++	if !nextecSupportLinkTokenRe.MatchString(token) || supportLinksReady() != nil {
++		return nil
++	}
++	link := &model.NextecSupportLink{}
++	if DB.Where("token = ?", token).First(link).Error != nil {
++		return nil
++	}
++	if link.Revoked || link.ExpiresAt <= time.Now().Unix() {
++		return nil
++	}
++	return link
++}
++
++// NextecSupportLinkMarkDownload registra o download (IP e hora) para associar a máquina que vai aparecer na fila.
++func NextecSupportLinkMarkDownload(id uint, ip string) {
++	if supportLinksReady() != nil {
++		return
++	}
++	if len(ip) > 64 {
++		ip = ip[:64]
++	}
++	DB.Model(&model.NextecSupportLink{}).Where("id = ? AND peer_id = ''", id).
++		Updates(map[string]interface{}{"downloaded_at": time.Now().Unix(), "download_ip": ip})
++}
++
++// NextecSupportLinkRevoke cancela o link. Só o dono ou um administrador cancelam (onlyOwner vazio = qualquer).
++func NextecSupportLinkRevoke(id uint, onlyOwner string) error {
++	if err := supportLinksReady(); err != nil {
++		return err
++	}
++	q := DB.Model(&model.NextecSupportLink{}).Where("id = ?", id)
++	if onlyOwner != "" {
++		q = q.Where("created_by = ?", onlyOwner)
++	}
++	res := q.Update("revoked", true)
++	if res.Error != nil {
++		return res.Error
++	}
++	if res.RowsAffected == 0 {
++		return ErrNextecSupportLinkNone
++	}
++	return nil
++}
++
++// nextecSupportLinkMatch associa links baixados recentemente às máquinas novas que estão online agora.
++// Primeiro pelo IP (o mesmo do download); se o IP não coincidir (proxy, rede móvel) e houver exatamente um link e uma
++// máquina livres na janela, associa pelo horário e marca matched_by = "time".
++func nextecSupportLinkMatch() {
++	now := time.Now().Unix()
++	var links []model.NextecSupportLink
++	DB.Where("downloaded_at > ? AND peer_id = '' AND revoked = ?", now-nextecSupportLinkWindow, false).
++		Order("downloaded_at asc").Find(&links)
++	if len(links) == 0 {
++		return
++	}
++	var peers []*model.Peer
++	DB.Where("group_id = 0 AND user_id = 0 AND last_online_time >= ?", now-nextecWaitingOnlineSecs).
++		Order("last_online_time desc").Limit(200).Find(&peers)
++	var taken []string
++	DB.Model(&model.NextecSupportLink{}).Where("peer_id <> ''").Pluck("peer_id", &taken)
++	used := map[string]bool{}
++	for _, id := range taken {
++		used[id] = true
++	}
++	free := make([]*model.Peer, 0, len(peers))
++	for _, p := range peers {
++		created := time.Time(p.CreatedAt)
++		if used[p.Id] || created.IsZero() || now-created.Unix() > int64(nextecWaitingMaxAge/time.Second) {
++			continue
++		}
++		free = append(free, p)
++	}
++	assign := func(link *model.NextecSupportLink, peer *model.Peer, how string) {
++		DB.Model(&model.NextecSupportLink{}).Where("id = ? AND peer_id = ''", link.Id).
++			Updates(map[string]interface{}{"peer_id": peer.Id, "matched_by": how})
++		used[peer.Id] = true
++		link.PeerId = peer.Id
++	}
++	for i := range links {
++		link := &links[i]
++		if link.DownloadIP == "" {
++			continue
++		}
++		for _, p := range free {
++			// a máquina precisa ter sido criada depois do download (com 1 minuto de folga)
++			if !used[p.Id] && p.LastOnlineIp == link.DownloadIP && time.Time(p.CreatedAt).Unix() >= link.DownloadedAt-60 {
++				assign(link, p, "ip")
++				break
++			}
++		}
++	}
++	var pendingLinks []*model.NextecSupportLink
++	for i := range links {
++		if links[i].PeerId == "" {
++			pendingLinks = append(pendingLinks, &links[i])
++		}
++	}
++	var freePeers []*model.Peer
++	for _, p := range free {
++		if !used[p.Id] && time.Time(p.CreatedAt).Unix() >= now-nextecSupportLinkWindow {
++			freePeers = append(freePeers, p)
++		}
++	}
++	if len(pendingLinks) == 1 && len(freePeers) == 1 && time.Time(freePeers[0].CreatedAt).Unix() >= pendingLinks[0].DownloadedAt-60 {
++		assign(pendingLinks[0], freePeers[0], "time")
++	}
++}
++
++// NextecSupportLinkView é o link como o painel mostra, com a máquina associada (quando já abriu o app).
++type NextecSupportLinkView struct {
++	model.NextecSupportLink
++	Status   string `json:"status"` // waiting | downloaded | connected | expired | revoked
++	PeerName string `json:"peer_name,omitempty"`
++	Online   bool   `json:"online"`
++}
++
++// NextecSupportLinkList lista os links recentes (do usuário; admin vê todos), já com a associação atualizada.
++func NextecSupportLinkList(owner string) ([]NextecSupportLinkView, error) {
++	if err := supportLinksReady(); err != nil {
++		return nil, err
++	}
++	nextecSupportLinkMatch()
++	var links []model.NextecSupportLink
++	q := DB.Order("id desc").Limit(nextecSupportLinkList)
++	if owner != "" {
++		q = q.Where("created_by = ?", owner)
++	}
++	if err := q.Find(&links).Error; err != nil {
++		return nil, err
++	}
++	now := time.Now().Unix()
++	out := make([]NextecSupportLinkView, 0, len(links))
++	for _, l := range links {
++		v := NextecSupportLinkView{NextecSupportLink: l}
++		switch {
++		case l.Revoked:
++			v.Status = "revoked"
++		case l.PeerId != "":
++			v.Status = "connected"
++		case l.ExpiresAt <= now:
++			v.Status = "expired"
++		case l.DownloadedAt > 0:
++			v.Status = "downloaded"
++		default:
++			v.Status = "waiting"
++		}
++		if l.PeerId != "" {
++			p := &model.Peer{}
++			if DB.Where("id = ?", l.PeerId).First(p).Error == nil {
++				v.PeerName = p.Hostname
++				v.Online = p.LastOnlineTime >= now-nextecWaitingOnlineSecs
++			}
++		}
++		out = append(out, v)
++	}
++	return out, nil
++}
+diff --git a/service/nextec_support_link_test.go b/service/nextec_support_link_test.go
+new file mode 100644
+index 0000000..5c75e24
+--- /dev/null
++++ b/service/nextec_support_link_test.go
+@@ -0,0 +1,121 @@
++package service
++
++import (
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"gorm.io/gorm"
++)
++
++// supportTestPeer cria uma máquina nova, online agora, sem cliente nem dono (como a que acabou de abrir o app de suporte).
++func supportTestPeer(t *testing.T, db *gorm.DB, id, ip string) {
++	t.Helper()
++	p := &model.Peer{Id: id, Hostname: "PC-" + id, LastOnlineTime: time.Now().Unix(), LastOnlineIp: ip}
++	if err := db.Create(p).Error; err != nil {
++		t.Fatal(err)
++	}
++	if err := db.Model(&model.Peer{}).Where("id = ?", id).UpdateColumn("created_at", time.Now()).Error; err != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestSupportLinkCreateValidatesAndTokenIsPhoneFriendly(t *testing.T) {
++	securityDB(t)
++	if _, err := NextecSupportLinkCreate(nil, "  ", "", time.Hour); err != ErrNextecSupportLinkLabel {
++		t.Fatalf("label vazio: %v", err)
++	}
++	if _, err := NextecSupportLinkCreate(nil, "Cliente", "x y", time.Hour); err != ErrNextecSupportLinkTicket {
++		t.Fatalf("chamado invalido: %v", err)
++	}
++	l, err := NextecSupportLinkCreate(&model.User{Username: "ana"}, "Cartório Mariinha", "CBQ-REQ-6054", time.Hour)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !nextecSupportLinkTokenRe.MatchString(l.Token) || strings.ContainsAny(l.Token, "01IO") {
++		t.Fatalf("token fora do padrao: %q", l.Token)
++	}
++	if got := NextecSupportLinkByToken(strings.ToLower(l.Token)); got == nil || got.Id != l.Id {
++		t.Fatal("token minusculo deveria resolver")
++	}
++	if NextecSupportLinkByToken("ZZZZZZZZ") != nil || NextecSupportLinkByToken("../etc") != nil {
++		t.Fatal("token inexistente ou invalido resolveu")
++	}
++	if l2, _ := NextecSupportLinkCreate(nil, "X", "", 10*time.Second); l2 == nil || l2.ExpiresAt-l2.CreatedAt != int64(nextecSupportLinkDefTTL/time.Second) {
++		t.Fatal("ttl fora da faixa deveria virar o padrao")
++	}
++}
++
++func TestSupportLinkExpiredOrRevokedDoNotResolve(t *testing.T) {
++	db := securityDB(t)
++	l, err := NextecSupportLinkCreate(&model.User{Username: "ana"}, "Cliente A", "", time.Hour)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := NextecSupportLinkRevoke(l.Id, "outro"); err != ErrNextecSupportLinkNone {
++		t.Fatalf("outro usuario nao cancela: %v", err)
++	}
++	if err := NextecSupportLinkRevoke(l.Id, "ana"); err != nil {
++		t.Fatal(err)
++	}
++	if NextecSupportLinkByToken(l.Token) != nil {
++		t.Fatal("link cancelado resolveu")
++	}
++	l2, _ := NextecSupportLinkCreate(nil, "Cliente B", "", time.Hour)
++	db.Model(&model.NextecSupportLink{}).Where("id = ?", l2.Id).Update("expires_at", time.Now().Unix()-1)
++	if NextecSupportLinkByToken(l2.Token) != nil {
++		t.Fatal("link vencido resolveu")
++	}
++}
++
++func TestSupportLinkMatchesWaitingPeerByIPThenByTime(t *testing.T) {
++	db := securityDB(t)
++	if err := db.AutoMigrate(&model.Peer{}); err != nil {
++		t.Fatal(err)
++	}
++	mk := func(id, ip string) { supportTestPeer(t, db, id, ip) }
++	a, _ := NextecSupportLinkCreate(nil, "Cliente A", "", time.Hour)
++	b, _ := NextecSupportLinkCreate(nil, "Cliente B", "", time.Hour)
++	NextecSupportLinkMarkDownload(a.Id, "200.1.1.1")
++	NextecSupportLinkMarkDownload(b.Id, "200.2.2.2")
++	mk("111111111", "200.2.2.2")
++	mk("222222222", "200.1.1.1")
++	views, err := NextecSupportLinkList("")
++	if err != nil {
++		t.Fatal(err)
++	}
++	got := map[string]string{}
++	for _, v := range views {
++		got[v.Label] = v.PeerId + "/" + v.MatchedBy
++	}
++	if got["Cliente A"] != "222222222/ip" || got["Cliente B"] != "111111111/ip" {
++		t.Fatalf("associacao por IP errada: %#v", got)
++	}
++}
++
++func TestSupportLinkFallsBackToTimeOnlyWhenUnambiguous(t *testing.T) {
++	db := securityDB(t)
++	if err := db.AutoMigrate(&model.Peer{}); err != nil {
++		t.Fatal(err)
++	}
++	l, _ := NextecSupportLinkCreate(nil, "Cliente C", "", time.Hour)
++	NextecSupportLinkMarkDownload(l.Id, "200.9.9.9")
++	supportTestPeer(t, db, "333333333", "10.0.0.5")
++	views, _ := NextecSupportLinkList("")
++	if len(views) != 1 || views[0].PeerId != "333333333" || views[0].MatchedBy != "time" || views[0].Status != "connected" {
++		t.Fatalf("fallback por horario: %#v", views)
++	}
++	// duas maquinas livres para um link: ambiguo, nao associa
++	l2, _ := NextecSupportLinkCreate(nil, "Cliente D", "", time.Hour)
++	NextecSupportLinkMarkDownload(l2.Id, "200.8.8.8")
++	for _, id := range []string{"444444444", "555555555"} {
++		supportTestPeer(t, db, id, "10.0.0.9")
++	}
++	views, _ = NextecSupportLinkList("")
++	for _, v := range views {
++		if v.Label == "Cliente D" && v.PeerId != "" {
++			t.Fatalf("associou de forma ambigua: %#v", v)
++		}
++	}
++}
+diff --git a/http/router/admin.go b/http/router/admin.go
+--- a/http/router/admin.go
++++ b/http/router/admin.go
+@@ -355,6 +355,12 @@ func MyBind(rg *gin.RouterGroup) {
+ 		// Nextec: suporte avulso, lista de quem está aguardando atendimento
+ 		sw := &my.NextecSupportWaiting{}
+ 		rg.GET("/my/support/waiting", sw.List)
++
++		// Nextec: link de suporte por atendimento
++		sl := &my.NextecSupportLinks{}
++		rg.GET("/my/support/links", sl.List)
++		rg.POST("/my/support/links", sl.Create)
++		rg.POST("/my/support/links/revoke", sl.Revoke)
+ 
+ 		// Nextec: chamado informado ao conectar
+ 		note := &my.NextecNote{}
+diff --git a/http/router/api.go b/http/router/api.go
+--- a/http/router/api.go
++++ b/http/router/api.go
+@@ -24,6 +24,10 @@ func ApiInit(g *gin.Engine) {
+ 	sup := &api.NextecSupport{}
+ 	g.GET("/suporte", sup.Page)
+ 	g.GET("/suporte/baixar", sup.Download)
++	// Nextec: link de suporte por atendimento
++	slp := &api.NextecSupportLinkPublic{}
++	g.GET("/s/:token", slp.Page)
++	g.GET("/s/:token/baixar", slp.Download)
+ 
+ 	frg := g.Group("/api")
+ 

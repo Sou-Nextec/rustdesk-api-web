@@ -62,6 +62,9 @@ export const availableApp = () => request({ url: '/my/app-version' })
 // patch 0010: suporte avulso (página pública /suporte, app de suporte e lista aguardando atendimento)
 export const supportInfo = () => request({ url: '/nextec/support' })
 export const supportDelete = () => request({ url: '/nextec/support/delete', method: 'post', data: {} })
+export const supportLinks = () => request({ url: '/my/support/links' })
+export const supportLinkCreate = (data) => request({ url: '/my/support/links', method: 'post', data })
+export const supportLinkRevoke = (id) => request({ url: '/my/support/links/revoke', method: 'post', data: { id } })
 export const supportWaiting = () => request({ url: '/my/support/waiting' })
 
 // patches 0011 a 0013: instalação por cliente, políticas do app, conexões ativas, chamado e relatório
