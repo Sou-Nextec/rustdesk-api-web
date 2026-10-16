@@ -807,4 +807,7 @@ html.nx-m-cards {
   border: 2px solid var(--nx-accent); border-right-color: transparent; animation: nx-spin 0.8s linear infinite;
 }
 @keyframes nx-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .nx-toast-spinner { animation: none; border-right-color: var(--nx-accent); } }
+// Escuro: o roxo da marca some sobre o fundo grafite; usa o lilás claro do tema escuro (contraste de leitura).
+html.dark .el-message.nx-toast-progress a { color: #B899FF; }
+html.dark .nx-toast-spinner { border-color: #B899FF; border-right-color: transparent; }
+@media (prefers-reduced-motion: reduce) { .nx-toast-spinner { animation: none; border-right-color: var(--nx-accent); } html.dark .nx-toast-spinner { border-right-color: #B899FF; } }
