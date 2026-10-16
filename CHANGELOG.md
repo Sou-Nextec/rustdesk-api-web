@@ -2,6 +2,14 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.33
+
+Tipo da versão correto para versões enviadas à mão e layout da coluna Versão.
+
+- **Não chuta mais "Cliente padrão":** uma versão enviada à mão (antes de o gerador registrar o tipo) aparece como **Tipo não registrado**, com o botão **Definir tipo** (Analistas ou Cliente padrão). Versões vindas do gerador mostram o "Destinado a" escolhido lá e não podem ser alteradas por aqui.
+- **Patch 0039:** `POST /nextec/updates/profile` define o tipo só em versão sem geração e sem tipo; audita `update_profile`.
+- **Coluna Versão:** número, etiquetas (tipo e "Download dos analistas") lado a lado e nome do arquivo embaixo, sem quebrar em colunas estreitas.
+
 ## 2.11.32
 
 Tipo da versão claro, confirmação ao disponibilizar e app de suporte a partir do que já foi gerado.

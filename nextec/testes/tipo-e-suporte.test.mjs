@@ -7,7 +7,9 @@ test('tipo da versão vem do "Destinado a" declarado', () => {
   assert.equal(releaseKind({ profile: 'analysts' }).label, 'Analistas')
   assert.equal(releaseKind({ profile: 'client' }).label, 'Cliente específico')
   assert.equal(releaseKind({ profile: 'default' }).label, 'Cliente padrão')
-  assert.equal(releaseKind({}).label, 'Cliente padrão')
+  assert.equal(releaseKind({ profile: '', generation_uuid: 'x' }).label, 'Cliente padrão')
+  assert.equal(releaseKind({}).label, 'Tipo não registrado')
+  assert.equal(releaseKind({}).key, 'unknown')
 })
 
 test('confirmação de disponibilizar avisa a substituição e o tipo errado', () => {

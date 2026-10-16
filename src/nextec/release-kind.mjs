@@ -2,6 +2,8 @@
 // O painel não adivinha pelo nome do app: o tipo é o que foi declarado na geração.
 export function releaseKind (row) {
   const profile = row && row.profile
+  // Enviada à mão antes de o gerador registrar o tipo: o tipo real é desconhecido (não é "Cliente padrão").
+  if (row && !profile && !row.generation_uuid) return { key: 'unknown', label: 'Tipo não registrado', tone: 'info' }
   if (profile === 'analysts') return { key: 'analysts', label: 'Analistas', tone: 'success' }
   if (profile === 'client') return { key: 'client', label: 'Cliente específico', tone: 'warning' }
   return { key: 'default', label: 'Cliente padrão', tone: 'info' }
@@ -18,9 +20,11 @@ export function analystsDownloadNotice (row, current) {
     parts.push(`Ela substitui a versão ${label(current)}, que deixa de ser oferecida aos analistas.`)
   }
   parts.push('O protocolo do botão Conectar passa a seguir o nome deste arquivo, e ninguém é atualizado por isso (para atualizar máquinas, use Publicar).')
-  const danger = kind.key !== 'analysts'
+  const danger = kind.key === 'default' || kind.key === 'client'
   if (danger) {
     parts.push('Atenção: esta versão NÃO foi gerada como "Analistas". Se ela é o cliente dos servidores (com agente de senha), não disponibilize aos analistas.')
+  } else if (kind.key === 'unknown') {
+    parts.push('O tipo desta versão não foi registrado (ela foi enviada à mão). Confirme que é o app dos analistas; depois use "Definir tipo" para registrar.')
   }
   return { title: 'Disponibilizar aos analistas', message: parts.join('\n\n'), danger }
 }
