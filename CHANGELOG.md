@@ -2,13 +2,29 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
-## 2.11.36
+## 2.11.39
 
 Refino da tela Gerar cliente, itens P2 do painel. Funciona com qualquer gerador; as mudanças do formulário vêm no gerador 2.3.8.
 
 - **Menos orientação repetida:** o guia "O que preencher e o que já vem pronto" sai da aba Novo instalador (as dicas ficam nos próprios campos do gerador).
 - **Etapa 3 vira atalho:** "Atualizar" nas etapas leva direto a Atualizações do app.
 - **Protocolo do botão Conectar mudou de lugar:** é uma configuração do painel, não da geração; agora fica em Ajustes do servidor, no cartão "Botão Conectar do painel", com o mesmo modo automático.
+## 2.11.38
+
+Suporte avulso: link por atendimento e página no tema claro.
+
+- **Link por atendimento:** em Suporte avulso, "Link por atendimento" cria um link para cada cliente ou chamado (validade de 1 a 24 horas). A pessoa abre `/s/<código>`, vê "Atendimento para <cliente>" e baixa o app. O código usa só letras e números fáceis de ditar por telefone.
+- **A máquina aparece identificada:** quando o app abre, a máquina que entra em "Aguardando atendimento" é associada ao link pelo IP e pelo horário do download. Se o IP não bater e houver só um link e uma máquina possíveis, associa pelo horário e mostra "(provável)". Em caso de dúvida (duas máquinas para um link), não associa.
+- **Lista de links** com a situação (aguardando, baixado, na fila, vencido, cancelado), **Conectar** direto na máquina associada e **Cancelar**. Cada técnico vê os seus; administrador vê todos.
+- **Página pública no tema claro com a identidade do painel:** barra branca com a marca, cartão com cantos arredondados, roxo Nextec e fonte Open Sans.
+- **Patch 0040** (link por atendimento) e patch 0010 (página); o app e o consentimento não mudam: a pessoa continua precisando clicar em Aceitar.
+
+## 2.11.37
+
+Suporte avulso: publicar o app direto da tela.
+
+- **Escolha na própria tela:** sem app publicado, o cartão "Aplicativo de suporte" já lista os `.exe` gerados (os que parecem app de suporte primeiro) com **Usar este** e **Carregar mais**, sem abrir diálogo. "Prefiro enviar um arquivo .exe" continua disponível.
+- **Menos repetição:** a tela dizia três vezes que o app não foi enviado e um dos links apontava para a própria página. Agora há uma frase no topo, e a fila "Aguardando atendimento" não repete o alerta nem os botões de copiar.
 
 ## 2.11.35
 

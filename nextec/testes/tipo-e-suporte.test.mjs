@@ -48,3 +48,33 @@ test('candidatos a app de suporte: só gerações prontas com .exe e download v�
   assert.equal(list[1].name, 'Nextec-Connect.exe')
   assert.equal(supportCandidates(null).length, 0)
 })
+
+import { publishGeneratedApp } from '../../src/nextec/support-source.mjs'
+
+const item = { name: 'Suporte-Nextec.exe', url: '/gerador/download?uuid=x&filename=Suporte-Nextec.exe' }
+class FakeFile { constructor (parts, name) { this.parts = parts; this.name = name } }
+const okFetch = (size) => async () => ({ ok: true, status: 200, blob: async () => ({ size }) })
+
+test('publicar app gerado: download recusado devolve o motivo (fluxo inline, sem diálogo)', async () => {
+  const r = await publishGeneratedApp({
+    item, maxSize: 1000, fileCtor: FakeFile, upload: async () => ({ ok: true }),
+    fetchImpl: async () => ({ ok: false, status: 404 }),
+  })
+  assert.equal(r.ok, false)
+  assert.match(r.message, /HTTP 404/)
+})
+
+test('publicar app gerado: arquivo acima do limite e envio recusado', async () => {
+  const big = await publishGeneratedApp({ item, maxSize: 10, fileCtor: FakeFile, fetchImpl: okFetch(11), upload: async () => ({ ok: true }) })
+  assert.equal(big.ok, false)
+  assert.match(big.message, /limite/)
+  const refused = await publishGeneratedApp({ item, maxSize: 1000, fileCtor: FakeFile, fetchImpl: okFetch(5), upload: async () => ({ ok: false, message: 'Arquivo inválido.' }) })
+  assert.deepEqual(refused, { ok: false, message: 'Arquivo inválido.' })
+})
+
+test('publicar app gerado: sucesso e erro inesperado de rede não lançam', async () => {
+  const ok = await publishGeneratedApp({ item, maxSize: 1000, fileCtor: FakeFile, fetchImpl: okFetch(5), upload: async (file) => ({ ok: file.name === 'Suporte-Nextec.exe' }) })
+  assert.deepEqual(ok, { ok: true })
+  const boom = await publishGeneratedApp({ item, maxSize: 1000, fileCtor: FakeFile, fetchImpl: async () => { throw new Error('Failed to fetch') }, upload: async () => ({ ok: true }) })
+  assert.deepEqual(boom, { ok: false, message: 'Failed to fetch' })
+})
