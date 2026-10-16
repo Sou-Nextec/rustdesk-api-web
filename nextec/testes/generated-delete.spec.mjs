@@ -50,7 +50,7 @@ async function mount(listing) {
 afterEach(() => { if (app) app.unmount(); if (host) host.remove(); document.body.innerHTML = ''; app = null })
 
 const cards = () => [...host.querySelectorAll('.nx-generation')]
-const removeButton = li => li && li.querySelector('.nx-generation-remove button')
+const removeButton = li => li && li.querySelector('button.nx-remove')
 const dialog = () => document.querySelector('.el-message-box')
 
 describe('Itens gerados, exclusão com a resposta real do rdgen', () => {
