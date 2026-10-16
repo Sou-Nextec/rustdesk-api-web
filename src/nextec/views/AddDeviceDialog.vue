@@ -36,11 +36,12 @@
             <el-button size="small" @click="copy(msgOf(fresh), 'Mensagem copiada.')">Copiar mensagem</el-button>
           </div>
         </div>
-        <div class="nx-add-out">
+        <div v-if="fresh.release" class="nx-add-out">
           <span class="nx-add-tag">Comando PowerShell silencioso (administrador)</span>
-          <code class="nx-add-cmd">{{ cmdOf(fresh.code) }}</code>
-          <div class="nx-add-actions"><el-button size="small" @click="copy(cmdOf(fresh.code), 'Comando copiado.')">Copiar comando</el-button></div>
+          <code class="nx-add-cmd">{{ cmdOf(fresh.code, fresh.release) }}</code>
+          <div class="nx-add-actions"><el-button size="small" @click="copy(cmdOf(fresh.code, fresh.release), 'Comando copiado.')">Copiar comando</el-button></div>
         </div>
+        <p v-else class="nx-small nx-muted">O comando silencioso não está disponível: a versão deste convite não foi encontrada.</p>
       </div>
     </section>
 
@@ -88,7 +89,7 @@
           <el-tag size="small" :type="tone(r.status)" disable-transitions>{{ statusLabel(r.status) }}</el-tag>
           <div class="nx-add-actions">
             <el-button v-if="r.code" size="small" @click="copy(linkOf(r.code), 'Link copiado.')">Copiar link</el-button>
-            <el-button v-if="r.code && release" size="small" @click="copy(cmdOf(r.code), 'Comando copiado.')">Copiar comando</el-button>
+            <el-button v-if="r.code && r.release" size="small" @click="copy(cmdOf(r.code, r.release), 'Comando copiado.')">Copiar comando</el-button>
             <el-button v-if="r.status === 'active'" size="small" @click="revoke(r)"><span class="nx-add-danger">Cancelar</span></el-button>
           </div>
         </li>
@@ -117,6 +118,7 @@
   const batchError = ref('')
   const fresh = ref(null)
   const batchOut = ref([])
+  const batchRelease = ref(null)
   const batchText = ref('')
   const base = () => ({ client_id: null, kind: 'server', auto_password: true, interval_minutes: 15, mode: 'single', max_uses: 10, hours: 24 })
   const one = reactive({ ...base(), alias: '', label: '' })
@@ -125,7 +127,8 @@
 
   const origin = computed(() => window.location.origin)
   const linkOf = (code) => inviteLink(origin.value, code)
-  const cmdOf = (code) => inviteCommand({ origin: origin.value, code, release: release.value })
+  // o comando usa o MSI fixado no próprio convite (hash dele), nunca a versão que estiver publicada agora
+  const cmdOf = (code, rel) => inviteCommand({ origin: origin.value, code, release: rel })
   const msgOf = (f) => inviteMessage({ origin: origin.value, code: f.code, label: f.label })
   const fmt = (ts) => new Date(ts * 1000).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
   const statusLabel = (s) => ({ active: 'Ativo', used: 'Usado', expired: 'Vencido', revoked: 'Cancelado' }[s] || s)
@@ -138,7 +141,7 @@
   }
   watch(() => props.modelValue, (open) => {
     clearInterval(timer)
-    if (open) { tab.value = 'invite'; fresh.value = null; batchOut.value = []; load(); timer = setInterval(() => { if (!document.hidden) load() }, 15000) }
+    if (open) { tab.value = 'invite'; fresh.value = null; batchOut.value = []; batchRelease.value = null; load(); timer = setInterval(() => { if (!document.hidden) load() }, 15000) }
   })
   onBeforeUnmount(() => clearInterval(timer))
 
@@ -150,8 +153,7 @@
     const res = await inviteCreate({ ...payload(one), label: one.label.trim(), alias: one.alias.trim() }).catch(() => false)
     busy.value = false
     if (res && res.code === 0 && res.data) {
-      release.value = res.data.release || release.value
-      fresh.value = { code: res.data.code, label: res.data.invite.label }
+      fresh.value = { code: res.data.code, label: res.data.invite.label, release: res.data.release || null }
       one.alias = ''; one.label = ''
       await load()
     } else {
@@ -167,7 +169,7 @@
     const res = await inviteBatch({ ...payload(many), items }).catch(() => false)
     busy.value = false
     if (res && res.code === 0 && res.data) {
-      release.value = res.data.release || release.value
+      batchRelease.value = res.data.release || null
       batchOut.value = (res.data.list || []).map(x => ({ code: x.code, alias: x.invite.alias, label: x.invite.label }))
       batchText.value = ''
       await load()
@@ -176,7 +178,8 @@
     }
   }
   const downloadCsv = () => {
-    const csv = inviteBatchCsv({ origin: origin.value, release: release.value, rows: batchOut.value })
+    let csv
+    try { csv = inviteBatchCsv({ origin: origin.value, release: batchRelease.value, rows: batchOut.value }) } catch (e) { ElMessage.error(e.message || 'Não foi possível montar o CSV.'); return }
     const url = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' }))
     const a = document.createElement('a')
     a.href = url; a.download = 'convites-nextec.csv'; a.click()

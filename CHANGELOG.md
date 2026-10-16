@@ -11,6 +11,9 @@ Convites de instalação (primeira parte: painel e servidor).
 - **Em lote:** uma linha por máquina (`apelido; descrição`), um convite de uso único por linha, tudo ou nada, com CSV de links e comandos.
 - **Lista de convites** com situação (ativo, usado, vencido, cancelado), usos, copiar link e comando, e cancelar. Convites vencidos há mais de 7 dias somem da lista.
 - **Segurança:** código de 20 caracteres (só o hash é consultado), validade máxima de 7 dias, limite de usos, cancelamento, auditoria; sem senha em link ou comando. Patch 0041.
+- **Versão fixada no convite:** o convite entrega o MSI que estava publicado para todos quando foi criado; publicar outra versão depois não quebra o comando já copiado (o hash é o da versão do convite). Só versão publicada para **todos** gera convite (piloto não).
+- **Segurança do consumo:** a vaga é gasta numa transação, com registro único por convite e máquina; repetir ou reenviar não consome outra vaga. Limite por máquina do agente responde 429 com Retry-After.
+- **Diálogo:** retirar a publicação com o diálogo aberto não derruba mais a tela (o comando usa a versão do convite).
 - **Ainda não vale ponta a ponta:** a máquina só entra sozinha no cliente depois que o agente e o MSI passarem a ler o código do nome do arquivo (próximas etapas). Até lá o convite instala o app normalmente e a máquina entra como Pendente.
 
 ## 2.11.42
