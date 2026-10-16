@@ -120,3 +120,22 @@ test('tempo sem contato legível', () => {
   assert.equal(quietFor(3600 * 5), '5 h')
   assert.equal(quietFor(3600 * 72), '3 dias')
 })
+
+test('agente quieto com a máquina offline não manda reinstalar', async () => {
+  const { agentContact, machineOffline } = await import('../../src/nextec/agent-state.mjs')
+  const now = 1_800_000_000
+  const base = { enrolled: true, state: 'assigned', agent_state: 'parado', last_sync_at: now - 2460 }
+  // o servidor do RustDesk também não vê a máquina há 35 min: está desligada ou sem internet
+  const off = agentContact({ ...base, peer_last_online: now - 2100 }, now)
+  assert.equal(off.offline, true)
+  assert.equal(off.tone, 'off')
+  assert.match(off.headline, /Máquina offline há 35 min/)
+  assert.match(off.detail, /não precisa reinstalar/)
+  assert.equal(machineOffline({ peer_last_online: now - 60 }, now), false)
+  // máquina online e agente quieto: continua sendo agente parado (reinstalar)
+  const stalled = agentContact({ ...base, peer_last_online: now - 20 }, now)
+  assert.equal(stalled.offline, undefined)
+  assert.match(stalled.detail, /Reinstale/)
+  // sem o dado de presença nada é presumido
+  assert.equal(agentContact(base, now).offline, undefined)
+})

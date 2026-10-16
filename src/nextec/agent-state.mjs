@@ -11,6 +11,10 @@
 // Janela legada (agente de 5 minutos x 3), usada apenas quando o servidor não manda agent_state/active_window_seconds.
 export const LEGACY_ACTIVE_WINDOW_SECONDS = 900
 
+// A máquina conta como desligada ou sem internet quando o servidor do RustDesk não a vê há mais que isto (o app avisa a cada
+// ~15 s). Sem o dado (`peer_last_online` ausente), nada é presumido: vale o diagnóstico antigo.
+export const MACHINE_OFFLINE_SECONDS = 180
+
 export const AGENT_STATE = Object.freeze({
   ACTIVE: 'ativo',
   STALLED: 'parado',
@@ -36,6 +40,12 @@ export function lastContactAt(d = {}) {
 export function activeWindowSeconds(d) {
   const w = d && typeof d === 'object' ? seconds(d.active_window_seconds) : 0
   return w > 0 ? w : LEGACY_ACTIVE_WINDOW_SECONDS
+}
+
+// true só quando sabemos a última vez que o app da máquina falou com o servidor e ela passou da janela.
+export function machineOffline(d, now = Date.now() / 1000) {
+  const at = d && typeof d === 'object' ? seconds(d.peer_last_online) : 0
+  return at > 0 && now - at > MACHINE_OFFLINE_SECONDS
 }
 
 export function agentState(d, now = Date.now() / 1000) {
@@ -100,6 +110,14 @@ export function agentContact(d, now = Date.now() / 1000) {
     return { state, tone: 'ok', headline: 'Agente ativo', detail: `última consulta há ${quietFor(now - lastAt)}`, lastAt, waitingFirst: false }
   }
   if (state === AGENT_STATE.STALLED) {
+    // Agente quieto porque a máquina está desligada ou sem internet: o agente volta sozinho, reinstalar não adianta.
+    if (machineOffline(d, now)) {
+      return {
+        state, tone: 'off', lastAt, waitingFirst: false, offline: true,
+        headline: `Máquina offline há ${quietFor(now - seconds(d.peer_last_online))}.`,
+        detail: 'Desligada ou sem internet. O agente volta sozinho quando ela ligar; não precisa reinstalar.',
+      }
+    }
     if (lastAt > 0) {
       return {
         state, tone: 'warn', lastAt, waitingFirst: false,
