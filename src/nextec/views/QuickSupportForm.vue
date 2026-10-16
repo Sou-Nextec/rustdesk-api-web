@@ -21,7 +21,7 @@
         <el-button type="primary" @click="copy(link, 'Link copiado.')">Copiar link</el-button>
         <el-button @click="copy(message, 'Mensagem copiada.')">Copiar mensagem</el-button>
       </div>
-      <p>Vale até {{ until }}. Acompanhe em <router-link to="/user/support" @click="$emit('done')">Suporte avulso</router-link>.</p>
+      <p>Vale até {{ until }}. Acompanhe em <router-link :to="supportPath" @click="$emit('done')">Suporte avulso</router-link>.</p>
       <el-button text type="primary" @click="reset">Gerar outro</el-button>
     </template>
   </form>
@@ -31,6 +31,7 @@
   import { computed, nextTick, onMounted, reactive, ref } from 'vue'
   import { ElMessage } from 'element-plus'
   import { supportLinkCreate } from '@/nextec/api'
+  import { useUserStore } from '@/store/user'
 
   defineEmits(['done'])
 
@@ -40,6 +41,8 @@
   const fresh = ref(null)
   const labelInput = ref()
 
+  // administrador acompanha em Dispositivos > Suporte avulso; usuário comum, em Minha área (rota própria)
+  const supportPath = computed(() => ((useUserStore().route_names || []).includes('*') ? '/user/support' : '/my/support'))
   const link = computed(() => (fresh.value ? `${window.location.origin}/s/${fresh.value.token}` : ''))
   const message = computed(() => `Olá! Para o atendimento remoto, abra este link, baixe o aplicativo de suporte da Nextec e me avise quando ele estiver aberto: ${link.value}`)
   const until = computed(() => (fresh.value ? new Date(fresh.value.expires_at * 1000).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : ''))
