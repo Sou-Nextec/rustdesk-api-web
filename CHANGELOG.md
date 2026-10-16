@@ -2,6 +2,14 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.41
+
+Acabamento de interface achado no teste ao vivo em produção.
+
+- **Atualizações do app, coluna Ações:** os botões quebravam em linhas desiguais e centralizadas (4 botões numa coluna de 356 px). Agora as ações principais (Autorizar ou Renovar, Publicar ou Alterar, Excluir) ficam sempre na mesma linha, alinhadas à direita, e "Disponibilizar aos analistas" ou "Suspender download dos analistas" vira uma ação secundária na linha de baixo.
+- **Itens gerados:** as caixas de seleção tinham contraste de 1,2:1 (borda cinza claro sobre branco) e passam a usar a cor de texto secundária; os botões da linha de ações (Atualizar situação etc.) ficam com a mesma altura (36 px) e o mesmo estilo dos botões de download.
+- **Gerador:** a rolagem interna ao lado da rolagem da página (iframe 12 px menor que o conteúdo) é corrigida no gerador 2.3.10.
+
 ## 2.11.40
 
 Acabamento da lista de Itens gerados (item P3 da revisão de UX). Par do gerador 2.3.9.
