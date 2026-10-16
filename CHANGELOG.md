@@ -7,7 +7,7 @@ Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no p
 Tipo da versão correto para versões enviadas à mão e layout da coluna Versão.
 
 - **Não chuta mais "Cliente padrão":** uma versão enviada à mão (antes de o gerador registrar o tipo) aparece como **Tipo não registrado**, com o botão **Definir tipo** (Analistas ou Cliente padrão). Versões vindas do gerador mostram o "Destinado a" escolhido lá e não podem ser alteradas por aqui.
-- **Patch 0039:** `POST /nextec/updates/profile` define o tipo só em versão sem geração e sem tipo; audita `update_profile`.
+- **Patch 0039:** `POST /nextec/updates/profile` define o tipo só em versão sem geração e sem tipo; audita `update_profile`. A trava é um UPDATE condicional: duas requisições simultâneas não sobrescrevem a primeira escolha.
 - **Coluna Versão:** número, etiquetas (tipo e "Download dos analistas") lado a lado e nome do arquivo embaixo, sem quebrar em colunas estreitas.
 
 ## 2.11.32

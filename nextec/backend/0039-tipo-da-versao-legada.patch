@@ -2,7 +2,8 @@ Tipo da versao definivel para versoes antigas enviadas a mao
 
 Nextec 0039: versoes enviadas a mao antes do catalogo do gerador nao tem tipo registrado (Analistas, Cliente
 padrao). POST /nextec/updates/profile {version, profile} define analysts ou default so nessas versoes; versoes
-do gerador e tipos ja definidos ficam travados. Auditoria update_profile.
+do gerador e tipos ja definidos ficam travados (UPDATE condicional: a trava vale na gravacao, mesmo com
+requisicoes simultaneas). Auditoria update_profile.
 
 diff --git a/http/controller/admin/nextec_release_profile.go b/http/controller/admin/nextec_release_profile.go
 new file mode 100644
@@ -42,13 +43,17 @@ index 0000000..e44dd94
 +}
 diff --git a/service/nextec_release_profile.go b/service/nextec_release_profile.go
 new file mode 100644
-index 0000000..4796713
+index 0000000..cf02e46
 --- /dev/null
 +++ b/service/nextec_release_profile.go
-@@ -0,0 +1,25 @@
+@@ -0,0 +1,37 @@
 +package service
 +
-+import "errors"
++import (
++	"errors"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++)
 +
 +// ErrNextecProfileLocked: o tipo já foi registrado (pelo gerador ou por uma definição anterior) e não muda por aqui.
 +var ErrNextecProfileLocked = errors.New("O tipo desta versão já está registrado e não pode ser alterado.")
@@ -58,6 +63,8 @@ index 0000000..4796713
 +
 +// NextecReleaseSetProfile define o tipo de uma versão enviada à mão (sem geração e sem tipo registrado). Versões que vieram
 +// do gerador já trazem o tipo escolhido lá e não são alteradas; "Cliente específico" exige o fluxo do gerador.
++// A condição "ainda sem tipo e sem geração" é garantida na própria gravação (UPDATE condicional): duas requisições
++// simultâneas não sobrescrevem a primeira escolha, porque só uma altera uma linha.
 +func NextecReleaseSetProfile(version, profile string) error {
 +	if profile != "analysts" && profile != "default" {
 +		return ErrNextecProfileInvalid
@@ -66,21 +73,29 @@ index 0000000..4796713
 +	if r == nil {
 +		return ErrNextecNoRelease
 +	}
-+	if r.GenerationUUID != "" || r.Profile != "" {
++	res := DB.Model(&model.NextecAppRelease{}).
++		Where("id = ? AND (profile = '' OR profile IS NULL) AND (generation_uuid = '' OR generation_uuid IS NULL)", r.Id).
++		Update("profile", profile)
++	if res.Error != nil {
++		return res.Error
++	}
++	if res.RowsAffected == 0 {
 +		return ErrNextecProfileLocked
 +	}
-+	return DB.Model(r).Update("profile", profile).Error
++	return nil
 +}
 diff --git a/service/nextec_release_profile_test.go b/service/nextec_release_profile_test.go
 new file mode 100644
-index 0000000..5cd3b7f
+index 0000000..50881d3
 --- /dev/null
 +++ b/service/nextec_release_profile_test.go
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,85 @@
 +package service
 +
 +import (
 +	"strings"
++	"sync"
++	"sync/atomic"
 +	"testing"
 +
 +	"github.com/lejianwen/rustdesk-api/v2/model"
@@ -115,6 +130,49 @@ index 0000000..5cd3b7f
 +	}
 +	if err := NextecReleaseSetProfile("2.0.9", "default"); err != ErrNextecProfileLocked {
 +		t.Fatalf("segunda alteracao deveria ser recusada: %v", err)
++	}
++}
++
++// A trava vale na gravação: com várias requisições ao mesmo tempo, só uma define o tipo e a escolha dela permanece.
++func TestReleaseSetProfileConcurrentRequestsKeepFirstChoice(t *testing.T) {
++	db := securityDB(t)
++	if err := db.AutoMigrate(&model.NextecAppRelease{}); err != nil {
++		t.Fatal(err)
++	}
++	if sqlDB, err := db.DB(); err == nil {
++		sqlDB.SetMaxOpenConns(1) // SQLite em memoria: uma conexao, as goroutines se enfileiram; o UPDATE condicional segue sendo o que decide
++	}
++	if err := db.Create(&model.NextecAppRelease{Version: "2.0.9", FileName: "Nextec-Connect.msi", Sha256: strings.Repeat("a", 64)}).Error; err != nil {
++		t.Fatal(err)
++	}
++	var wg sync.WaitGroup
++	var wins int32
++	winner := make(chan string, 16)
++	for i := 0; i < 12; i++ {
++		profile := "analysts"
++		if i%2 == 1 {
++			profile = "default"
++		}
++		wg.Add(1)
++		go func(p string) {
++			defer wg.Done()
++			err := NextecReleaseSetProfile("2.0.9", p)
++			if err == nil {
++				atomic.AddInt32(&wins, 1)
++				winner <- p
++			} else if err != ErrNextecProfileLocked {
++				t.Errorf("erro inesperado: %v", err)
++			}
++		}(profile)
++	}
++	wg.Wait()
++	close(winner)
++	if wins != 1 {
++		t.Fatalf("esperava exatamente 1 gravacao, houve %d", wins)
++	}
++	want := <-winner
++	if got := NextecReleaseByVersion("2.0.9"); got == nil || got.Profile != want {
++		t.Fatalf("a primeira escolha foi sobrescrita: %#v (vencedor %s)", got, want)
 +	}
 +}
 diff --git a/http/router/admin.go b/http/router/admin.go
