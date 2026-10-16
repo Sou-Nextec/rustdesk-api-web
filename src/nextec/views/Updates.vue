@@ -36,6 +36,7 @@
           <div class="nx-mcard-top">
             <strong class="nx-ver nx-mcard-title">{{ row.version }}{{ row.client_name ? ' · ' + row.client_name : '' }}</strong>
             <el-tag size="small" :type="releaseKind(row).tone" disable-transitions>{{ releaseKind(row).label }}</el-tag>
+            <el-button v-if="releaseKind(row).key === 'unknown'" link type="primary" size="small" @click="chooseKind(row)">Definir tipo</el-button>
             <el-tag v-if="isPublished(row)" :type="rollout.mode === 'all' ? 'success' : 'warning'" disable-transitions>{{ publishedTag(row) }}</el-tag>
             <span v-else class="nx-muted nx-small">Não publicada</span>
           </div>
@@ -50,8 +51,18 @@
         </li>
       </ul>
       <el-table v-else-if="!isMobile" :data="releases" v-loading="loading" row-key="id" aria-label="Versões enviadas" empty-text=" ">
-        <el-table-column label="Versão" min-width="110">
-          <template #default="{ row }"><strong class="nx-ver">{{ row.version }}</strong><div><el-tag size="small" :type="releaseKind(row).tone" disable-transitions>{{ releaseKind(row).label }}</el-tag></div><div class="nx-muted nx-small">{{ row.client_name || row.file_name }}</div><el-tag v-if="row.internal" size="small" type="success">Download dos analistas</el-tag></template>
+        <el-table-column label="Versão" min-width="190">
+          <template #default="{ row }">
+            <div class="nx-ver-cell">
+              <strong class="nx-ver">{{ row.version }}</strong>
+              <div class="nx-tags">
+                <el-tag size="small" :type="releaseKind(row).tone" disable-transitions>{{ releaseKind(row).label }}</el-tag>
+                <el-tag v-if="row.internal" size="small" type="success" disable-transitions>Download dos analistas</el-tag>
+              </div>
+              <span class="nx-muted nx-small nx-file">{{ row.client_name || row.file_name }}</span>
+              <el-button v-if="releaseKind(row).key === 'unknown'" link type="primary" size="small" @click="chooseKind(row)">Definir tipo</el-button>
+            </div>
+          </template>
         </el-table-column>
         <el-table-column label="Situação" min-width="190">
           <template #default="{ row }">
@@ -273,7 +284,7 @@
   import { list as groupList } from '@/api/device_group'
   import { uploadFile } from '@/nextec/upload'
   import { timeAgo } from '@/utils/time'
-  import { updatesOverview, updatesRollout, updatesDelete, updatesSignature, updatesInternal, updatesSignRequest } from '@/nextec/api'
+  import { updatesOverview, updatesRollout, updatesDelete, updatesSignature, updatesInternal, updatesSignRequest, updatesProfile } from '@/nextec/api'
   import { signingRequest, downloadLocalJson } from '@/nextec/local-requests.mjs'
   import { releaseKind, analystsDownloadNotice } from '@/nextec/release-kind.mjs'
   import { openPrivateKey, buildManifest, signManifest, checkAsset, bytesToBase64 } from '@/nextec/assinatura-navegador.mjs'
@@ -550,9 +561,29 @@
   }
 
   // ---------- instalar ----------
+  // Versão enviada à mão sem tipo registrado: o admin informa uma vez (analistas ou cliente padrão).
+  const chooseKind = async (row) => {
+    let profile = ''
+    try {
+      await ElMessageBox.confirm(`A versão ${row.version} foi enviada à mão e o tipo não foi registrado. Qual é o tipo?`, 'Definir tipo da versão', {
+        type: 'info', distinguishCancelAndClose: true, confirmButtonText: 'Analistas', cancelButtonText: 'Cliente padrão',
+      })
+      profile = 'analysts'
+    } catch (action) {
+      if (action === 'cancel') profile = 'default'
+    }
+    if (!profile) return
+    const res = await updatesProfile(row.version, profile).catch(() => false)
+    if (res) { ok('Tipo registrado.'); await load() }
+  }
   const setInternal = async (row) => {
     if (!row.internal) {
       const notice = analystsDownloadNotice(row, releases.value.find(r => r.internal))
+      if (notice.blocked) {
+        ElMessage.warning(notice.message)
+        await chooseKind(row)
+        return
+      }
       try {
         await ElMessageBox.confirm(notice.message, notice.title, {
           type: notice.danger ? 'warning' : 'info', confirmButtonText: 'Disponibilizar', cancelButtonText: 'Cancelar', dangerouslyUseHTMLString: false,
@@ -610,6 +641,9 @@
   .nx-mcard-actions { display: flex; gap: 8px; margin-top: 4px; .el-button { margin: 0; } }
   .nx-pager { padding: 12px 18px; border-top: 1px solid var(--nx-divider); display: flex; justify-content: flex-end; }
   .nx-help { margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: var(--nx-text-muted); code { font-size: 12px; } }
+  .nx-ver-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+  .nx-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+  .nx-file { overflow-wrap: anywhere; }
   .nx-sign-steps { margin: 14px 0; padding-left: 22px; color: var(--nx-text); font-size: 13px; line-height: 1.55; }
   .nx-sign-steps li + li { margin-top: 6px; }
   .nx-sign-steps code { padding: 1px 5px; border-radius: 5px; background: var(--nx-field); }

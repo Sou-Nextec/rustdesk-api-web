@@ -7,7 +7,16 @@ test('tipo da versão vem do "Destinado a" declarado', () => {
   assert.equal(releaseKind({ profile: 'analysts' }).label, 'Analistas')
   assert.equal(releaseKind({ profile: 'client' }).label, 'Cliente específico')
   assert.equal(releaseKind({ profile: 'default' }).label, 'Cliente padrão')
-  assert.equal(releaseKind({}).label, 'Cliente padrão')
+  assert.equal(releaseKind({ profile: '', generation_uuid: 'x' }).label, 'Cliente padrão')
+  assert.equal(releaseKind({}).label, 'Tipo não registrado')
+  assert.equal(releaseKind({}).key, 'unknown')
+})
+
+test('tipo não registrado bloqueia disponibilizar até definir o tipo', () => {
+  const n = analystsDownloadNotice({ id: 5, version: '2.0.9' }, { id: 1, version: '2.0.7', profile: 'analysts' })
+  assert.equal(n.blocked, true)
+  assert.match(n.message, /Defina o tipo/)
+  assert.equal(analystsDownloadNotice({ id: 6, version: '2.4.0', profile: 'analysts' }, null).blocked, false)
 })
 
 test('confirmação de disponibilizar avisa a substituição e o tipo errado', () => {

@@ -54,6 +54,7 @@ export const updatesSignRequest = (version) => request({ url: '/nextec/updates/s
 export const updatesRollout = (data) => request({ url: '/nextec/updates/rollout', method: 'post', data })
 export const updatesDelete = (id) => request({ url: '/nextec/updates/delete', method: 'post', data: { id } })
 export const importGeneratedRelease = (uuid) => request({ url: '/nextec/updates/import', method: 'post', data: { uuid }, timeout: 300000 })
+export const updatesProfile = (version, profile) => request({ url: '/nextec/updates/profile', method: 'post', data: { version, profile } })
 export const updatesInternal = (id, enabled) => request({ url: '/nextec/updates/internal', method: 'post', data: { id, enabled } })
 export const availableApp = () => request({ url: '/my/app-version' })
 // o envio do instalador usa XMLHttpRequest direto (progresso), em src/nextec/views/Updates.vue
