@@ -31,7 +31,7 @@
             </el-dropdown-menu>
           </template>
         </el-dropdown>
-        <el-button type="primary" @click="openForm()">
+        <el-button type="primary" @click="addVisible = true">
           <el-icon><el-icon-Plus/></el-icon><span>Adicionar</span>
         </el-button>
       </div>
@@ -142,6 +142,8 @@
     </div>
 
     <!-- editar / adicionar -->
+    <AddDeviceDialog v-model="addVisible" :clients="groups" @manual="openForm()"/>
+
     <el-dialog v-model="form.visible" :title="form.data.row_id ? 'Editar dispositivo' : 'Adicionar dispositivo'" width="640px">
       <el-form label-position="top" class="nx-form" @submit.prevent>
         <div class="nx-form-grid">
@@ -287,6 +289,7 @@
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { batchRemove, create, list, remove, update } from '@/api/peer'
   import { list as groupList } from '@/api/device_group'
+  import AddDeviceDialog from '@/nextec/views/AddDeviceDialog.vue'
   import { batchCreateFromPeers } from '@/api/address_book'
   import { list as collectionList } from '@/api/address_book_collection'
   import { loadAllUsers } from '@/global'
@@ -304,6 +307,7 @@
   // ---------- dados ----------
   const all = ref([])
   const groups = ref([])
+  const addVisible = ref(false)
   const loading = ref(false)
   const load = async () => {
     loading.value = true

@@ -1,0 +1,1107 @@
+Convites de instalacao: MSI com o codigo no nome, link /i/<codigo>, atribuicao automatica ao cliente
+
+Nextec 0041: o administrador cria convites (cliente, apelido, tipo, regra de senha, validade, usos). A pagina publica
+/i/<codigo> entrega o MSI publicado para todos com o codigo no nome do arquivo (<app>-<codigo>.msi); o agente, ja
+inscrito, apresenta o codigo em POST /api/nextec/agent/invite e a maquina e atribuida ao cliente com apelido e regra
+de senha (NextecEnrollAssign). Codigo de 20 caracteres (so o hash e consultado; copia cifrada para recopiar o link),
+uso unico ou link do cliente com limite de usos, vencido some da lista em 7 dias. Admin: GET/POST /nextec/invites,
+POST /nextec/invites/batch e /revoke. Tabelas criadas na primeira utilizacao.
+
+diff --git a/http/controller/admin/nextec_invites.go b/http/controller/admin/nextec_invites.go
+new file mode 100644
+index 0000000..748dfeb
+--- /dev/null
++++ b/http/controller/admin/nextec_invites.go
+@@ -0,0 +1,137 @@
++package admin
++
++import (
++	"fmt"
++	"time"
++
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/http/response"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++)
++
++// NextecInvites: convites de instalação (somente admin): criar, listar, cancelar e criar em lote.
++type NextecInvites struct{}
++
++type nextecInviteForm struct {
++	Label        string `json:"label"`
++	Alias        string `json:"alias"`
++	ClientId     uint   `json:"client_id"`
++	Kind         string `json:"kind"`
++	AutoPassword bool   `json:"auto_password"`
++	Interval     int    `json:"interval_minutes"`
++	Mode         string `json:"mode"`
++	MaxUses      int    `json:"max_uses"`
++	Hours        int    `json:"hours"`
++}
++
++type nextecInviteBatchForm struct {
++	nextecInviteForm
++	Items []struct {
++		Label string `json:"label"`
++		Alias string `json:"alias"`
++	} `json:"items"`
++}
++
++type nextecInviteRevokeForm struct {
++	Id uint `json:"id" binding:"required"`
++}
++
++func (f nextecInviteForm) input() service.NextecInviteInput {
++	return service.NextecInviteInput{
++		Label: f.Label, Alias: f.Alias, ClientID: f.ClientId, Kind: f.Kind, AutoPassword: f.AutoPassword, Interval: f.Interval,
++		Mode: f.Mode, MaxUses: f.MaxUses, TTL: time.Duration(f.Hours) * time.Hour,
++	}
++}
++
++func nextecInviteRelease() gin.H {
++	r := service.NextecInviteRelease()
++	if r == nil {
++		return nil
++	}
++	return gin.H{"version": r.Version, "file_name": r.FileName, "sha256": r.Sha256, "size": r.Size}
++}
++
++// List devolve os convites e a versão do MSI que eles entregam
++// @Router /admin/nextec/invites [get]
++func (n *NextecInvites) List(c *gin.Context) {
++	list, err := service.NextecInviteList()
++	if err != nil {
++		response.Fail(c, 101, "Não foi possível listar os convites.")
++		return
++	}
++	response.Success(c, &gin.H{"list": list, "release": nextecInviteRelease()})
++}
++
++// Create cria um convite
++// @Router /admin/nextec/invites [post]
++func (n *NextecInvites) Create(c *gin.Context) {
++	var f nextecInviteForm
++	if err := c.ShouldBindJSON(&f); err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError"))
++		return
++	}
++	rel := service.NextecInviteRelease()
++	if rel == nil {
++		response.Fail(c, 101, service.ErrNextecInviteRelease.Error())
++		return
++	}
++	u := service.AllService.UserService.CurUser(c)
++	in := f.input()
++	in.Version = rel.Version
++	created, err := service.NextecInviteCreate(u, in)
++	if err != nil {
++		response.Fail(c, 101, err.Error())
++		return
++	}
++	service.NextecSecretAuditAdd(u, "", "invite_create", nextecIP(c), fmt.Sprintf("%s cliente %d", created.Invite.Hint, created.Invite.ClientId))
++	response.Success(c, &gin.H{"invite": created.Invite, "code": created.Code, "release": service.NextecInviteReleaseInfoOf(rel)})
++}
++
++// Batch cria um convite de uso único por linha
++// @Router /admin/nextec/invites/batch [post]
++func (n *NextecInvites) Batch(c *gin.Context) {
++	var f nextecInviteBatchForm
++	if err := c.ShouldBindJSON(&f); err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError"))
++		return
++	}
++	rel := service.NextecInviteRelease()
++	if rel == nil {
++		response.Fail(c, 101, service.ErrNextecInviteRelease.Error())
++		return
++	}
++	items := make([]service.NextecInviteBatchItem, 0, len(f.Items))
++	for _, it := range f.Items {
++		items = append(items, service.NextecInviteBatchItem{Label: it.Label, Alias: it.Alias})
++	}
++	u := service.AllService.UserService.CurUser(c)
++	in := f.input()
++	in.Version = rel.Version
++	created, err := service.NextecInviteCreateBatch(u, in, items)
++	if err != nil {
++		response.Fail(c, 101, err.Error())
++		return
++	}
++	out := make([]gin.H, 0, len(created))
++	for _, cr := range created {
++		out = append(out, gin.H{"invite": cr.Invite, "code": cr.Code})
++	}
++	service.NextecSecretAuditAdd(u, "", "invite_batch", nextecIP(c), fmt.Sprintf("%d convites cliente %d", len(out), f.ClientId))
++	response.Success(c, &gin.H{"list": out, "release": service.NextecInviteReleaseInfoOf(rel)})
++}
++
++// Revoke cancela um convite
++// @Router /admin/nextec/invites/revoke [post]
++func (n *NextecInvites) Revoke(c *gin.Context) {
++	var f nextecInviteRevokeForm
++	if err := c.ShouldBindJSON(&f); err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError"))
++		return
++	}
++	if err := service.NextecInviteRevoke(f.Id); err != nil {
++		response.Fail(c, 101, err.Error())
++		return
++	}
++	service.NextecSecretAuditAdd(service.AllService.UserService.CurUser(c), "", "invite_revoke", nextecIP(c), fmt.Sprintf("%d", f.Id))
++	response.Success(c, nil)
++}
+diff --git a/http/controller/api/nextec_invite_claim.go b/http/controller/api/nextec_invite_claim.go
+new file mode 100644
+index 0000000..a9269b9
+--- /dev/null
++++ b/http/controller/api/nextec_invite_claim.go
+@@ -0,0 +1,49 @@
++package api
++
++import (
++	"errors"
++	"net/http"
++	"strconv"
++
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++)
++
++type inviteClaimForm struct {
++	Id    string `json:"id"`
++	Token string `json:"token"`
++	Code  string `json:"code"`
++}
++
++// InviteClaim POST /api/nextec/agent/invite {id, token, code}
++// O agente já inscrito apresenta o código do convite (vindo do nome do MSI); a máquina é atribuída ao cliente do convite.
++func (a *NextecAgent) InviteClaim(c *gin.Context) {
++	f := &inviteClaimForm{}
++	if err := c.ShouldBindJSON(f); err != nil {
++		c.JSON(http.StatusBadRequest, gin.H{"error": "bad_request"})
++		return
++	}
++	res, err := service.NextecInviteClaim(agentIP(c), f.Id, f.Token, f.Code)
++	if err != nil {
++		switch {
++		case errors.Is(err, service.ErrNextecInviteInvalid):
++			c.JSON(http.StatusForbidden, gin.H{"error": "invite_invalid"})
++		case errors.Is(err, service.ErrNextecClientConflict):
++			c.JSON(http.StatusConflict, gin.H{"error": "client_conflict"})
++		case errors.Is(err, service.ErrNextecIdentityConflict):
++			c.JSON(http.StatusConflict, gin.H{"error": "identity_conflict"})
++		case errors.Is(err, service.ErrNextecTooManyFails):
++			c.JSON(http.StatusTooManyRequests, gin.H{"error": "too_many_failures"})
++		case errors.Is(err, service.ErrNextecRateLimited):
++			// limite por máquina (compartilhado com os outros endpoints do agente): 429 com Retry-After, não é erro interno
++			c.Header("Retry-After", strconv.Itoa(service.NextecRetryAfterSeconds(err)))
++			c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate_limited"})
++		case errors.Is(err, service.ErrNextecBadAgentAuth):
++			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
++		default:
++			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
++		}
++		return
++	}
++	c.JSON(http.StatusOK, gin.H{"state": res.State, "client_id": res.ClientID, "managed": res.Managed, "interval_minutes": res.Interval})
++}
+diff --git a/http/controller/api/nextec_invite_public.go b/http/controller/api/nextec_invite_public.go
+new file mode 100644
+index 0000000..d1a1877
+--- /dev/null
++++ b/http/controller/api/nextec_invite_public.go
+@@ -0,0 +1,83 @@
++package api
++
++import (
++	"html"
++	"net/http"
++	"path/filepath"
++	"strings"
++	"time"
++
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++)
++
++// NextecInvitePublic: página pública de um convite de instalação (/i/<código>) e o download do MSI. O arquivo sai com
++// o código no nome (<app>-<código>.msi): é assim que o instalador sabe de qual convite veio.
++type NextecInvitePublic struct{}
++
++const supportInvitePageReady = `<p class="eyebrow">Instalação</p>
++<h1 id="titulo">Instalar o aplicativo Nextec</h1>
++<p class="who">Instalação para <strong>{{WHO}}</strong></p>
++<a class="btn" href="/i/{{CODE}}/baixar" download>
++<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/></svg>
++Baixar o instalador</a>
++<p class="meta">Para Windows 10 ou 11 &middot; versão {{VERSION}} &middot; {{SIZE}}</p>
++<h2>Como instalar</h2>
++<ol class="steps">
++<li><strong>Abra o arquivo baixado</strong><span>Procure o instalador na pasta Downloads e dê dois cliques. Não renomeie o arquivo.</span></li>
++<li><strong>Confirme a permissão do Windows</strong><span>Se o Windows pedir permissão de administrador, clique em Sim.</span></li>
++<li><strong>Aguarde terminar</strong><span>Leva menos de um minuto. A Nextec já enxerga a máquina quando terminar.</span></li>
++</ol>
++<details>
++<summary>O Windows mostrou um aviso?</summary>
++<p>É normal para programas que não vêm da loja do Windows. Clique em <strong>Mais informações</strong> e depois em <strong>Executar assim mesmo</strong>.</p>
++</details>
++<div class="note">
++<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.2 8-8 9-4.8-1-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg>
++<div>Este link vale até <strong>{{UNTIL}}</strong> e foi feito para esta instalação. Não o compartilhe.</div>
++</div>`
++
++const supportInvitePageGone = `<div class="empty">
++<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6"/><path d="M12 16.5v.5"/></svg>
++<h1 id="titulo">Este link de instalação não está disponível</h1>
++<p class="lead">Ele venceu, foi cancelado ou já foi usado. Peça um novo link a quem enviou este.</p>
++</div>`
++
++func supportInviteRender(c *gin.Context, status int, body string) {
++	page := strings.NewReplacer("{{LOGO}}", supportLogo, "{{BODY}}", body).Replace(supportPageTpl)
++	c.Data(status, "text/html; charset=utf-8", []byte(page))
++}
++
++// Page GET /i/:code
++func (s *NextecInvitePublic) Page(c *gin.Context) {
++	supportHeaders(c)
++	code := strings.ToUpper(strings.TrimSpace(c.Param("code")))
++	inv := service.NextecInviteByCode(code)
++	rel := service.NextecInviteReleaseOf(inv)
++	if inv == nil || rel == nil {
++		supportInviteRender(c, http.StatusNotFound, supportInvitePageGone)
++		return
++	}
++	body := strings.NewReplacer(
++		"{{WHO}}", html.EscapeString(inv.Label),
++		"{{CODE}}", code,
++		"{{VERSION}}", html.EscapeString(rel.Version),
++		"{{SIZE}}", supportMB(rel.Size),
++		"{{UNTIL}}", time.Unix(inv.ExpiresAt, 0).Format("02/01/2006 15:04"),
++	).Replace(supportInvitePageReady)
++	supportInviteRender(c, http.StatusOK, body)
++}
++
++// Download GET /i/:code/baixar
++func (s *NextecInvitePublic) Download(c *gin.Context) {
++	supportHeaders(c)
++	code := strings.ToUpper(strings.TrimSpace(c.Param("code")))
++	inv := service.NextecInviteByCode(code)
++	rel := service.NextecInviteReleaseOf(inv)
++	if inv == nil || rel == nil {
++		c.Status(http.StatusNotFound)
++		return
++	}
++	base := strings.TrimSuffix(rel.FileName, filepath.Ext(rel.FileName))
++	c.FileAttachment(service.NextecReleasePath(rel), base+"-"+code+".msi")
++}
+diff --git a/model/nextec_install_invite.go b/model/nextec_install_invite.go
+new file mode 100644
+index 0000000..8669742
+--- /dev/null
++++ b/model/nextec_install_invite.go
+@@ -0,0 +1,35 @@
++package model
++
++// NextecInstallInvite é um convite de instalação: o MSI baixado pelo link /i/<código> (ou instalado pelo comando
++// PowerShell) leva o código no nome do arquivo; o agente o apresenta na inscrição e a máquina já nasce no cliente certo,
++// com apelido e regra de senha. O código nunca é guardado em claro para busca (só o hash); a cópia cifrada serve para
++// o administrador copiar o link de novo.
++type NextecInstallInvite struct {
++	Id        uint   `json:"id" gorm:"primaryKey"`
++	CodeHash  string `json:"-" gorm:"size:64;uniqueIndex;not null"`
++	CodeEnc   string `json:"-" gorm:"size:512"`
++	Hint      string `json:"hint" gorm:"size:4"`
++	Label     string `json:"label" gorm:"size:120;not null"`
++	Alias     string `json:"alias" gorm:"size:64"`
++	ClientId  uint   `json:"client_id" gorm:"index"`
++	Kind      string `json:"kind" gorm:"size:12"`
++	Rule      string `json:"rule" gorm:"size:8"`
++	Interval  int    `json:"interval_minutes"`
++	Mode      string `json:"mode" gorm:"size:8"`
++	Version   string `json:"version" gorm:"size:32"` // versão do MSI fixada no convite (a publicada para todos na criação)
++	MaxUses   int    `json:"max_uses"`
++	Uses      int    `json:"uses"`
++	ExpiresAt int64  `json:"expires_at" gorm:"index"`
++	Revoked   bool   `json:"revoked"`
++	CreatedBy string `json:"created_by" gorm:"size:64"`
++	CreatedAt int64  `json:"created_at"`
++}
++
++// NextecInstallInviteUse registra cada máquina que consumiu um convite.
++type NextecInstallInviteUse struct {
++	Id       uint   `json:"id" gorm:"primaryKey"`
++	InviteId uint   `json:"invite_id" gorm:"uniqueIndex:ux_nextec_invite_peer"`
++	PeerId   string `json:"peer_id" gorm:"size:64;uniqueIndex:ux_nextec_invite_peer"`
++	At       int64  `json:"at"`
++	Ip       string `json:"ip" gorm:"size:64"`
++}
+diff --git a/service/nextec_install_invite.go b/service/nextec_install_invite.go
+new file mode 100644
+index 0000000..390a369
+--- /dev/null
++++ b/service/nextec_install_invite.go
+@@ -0,0 +1,467 @@
++package service
++
++import (
++	"crypto/rand"
++	"errors"
++	"fmt"
++	"regexp"
++	"strings"
++	"sync"
++	"time"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"gorm.io/gorm"
++	"gorm.io/gorm/clause"
++)
++
++// Convites de instalação (Nextec). O administrador cria o convite (cliente, apelido, tipo, regra de senha, validade, usos);
++// o MSI do convite leva o código no nome do arquivo e o agente o apresenta na inscrição. Atribuição sem palpite: o código é
++// o que prova de qual convite a máquina veio.
++
++const (
++	nextecInviteCodeLen     = 20
++	nextecInviteMinTTL      = 1 * time.Hour
++	nextecInviteMaxTTL      = 7 * 24 * time.Hour
++	nextecInviteDefTTL      = 24 * time.Hour
++	nextecInviteMaxUses     = 100
++	nextecInviteBatchMax    = 200
++	nextecInviteKeepExpired = int64(7 * 24 * 3600) // vencido some da lista depois de 7 dias
++	nextecInviteListLimit   = 200
++)
++
++var (
++	ErrNextecInviteInvalid = errors.New("Convite inválido, vencido, cancelado ou já usado.")
++	ErrNextecInviteLabel   = errors.New("Informe o cliente ou a descrição do convite (até 120 caracteres).")
++	ErrNextecInviteAlias   = errors.New("Apelido inválido. Use letras, números, espaço, ponto, hífen ou sublinhado (até 64 caracteres).")
++	ErrNextecInviteClient  = errors.New("Escolha um cliente existente.")
++	ErrNextecInviteKind    = errors.New("Tipo inválido. Use servidor ou estação.")
++	ErrNextecInviteMode    = errors.New("Uso inválido. Escolha uso único ou link do cliente.")
++	ErrNextecInviteUses    = errors.New("Limite de usos inválido (1 a 100).")
++	ErrNextecInviteTTL     = errors.New("A validade deve ficar entre 1 hora e 7 dias.")
++	ErrNextecInviteBatch   = errors.New("Informe de 1 a 200 itens no lote.")
++	ErrNextecInviteNone    = errors.New("Convite não encontrado.")
++	ErrNextecInviteRelease = errors.New("Nenhuma versão está publicada para todos. Publique uma versão em Atualizações do app antes de criar convites.")
++
++	nextecInviteCodeRe  = regexp.MustCompile("^[A-HJ-NP-Z2-9]{20}$")
++	nextecInviteAliasRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$`)
++
++	invitesMu       sync.Mutex
++	invitesMigrated *gorm.DB
++)
++
++func invitesReady() error {
++	invitesMu.Lock()
++	defer invitesMu.Unlock()
++	if invitesMigrated == DB {
++		return nil
++	}
++	if err := DB.AutoMigrate(&model.NextecInstallInvite{}, &model.NextecInstallInviteUse{}); err != nil {
++		return err
++	}
++	invitesMigrated = DB
++	return nil
++}
++
++func nextecInviteNewCode() (string, error) {
++	raw := make([]byte, nextecInviteCodeLen)
++	if _, err := rand.Read(raw); err != nil {
++		return "", err
++	}
++	out := make([]byte, nextecInviteCodeLen)
++	for i, b := range raw {
++		out[i] = nextecSupportLinkAlphabet[int(b)%len(nextecSupportLinkAlphabet)]
++	}
++	return string(out), nil
++}
++
++// NextecInviteInput são os campos escolhidos ao criar um convite. TTL zero vale 24 horas.
++type NextecInviteInput struct {
++	Label        string
++	Alias        string
++	ClientID     uint
++	Kind         string // server | workstation
++	AutoPassword bool
++	Interval     int // minutos; 0 vale o padrão do cofre
++	Mode         string // single | client
++	MaxUses      int
++	TTL          time.Duration
++	Version      string // versão publicada para todos que o convite entrega (fixada na criação)
++}
++
++// NextecInviteCreated devolve o convite e o código em claro (mostrado ao administrador; depois só pela cópia cifrada).
++type NextecInviteCreated struct {
++	Invite *model.NextecInstallInvite
++	Code   string
++}
++
++func nextecInviteValidate(in *NextecInviteInput) error {
++	in.Label = strings.TrimSpace(in.Label)
++	in.Alias = strings.TrimSpace(in.Alias)
++	in.Version = strings.TrimSpace(in.Version)
++	if in.Version == "" || len(in.Version) > 32 {
++		return ErrNextecInviteRelease
++	}
++	if in.Label == "" || len([]rune(in.Label)) > 120 {
++		return ErrNextecInviteLabel
++	}
++	if in.Alias != "" && !nextecInviteAliasRe.MatchString(in.Alias) {
++		return ErrNextecInviteAlias
++	}
++	if in.Kind == "" {
++		in.Kind = "workstation"
++	}
++	if in.Kind != "server" && in.Kind != "workstation" {
++		return ErrNextecInviteKind
++	}
++	if in.Mode == "" {
++		in.Mode = "single"
++	}
++	if in.Mode != "single" && in.Mode != "client" {
++		return ErrNextecInviteMode
++	}
++	if in.Mode == "single" {
++		in.MaxUses = 1
++	} else {
++		if in.MaxUses == 0 {
++			in.MaxUses = 10
++		}
++		if in.MaxUses < 1 || in.MaxUses > nextecInviteMaxUses {
++			return ErrNextecInviteUses
++		}
++	}
++	if in.TTL == 0 {
++		in.TTL = nextecInviteDefTTL
++	}
++	if in.TTL < nextecInviteMinTTL || in.TTL > nextecInviteMaxTTL {
++		return ErrNextecInviteTTL
++	}
++	if in.AutoPassword {
++		if in.Interval == 0 {
++			in.Interval = NextecSecretDefaultInterval
++		}
++		if in.Interval < NextecSecretMinInterval || in.Interval > NextecSecretMaxInterval {
++			return ErrNextecBadInterval
++		}
++	} else {
++		in.Interval = 0
++	}
++	return nil
++}
++
++func nextecInviteCreateTx(tx *gorm.DB, creator string, in NextecInviteInput) (*NextecInviteCreated, error) {
++	var group model.DeviceGroup
++	if in.ClientID == 0 || tx.First(&group, in.ClientID).Error != nil || group.Id == 0 {
++		return nil, ErrNextecInviteClient
++	}
++	rule := "none"
++	if in.AutoPassword {
++		rule = "peer"
++	}
++	now := time.Now()
++	for attempt := 0; attempt < 5; attempt++ {
++		code, err := nextecInviteNewCode()
++		if err != nil {
++			return nil, err
++		}
++		enc, err := vaultEncrypt(code)
++		if err != nil {
++			return nil, err
++		}
++		inv := &model.NextecInstallInvite{
++			CodeHash: sha256Hex(code), CodeEnc: enc, Hint: code[len(code)-4:], Label: in.Label, Alias: in.Alias,
++			ClientId: in.ClientID, Kind: in.Kind, Rule: rule, Interval: in.Interval, Mode: in.Mode, MaxUses: in.MaxUses, Version: in.Version,
++			ExpiresAt: now.Add(in.TTL).Unix(), CreatedBy: creator, CreatedAt: now.Unix(),
++		}
++		if err := tx.Create(inv).Error; err == nil {
++			return &NextecInviteCreated{Invite: inv, Code: code}, nil
++		}
++	}
++	return nil, errors.New("Não foi possível gerar o convite. Tente de novo.")
++}
++
++// NextecInviteCreate cria um convite.
++func NextecInviteCreate(u *model.User, in NextecInviteInput) (*NextecInviteCreated, error) {
++	if err := nextecInviteValidate(&in); err != nil {
++		return nil, err
++	}
++	if err := invitesReady(); err != nil {
++		return nil, err
++	}
++	creator := ""
++	if u != nil {
++		creator = u.Username
++	}
++	return nextecInviteCreateTx(DB, creator, in)
++}
++
++// NextecInviteBatchItem é uma linha do lote: descrição e apelido próprios; o resto vem do modelo comum.
++type NextecInviteBatchItem struct {
++	Label string
++	Alias string
++}
++
++// NextecInviteCreateBatch cria um convite de uso único por linha, tudo ou nada.
++func NextecInviteCreateBatch(u *model.User, base NextecInviteInput, items []NextecInviteBatchItem) ([]*NextecInviteCreated, error) {
++	if len(items) == 0 || len(items) > nextecInviteBatchMax {
++		return nil, ErrNextecInviteBatch
++	}
++	if err := invitesReady(); err != nil {
++		return nil, err
++	}
++	creator := ""
++	if u != nil {
++		creator = u.Username
++	}
++	out := make([]*NextecInviteCreated, 0, len(items))
++	err := DB.Transaction(func(tx *gorm.DB) error {
++		for i, it := range items {
++			in := base
++			in.Label, in.Alias = it.Label, it.Alias
++			in.Mode, in.MaxUses = "single", 1
++			if err := nextecInviteValidate(&in); err != nil {
++				return fmt.Errorf("linha %d: %w", i+1, err)
++			}
++			created, err := nextecInviteCreateTx(tx, creator, in)
++			if err != nil {
++				return fmt.Errorf("linha %d: %w", i+1, err)
++			}
++			out = append(out, created)
++		}
++		return nil
++	})
++	if err != nil {
++		return nil, err
++	}
++	return out, nil
++}
++
++// NextecInviteByCode devolve o convite só se estiver válido (existe, não cancelado, não vencido e com vaga).
++func NextecInviteByCode(code string) *model.NextecInstallInvite {
++	code = strings.ToUpper(strings.TrimSpace(code))
++	if !nextecInviteCodeRe.MatchString(code) || invitesReady() != nil {
++		return nil
++	}
++	inv := &model.NextecInstallInvite{}
++	if DB.Where("code_hash = ?", sha256Hex(code)).First(inv).Error != nil {
++		return nil
++	}
++	if inv.Revoked || inv.ExpiresAt <= time.Now().Unix() || inv.Uses >= inv.MaxUses {
++		return nil
++	}
++	return inv
++}
++
++// NextecInviteRevoke cancela o convite.
++func NextecInviteRevoke(id uint) error {
++	if err := invitesReady(); err != nil {
++		return err
++	}
++	res := DB.Model(&model.NextecInstallInvite{}).Where("id = ?", id).Update("revoked", true)
++	if res.Error != nil {
++		return res.Error
++	}
++	if res.RowsAffected == 0 {
++		return ErrNextecInviteNone
++	}
++	return nil
++}
++
++// NextecInviteView é o convite como o painel mostra.
++type NextecInviteView struct {
++	model.NextecInstallInvite
++	Code       string   `json:"code"`
++	ClientName string   `json:"client_name"`
++	Status     string   `json:"status"` // active | used | expired | revoked
++	PeerIds    []string `json:"peer_ids"`
++	// Release é o MSI fixado no convite: o hash do comando copiado é o dele, mesmo que outra versão seja publicada depois.
++	Release *NextecInviteReleaseInfo `json:"release"`
++}
++
++// NextecInviteReleaseInfo descreve o MSI de um convite (nunca o caminho no disco).
++type NextecInviteReleaseInfo struct {
++	Version  string `json:"version"`
++	FileName string `json:"file_name"`
++	Sha256   string `json:"sha256"`
++	Size     int64  `json:"size"`
++}
++
++// NextecInviteReleaseInfoOf resume uma versão; nil se não há.
++func NextecInviteReleaseInfoOf(r *model.NextecAppRelease) *NextecInviteReleaseInfo {
++	if r == nil {
++		return nil
++	}
++	return &NextecInviteReleaseInfo{Version: r.Version, FileName: r.FileName, Sha256: r.Sha256, Size: r.Size}
++}
++
++// NextecInviteList lista os convites (vencidos há mais de 7 dias são apagados). O código vem da cópia cifrada.
++func NextecInviteList() ([]NextecInviteView, error) {
++	if err := invitesReady(); err != nil {
++		return nil, err
++	}
++	now := time.Now().Unix()
++	cutoff := now - nextecInviteKeepExpired
++	var old []uint
++	DB.Model(&model.NextecInstallInvite{}).Where("expires_at < ?", cutoff).Pluck("id", &old)
++	if len(old) > 0 {
++		DB.Where("invite_id IN ?", old).Delete(&model.NextecInstallInviteUse{})
++		DB.Where("id IN ?", old).Delete(&model.NextecInstallInvite{})
++	}
++	var invites []model.NextecInstallInvite
++	if err := DB.Order("id desc").Limit(nextecInviteListLimit).Find(&invites).Error; err != nil {
++		return nil, err
++	}
++	ids := make([]uint, 0, len(invites))
++	clientIDs := make([]uint, 0, len(invites))
++	for _, inv := range invites {
++		ids = append(ids, inv.Id)
++		clientIDs = append(clientIDs, inv.ClientId)
++	}
++	usesBy := map[uint][]string{}
++	if len(ids) > 0 {
++		var uses []model.NextecInstallInviteUse
++		DB.Where("invite_id IN ?", ids).Order("id asc").Find(&uses)
++		for _, u := range uses {
++			usesBy[u.InviteId] = append(usesBy[u.InviteId], u.PeerId)
++		}
++	}
++	names := map[uint]string{}
++	if len(clientIDs) > 0 {
++		var groups []model.DeviceGroup
++		DB.Where("id IN ?", clientIDs).Find(&groups)
++		for _, g := range groups {
++			names[g.Id] = g.Name
++		}
++	}
++	out := make([]NextecInviteView, 0, len(invites))
++	releases := map[string]*NextecInviteReleaseInfo{}
++	for _, inv := range invites {
++		v := NextecInviteView{NextecInstallInvite: inv, ClientName: names[inv.ClientId], PeerIds: usesBy[inv.Id]}
++		if _, ok := releases[inv.Version]; !ok {
++			ref := inv
++			releases[inv.Version] = NextecInviteReleaseInfoOf(NextecInviteReleaseOf(&ref))
++		}
++		v.Release = releases[inv.Version]
++		if v.PeerIds == nil {
++			v.PeerIds = []string{}
++		}
++		switch {
++		case inv.Revoked:
++			v.Status = "revoked"
++		case inv.ExpiresAt <= now:
++			v.Status = "expired"
++		case inv.Uses >= inv.MaxUses:
++			v.Status = "used"
++		default:
++			v.Status = "active"
++		}
++		if v.Status == "active" && inv.CodeEnc != "" {
++			if code, err := vaultDecrypt(inv.CodeEnc); err == nil {
++				v.Code = code
++			}
++		}
++		v.CodeEnc = ""
++		out = append(out, v)
++	}
++	return out, nil
++}
++
++// nextecInviteRolloutOK: só a versão publicada para TODOS vira convite; piloto e desligado nunca chegam a um cliente avulso.
++func nextecInviteRolloutOK(ro NextecRollout) bool {
++	return ro.Mode == NextecRolloutAll && ro.Version != ""
++}
++
++// NextecInviteRelease é a versão que um convite NOVO entrega: a publicada para todos (padrão). Nil se não há.
++func NextecInviteRelease() *model.NextecAppRelease {
++	ro := NextecRolloutGet()
++	if !nextecInviteRolloutOK(ro) {
++		return nil
++	}
++	return NextecReleaseByVersion(ro.Version)
++}
++
++// NextecInviteReleaseOf é a versão fixada no convite: o link e o comando copiado entregam sempre o mesmo MSI.
++func NextecInviteReleaseOf(inv *model.NextecInstallInvite) *model.NextecAppRelease {
++	if inv == nil || inv.Version == "" {
++		return nil
++	}
++	return NextecReleaseByVersion(inv.Version)
++}
++
++// NextecInviteClaim: o agente, já inscrito (com o token dele), apresenta o código do convite. A máquina é atribuída ao
++// cliente do convite com a regra de senha escolhida e recebe o apelido. Repetir com a mesma máquina é idempotente; uma
++// vaga só é gasta quando a atribuição dá certo.
++func NextecInviteClaim(ip, peerID, token, code string) (*NextecAssignResult, error) {
++	if _, err := agentAuth(ip, peerID, token); err != nil {
++		return nil, err
++	}
++	code = strings.ToUpper(strings.TrimSpace(code))
++	if !nextecInviteCodeRe.MatchString(code) {
++		nextecFailAdd(ip)
++		return nil, ErrNextecInviteInvalid
++	}
++	if err := invitesReady(); err != nil {
++		return nil, err
++	}
++	var inv model.NextecInstallInvite
++	if DB.Where("code_hash = ?", sha256Hex(code)).First(&inv).Error != nil {
++		nextecFailAdd(ip)
++		return nil, ErrNextecInviteInvalid
++	}
++	now := time.Now().Unix()
++	if inv.Revoked || inv.ExpiresAt <= now {
++		return nil, ErrNextecInviteInvalid
++	}
++	assign := func() (*NextecAssignResult, error) {
++		return NextecEnrollAssign(NextecAssignOptions{
++			PeerID: peerID, ClientID: inv.ClientId, Rule: inv.Rule, Interval: inv.Interval, IP: nextecBootstrapAuditIP(ip),
++			Username: "convite " + inv.Hint,
++		})
++	}
++	// A vaga é gasta de forma atômica: o registro de uso (único por convite e máquina) e o contador andam na mesma
++	// transação. Uma repetição da mesma máquina, mesmo simultânea, cai no conflito e não gasta outra vaga.
++	use := &model.NextecInstallInviteUse{InviteId: inv.Id, PeerId: peerID, At: now, Ip: nextecBootstrapAuditIP(ip)}
++	already := false
++	if err := DB.Transaction(func(tx *gorm.DB) error {
++		ins := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(use)
++		if ins.Error != nil {
++			return ins.Error
++		}
++		if ins.RowsAffected == 0 {
++			already = true
++			return nil
++		}
++		res := tx.Model(&model.NextecInstallInvite{}).
++			Where("id = ? AND uses < max_uses AND revoked = ? AND expires_at > ?", inv.Id, false, now).
++			UpdateColumn("uses", gorm.Expr("uses + 1"))
++		if res.Error != nil {
++			return res.Error
++		}
++		if res.RowsAffected == 0 {
++			return ErrNextecInviteInvalid
++		}
++		return nil
++	}); err != nil {
++		return nil, err
++	}
++	if already {
++		return assign()
++	}
++	out, err := assign()
++	if err != nil {
++		// atribuição falhou: devolve a vaga (e o registro de uso) para a máquina poder tentar de novo
++		DB.Delete(&model.NextecInstallInviteUse{}, use.Id)
++		DB.Model(&model.NextecInstallInvite{}).Where("id = ? AND uses > 0", inv.Id).UpdateColumn("uses", gorm.Expr("uses - 1"))
++		return nil, err
++	}
++	if inv.Alias != "" {
++		alias := inv.Alias
++		if inv.MaxUses > 1 {
++			var n int64
++			DB.Model(&model.NextecInstallInviteUse{}).Where("invite_id = ?", inv.Id).Count(&n)
++			alias = fmt.Sprintf("%s %d", inv.Alias, n)
++		}
++		DB.Model(&model.Peer{}).Where("id = ? AND (alias = '' OR alias IS NULL)", peerID).Update("alias", alias)
++	}
++	NextecSecretAuditAdd(nil, peerID, "invite_claim", nextecBootstrapAuditIP(ip), fmt.Sprintf("convite %s cliente %d", inv.Hint, inv.ClientId))
++	return out, nil
++}
+diff --git a/service/nextec_install_invite_test.go b/service/nextec_install_invite_test.go
+new file mode 100644
+index 0000000..a372c0f
+--- /dev/null
++++ b/service/nextec_install_invite_test.go
+@@ -0,0 +1,251 @@
++package service
++
++import (
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"gorm.io/gorm"
++)
++
++func inviteBase() NextecInviteInput {
++	return NextecInviteInput{Label: "Cartório Mariinha", Alias: "Servidor", ClientID: 7, Kind: "server", AutoPassword: true, Interval: 30, Version: "2.0.0"}
++}
++
++// segunda máquina inscrita (pendente), com o token em claro "tok2".
++func inviteSecondPeer(t *testing.T, db *gorm.DB) {
++	t.Helper()
++	if err := db.Create(&model.Peer{Id: "222222222", Uuid: "uuid-2", LastOnlineTime: time.Now().Unix(), Hostname: "PC-02"}).Error; err != nil {
++		t.Fatal(err)
++	}
++	if err := db.Create(&model.NextecDeviceSecret{PeerId: "222222222", TokenHash: sha256Hex("tok2"), AwaitingApproval: true, Uuid: "uuid-2", EnrolledVia: "self"}).Error; err != nil {
++		t.Fatal(err)
++	}
++}
++
++func TestInviteCreateValidatesAndCodeIsLongAndStoredHashed(t *testing.T) {
++	enrollSetup(t)
++	bad := inviteBase()
++	bad.Label = " "
++	if _, err := NextecInviteCreate(nil, bad); err != ErrNextecInviteLabel {
++		t.Fatalf("label: %v", err)
++	}
++	bad = inviteBase()
++	bad.ClientID = 99
++	if _, err := NextecInviteCreate(nil, bad); err != ErrNextecInviteClient {
++		t.Fatalf("cliente: %v", err)
++	}
++	bad = inviteBase()
++	bad.Alias = "a/b"
++	if _, err := NextecInviteCreate(nil, bad); err != ErrNextecInviteAlias {
++		t.Fatalf("alias: %v", err)
++	}
++	for _, ttl := range []time.Duration{10 * time.Minute, 8 * 24 * time.Hour} {
++		bad = inviteBase()
++		bad.TTL = ttl
++		if _, err := NextecInviteCreate(nil, bad); err != ErrNextecInviteTTL {
++			t.Fatalf("ttl %v: %v", ttl, err)
++		}
++	}
++	bad = inviteBase()
++	bad.Interval = 1
++	if _, err := NextecInviteCreate(nil, bad); err != ErrNextecBadInterval {
++		t.Fatalf("intervalo: %v", err)
++	}
++	c, err := NextecInviteCreate(&model.User{Username: "adm"}, inviteBase())
++	if err != nil {
++		t.Fatal(err)
++	}
++	if !nextecInviteCodeRe.MatchString(c.Code) || c.Invite.CodeHash != sha256Hex(c.Code) || strings.Contains(c.Invite.CodeEnc, c.Code) {
++		t.Fatalf("codigo/hash/cifra: %#v", c)
++	}
++	if c.Invite.Mode != "single" || c.Invite.MaxUses != 1 || c.Invite.Rule != "peer" || c.Invite.Interval != 30 {
++		t.Fatalf("padroes: %#v", c.Invite)
++	}
++	views, err := NextecInviteList()
++	if err != nil || len(views) != 1 || views[0].Code != c.Code || views[0].ClientName != "Cliente A" || views[0].Status != "active" {
++		t.Fatalf("lista: %#v err=%v", views, err)
++	}
++}
++
++func TestInvitePinsTheVersionAndOnlyAllRolloutQualifies(t *testing.T) {
++	enrollSetup(t)
++	none := inviteBase()
++	none.Version = " "
++	if _, err := NextecInviteCreate(nil, none); err != ErrNextecInviteRelease {
++		t.Fatalf("sem versao: %v", err)
++	}
++	c, err := NextecInviteCreate(nil, inviteBase())
++	if err != nil || c.Invite.Version != "2.0.0" {
++		t.Fatalf("versao fixada: %#v err=%v", c, err)
++	}
++	for mode, want := range map[string]bool{NextecRolloutAll: true, NextecRolloutPilot: false, NextecRolloutOff: false} {
++		if got := nextecInviteRolloutOK(NextecRollout{Mode: mode, Version: "2.0.0"}); got != want {
++			t.Fatalf("modo %s: %v", mode, got)
++		}
++	}
++	if nextecInviteRolloutOK(NextecRollout{Mode: NextecRolloutAll}) {
++		t.Fatal("rollout sem versao nao pode gerar convite")
++	}
++}
++
++func TestInviteUseIsUniquePerMachine(t *testing.T) {
++	db, token := enrollPending(t, "10.7.3.1")
++	in := inviteBase()
++	in.Mode, in.MaxUses = "client", 5
++	c, _ := NextecInviteCreate(nil, in)
++	if _, err := NextecInviteClaim("10.7.3.1", enrollPeer, token, c.Code); err != nil {
++		t.Fatal(err)
++	}
++	// o mesmo par convite/maquina nunca entra duas vezes (repeticao simultanea de um retry)
++	if err := db.Create(&model.NextecInstallInviteUse{InviteId: c.Invite.Id, PeerId: enrollPeer}).Error; err == nil {
++		t.Fatal("uso duplicado aceito")
++	}
++	for i := 0; i < 3; i++ {
++		if _, err := NextecInviteClaim("10.7.3.1", enrollPeer, token, c.Code); err != nil {
++			t.Fatalf("repeticao %d: %v", i, err)
++		}
++	}
++	var inv model.NextecInstallInvite
++	db.First(&inv, c.Invite.Id)
++	var uses int64
++	db.Model(&model.NextecInstallInviteUse{}).Where("invite_id = ?", c.Invite.Id).Count(&uses)
++	if inv.Uses != 1 || uses != 1 {
++		t.Fatalf("usos: contador %d, registros %d", inv.Uses, uses)
++	}
++}
++
++func TestInviteClaimAssignsClientAliasAndRule(t *testing.T) {
++	db, token := enrollPending(t, "10.7.0.1")
++	c, err := NextecInviteCreate(nil, inviteBase())
++	if err != nil {
++		t.Fatal(err)
++	}
++	res, err := NextecInviteClaim("10.7.0.1", enrollPeer, token, c.Code)
++	if err != nil || res.ClientID != 7 || !res.Managed || res.Interval != 30 {
++		t.Fatalf("claim: %#v err=%v", res, err)
++	}
++	var peer model.Peer
++	db.Where("id = ?", enrollPeer).First(&peer)
++	if peer.GroupId != 7 || peer.Alias != "Servidor" {
++		t.Fatalf("peer: group=%d alias=%q", peer.GroupId, peer.Alias)
++	}
++	if d := deviceRow(t, db, enrollPeer); d.AwaitingApproval {
++		t.Fatal("deveria sair de pendente")
++	}
++	// idempotente com a mesma máquina; não gasta outra vaga
++	if _, err := NextecInviteClaim("10.7.0.1", enrollPeer, token, c.Code); err != nil {
++		t.Fatalf("repetir: %v", err)
++	}
++	var inv model.NextecInstallInvite
++	db.First(&inv, c.Invite.Id)
++	if inv.Uses != 1 {
++		t.Fatalf("usos: %d", inv.Uses)
++	}
++	// uso único: outra máquina é recusada
++	inviteSecondPeer(t, db)
++	if _, err := NextecInviteClaim("10.7.0.2", "222222222", "tok2", c.Code); err != ErrNextecInviteInvalid {
++		t.Fatalf("segunda maquina: %v", err)
++	}
++	var peer2 model.Peer
++	db.Where("id = ?", "222222222").First(&peer2)
++	if peer2.GroupId != 0 {
++		t.Fatal("segunda maquina nao deveria ter sido atribuida")
++	}
++}
++
++func TestInviteClaimRefusesWrongCodeExpiredRevokedAndBadAgentToken(t *testing.T) {
++	db, token := enrollPending(t, "10.7.1.1")
++	c, _ := NextecInviteCreate(nil, inviteBase())
++	if _, err := NextecInviteClaim("10.7.1.1", enrollPeer, token, "ZZZZZZZZZZZZZZZZZZZZ"); err != ErrNextecInviteInvalid {
++		t.Fatalf("codigo errado: %v", err)
++	}
++	if _, err := NextecInviteClaim("10.7.1.1", enrollPeer, "token-errado", c.Code); err != ErrNextecBadAgentAuth {
++		t.Fatalf("token do agente errado: %v", err)
++	}
++	if err := NextecInviteRevoke(c.Invite.Id); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := NextecInviteClaim("10.7.1.1", enrollPeer, token, c.Code); err != ErrNextecInviteInvalid {
++		t.Fatalf("cancelado: %v", err)
++	}
++	c2, _ := NextecInviteCreate(nil, inviteBase())
++	db.Model(&model.NextecInstallInvite{}).Where("id = ?", c2.Invite.Id).Update("expires_at", time.Now().Unix()-1)
++	if _, err := NextecInviteClaim("10.7.1.1", enrollPeer, token, c2.Code); err != ErrNextecInviteInvalid {
++		t.Fatalf("vencido: %v", err)
++	}
++	if NextecInviteByCode(c.Code) != nil || NextecInviteByCode(c2.Code) != nil {
++		t.Fatal("convite cancelado ou vencido resolveu")
++	}
++}
++
++func TestInviteClaimClientModeHasUseLimitAndFailedAssignKeepsTheSlot(t *testing.T) {
++	db, token := enrollPending(t, "10.7.2.1")
++	in := inviteBase()
++	in.Mode, in.MaxUses, in.AutoPassword = "client", 2, false
++	c, err := NextecInviteCreate(nil, in)
++	if err != nil {
++		t.Fatal(err)
++	}
++	// máquina que já é de outro cliente: a atribuição falha e a vaga não é gasta
++	db.Model(&model.Peer{}).Where("id = ?", enrollPeer).Update("group_id", 8)
++	if _, err := NextecInviteClaim("10.7.2.1", enrollPeer, token, c.Code); err != ErrNextecClientConflict {
++		t.Fatalf("conflito: %v", err)
++	}
++	var inv model.NextecInstallInvite
++	db.First(&inv, c.Invite.Id)
++	if inv.Uses != 0 {
++		t.Fatalf("vaga gasta em falha: %d", inv.Uses)
++	}
++	db.Model(&model.Peer{}).Where("id = ?", enrollPeer).Update("group_id", 0)
++	inviteSecondPeer(t, db)
++	if _, err := NextecInviteClaim("10.7.2.1", enrollPeer, token, c.Code); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := NextecInviteClaim("10.7.2.2", "222222222", "tok2", c.Code); err != nil {
++		t.Fatal(err)
++	}
++	var p1, p2 model.Peer
++	db.Where("id = ?", enrollPeer).First(&p1)
++	db.Where("id = ?", "222222222").First(&p2)
++	if p1.Alias != "Servidor 1" || p2.Alias != "Servidor 2" {
++		t.Fatalf("apelidos de link do cliente: %q %q", p1.Alias, p2.Alias)
++	}
++	if NextecInviteByCode(c.Code) != nil {
++		t.Fatal("link sem vagas ainda resolve")
++	}
++}
++
++func TestInviteBatchCreatesOneSingleUseInvitePerLineAllOrNothing(t *testing.T) {
++	enrollSetup(t)
++	base := inviteBase()
++	base.Alias, base.Label = "", ""
++	items := []NextecInviteBatchItem{{Label: "Mesa 1", Alias: "PC-01"}, {Label: "Mesa 2", Alias: "PC-02"}}
++	out, err := NextecInviteCreateBatch(nil, base, items)
++	if err != nil || len(out) != 2 || out[0].Code == out[1].Code || out[0].Invite.MaxUses != 1 {
++		t.Fatalf("lote: %#v err=%v", out, err)
++	}
++	if _, err := NextecInviteCreateBatch(nil, base, []NextecInviteBatchItem{{Label: "Ok"}, {Label: ""}}); err == nil || !strings.Contains(err.Error(), "linha 2") {
++		t.Fatalf("linha invalida deveria falhar o lote: %v", err)
++	}
++	views, _ := NextecInviteList()
++	if len(views) != 2 {
++		t.Fatalf("lote falho nao deveria deixar convites: %d", len(views))
++	}
++	if _, err := NextecInviteCreateBatch(nil, base, nil); err != ErrNextecInviteBatch {
++		t.Fatalf("lote vazio: %v", err)
++	}
++}
++
++func TestInviteListPurgesLongExpired(t *testing.T) {
++	db := enrollSetup(t)
++	c, _ := NextecInviteCreate(nil, inviteBase())
++	db.Model(&model.NextecInstallInvite{}).Where("id = ?", c.Invite.Id).Update("expires_at", time.Now().Unix()-nextecInviteKeepExpired-10)
++	keep, _ := NextecInviteCreate(nil, inviteBase())
++	db.Model(&model.NextecInstallInvite{}).Where("id = ?", keep.Invite.Id).Update("expires_at", time.Now().Unix()-3600)
++	views, err := NextecInviteList()
++	if err != nil || len(views) != 1 || views[0].Id != keep.Invite.Id || views[0].Status != "expired" || views[0].Code != "" {
++		t.Fatalf("purga: %#v err=%v", views, err)
++	}
++}
+diff --git a/http/router/admin.go b/http/router/admin.go
+--- a/http/router/admin.go
++++ b/http/router/admin.go
+@@ -89,6 +89,12 @@ func NextecBind(adg *gin.RouterGroup) {
+ 	rg.POST("/support/upload", sup.Upload)
+ 	rg.POST("/support/delete", sup.Delete)
+ 	rg.POST("/support/settings", sup.Settings)
++
++	inv := &admin.NextecInvites{}
++	rg.GET("/invites", inv.List)
++	rg.POST("/invites", inv.Create)
++	rg.POST("/invites/batch", inv.Batch)
++	rg.POST("/invites/revoke", inv.Revoke)
+ 
+ 	asg := &admin.NextecAssign{}
+ 	rg.GET("/install-token", asg.Token)
+diff --git a/http/router/api.go b/http/router/api.go
+--- a/http/router/api.go
++++ b/http/router/api.go
+@@ -28,6 +28,9 @@ func ApiInit(g *gin.Engine) {
+ 	slp := &api.NextecSupportLinkPublic{}
+ 	g.GET("/s/:token", slp.Page)
+ 	g.GET("/s/:token/baixar", slp.Download)
++	invp := &api.NextecInvitePublic{}
++	g.GET("/i/:code", invp.Page)
++	g.GET("/i/:code/baixar", invp.Download)
+ 
+ 	frg := g.Group("/api")
+ 
+diff --git a/http/router/api.go b/http/router/api.go
+--- a/http/router/api.go
++++ b/http/router/api.go
+@@ -45,6 +45,7 @@ func ApiInit(g *gin.Engine) {
+ 		frg.POST("/nextec/agent/self-enroll", ag.SelfEnroll)
+ 		// Nextec: o gerador (rdgen, rede interna da stack) busca a credencial de inscrição vigente
+ 		frg.GET("/nextec/gen/enroll-key", ag.GenEnrollKey)
++		frg.POST("/nextec/agent/invite", ag.InviteClaim)
+ 		frg.POST("/nextec/agent/sync", ag.Sync)
+ 		frg.POST("/nextec/agent/password", ag.Password)
+ 		frg.POST("/nextec/agent/confirm", ag.Confirm)
