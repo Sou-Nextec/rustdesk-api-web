@@ -21,6 +21,8 @@
       </p>
     </div>
 
+    <SupportLinks/>
+
     <WaitingList ref="waiting" compact/>
 
     <!-- só administradores -->
@@ -92,6 +94,7 @@
   import { computed, onMounted, reactive, ref } from 'vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import WaitingList from '@/nextec/views/WaitingList.vue'
+  import SupportLinks from '@/nextec/views/SupportLinks.vue'
   import { useUserStore } from '@/store/user'
   import { supportInfo, supportDelete, supportSettings, supportWaiting } from '@/nextec/api'
   import { uploadFile } from '@/nextec/upload'
