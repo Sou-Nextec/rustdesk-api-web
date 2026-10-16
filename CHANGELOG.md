@@ -2,6 +2,13 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.34
+
+Suporte avulso: publicar o app direto da tela.
+
+- **Escolha na própria tela:** sem app publicado, o cartão "Aplicativo de suporte" já lista os `.exe` gerados (os que parecem app de suporte primeiro) com **Usar este** e **Carregar mais**, sem abrir diálogo. "Prefiro enviar um arquivo .exe" continua disponível.
+- **Menos repetição:** a tela dizia três vezes que o app não foi enviado e um dos links apontava para a própria página. Agora há uma frase no topo, e a fila "Aguardando atendimento" não repete o alerta nem os botões de copiar.
+
 ## 2.11.33
 
 Tipo da versão correto para versões enviadas à mão e layout da coluna Versão.
