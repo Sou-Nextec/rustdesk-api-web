@@ -2,6 +2,14 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.42
+
+Conectar com Suporte rápido.
+
+- **Botão Conectar da barra de cima** ganhou duas abas: **Digitar o ID** (como antes) e **Suporte rápido**.
+- **Suporte rápido:** informe o cliente ou o chamado e a validade; o painel gera o link `/s/<código>` para mandar ao cliente (copiar link ou mensagem pronta). O cliente baixa o app de suporte, sem instalar, e a máquina aparece na fila já identificada.
+- **Acompanhar o link:** usuário comum vai para Minha área > Suporte avulso (`/my/support`); só o administrador usa `/user/support`.
+
 ## 2.11.41
 
 Acabamento de interface achado no teste ao vivo em produção.
