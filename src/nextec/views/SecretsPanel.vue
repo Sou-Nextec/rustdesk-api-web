@@ -457,6 +457,7 @@
   const every = (m) => (m % 60 === 0 ? (m / 60 === 1 ? 'hora' : `${m / 60} h`) : `${m} min`)
 
   let inflight = false
+  const lastSeen = ref(new Map())
   // silent: atualização automática, sem spinner e sem trocar a lista por erro se uma rodada falhar.
   const load = async (silent = false) => {
     if (silent && inflight) return
@@ -474,8 +475,9 @@
     if (ov) loaded.value = true
     if (ov) {
       const n = normalizeOverview(ov)
-      const seen = new Map(((peers && peers.data && peers.data.list) || []).map(p => [String(p.id), Number(p.last_online_time) || 0]))
-      devices.value = n.devices.map(d => (seen.has(String(d.peer_id)) ? { ...d, peer_last_online: seen.get(String(d.peer_id)) } : d))
+      // presença: só troca quando a lista de máquinas respondeu; se falhar, vale o último valor conhecido
+      if (peers && peers.data && Array.isArray(peers.data.list)) lastSeen.value = new Map(peers.data.list.map(p => [String(p.id), Number(p.last_online_time) || 0]))
+      devices.value = n.devices.map(d => (lastSeen.value.has(String(d.peer_id)) ? { ...d, peer_last_online: lastSeen.value.get(String(d.peer_id)) } : d))
       policies.value = n.policies
       agentKeySet.value = n.agentKeySet
       blocked.value = n.blocked

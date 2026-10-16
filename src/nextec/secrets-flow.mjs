@@ -43,7 +43,7 @@ export function machineSteps(d = {}, now = nowSeconds()) {
     stage,
     steps,
     caption: current
-      ? `Etapa ${current.number} de ${STEPS.length}: ${current.label}${stage === 'agent' && isStalled(d, now) ? ' parado' : ''}`
+      ? `Etapa ${current.number} de ${STEPS.length}: ${current.label}${stage === 'agent' && isOfflineStall(d, now) ? ' (máquina offline)' : stage === 'agent' && isStalled(d, now) ? ' parado' : ''}`
       : 'Tudo pronto',
     doneCount: steps.filter(s => s.status === 'done').length,
   }
@@ -122,6 +122,7 @@ export function firstNeeding(devices = [], stage, now = nowSeconds()) {
   return devices.find(d => d && machineStage(d, now) === stage) || null
 }
 
+export const OFFLINE_AGENT_NOTICE = 'A máquina está desligada ou sem internet. O agente volta sozinho quando ela ligar; não é preciso reinstalar.'
 export const NEEDS_CLIENT_NOTICE = 'Esta máquina ainda não tem cliente. Escolha o cliente para continuar.'
 export const AGENT_EMPTY_NOTICE = 'Nenhuma máquina encontrada. Instale o app gerado pelo painel na máquina e aguarde 1 minuto.'
 
@@ -134,16 +135,19 @@ export function agentOptions(devices = [], now = nowSeconds()) {
       const needsClient = machineStage(d, now) === 'client'
       const st = agentState(d, now)
       const active = !needsClient && st === AGENT_STATE.ACTIVE
-      const stalled = !needsClient && st === AGENT_STATE.STALLED
+      const offline = !needsClient && isOfflineStall(d, now)
+      const stalled = !needsClient && st === AGENT_STATE.STALLED && !offline
       return {
         peer_id: d.peer_id,
         name: d.alias || d.hostname || 'Máquina',
         needsClient,
         agentActive: active,
         agentStalled: stalled,
-        badge: needsClient ? 'sem cliente' : active ? 'agente ativo' : stalled ? 'agente parado' : '',
-        canAuthorize: !needsClient && !active,
-        notice: active ? ACTIVE_AGENT_NOTICE : '',
+        agentOffline: offline,
+        badge: needsClient ? 'sem cliente' : active ? 'agente ativo' : offline ? 'máquina offline' : stalled ? 'agente parado' : '',
+        // máquina desligada: reinstalar não adianta, o agente volta sozinho quando ela ligar
+        canAuthorize: !needsClient && !active && !offline,
+        notice: active ? ACTIVE_AGENT_NOTICE : offline ? OFFLINE_AGENT_NOTICE : '',
       }
     })
     .sort((a, b) => Number(b.needsClient) - Number(a.needsClient) || a.name.localeCompare(b.name, 'pt-BR'))

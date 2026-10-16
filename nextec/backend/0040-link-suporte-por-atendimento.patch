@@ -174,7 +174,7 @@ index 0000000..f61bf20
 +		return
 +	}
 +	body := strings.NewReplacer(
-+		"{{WHO}}", html.EscapeString(link.Label),
++		"{{WHO}}", html.EscapeString(supportLinkCode(link.Label)),
 +		"{{TOKEN}}", link.Token,
 +		"{{SIZE}}", supportMB(app.Size),
 +	).Replace(supportLinkPageReady)

@@ -146,3 +146,22 @@ test('máquina offline: botão de espera, resumo próprio e fora do "reinstalar"
   assert.match(s.text, /offline/)
   assert.equal(firstNeeding([offline, online], 'stalled', now).peer_id, '111111111')
 })
+
+test('máquina offline também sai do passo a passo e do "baixar para reinstalar"', async () => {
+  const { machineSteps, agentOptions } = await import('../../src/nextec/secrets-flow.mjs')
+  const now = 1_800_000_000
+  const mk = (peer, online) => ({ peer_id: peer, hostname: 'srv-' + peer, group_id: 4, enrolled: true, state: 'assigned', agent_state: 'parado', last_sync_at: now - 2460, peer_last_online: online })
+  const offline = mk('215969168', now - 2100)
+  const online = mk('111111111', now - 10)
+  assert.match(machineSteps(offline, now).caption, /máquina offline/)
+  assert.doesNotMatch(machineSteps(offline, now).caption, /parado/)
+  assert.match(machineSteps(online, now).caption, /parado/)
+  const [o, p] = agentOptions([offline, online], now).sort((a, b) => a.peer_id.localeCompare(b.peer_id) * -1)
+  assert.equal(o.agentOffline, true)
+  assert.equal(o.agentStalled, false)
+  assert.equal(o.canAuthorize, false)
+  assert.equal(o.badge, 'máquina offline')
+  assert.match(o.notice, /não é preciso reinstalar/)
+  assert.equal(p.agentStalled, true)
+  assert.equal(p.canAuthorize, true)
+})
