@@ -85,13 +85,15 @@
         <el-table-column label="Notas" min-width="180" show-overflow-tooltip>
           <template #default="{ row }"><span :class="{ 'nx-muted': !row.notes }">{{ row.notes || '-' }}</span></template>
         </el-table-column>
-        <el-table-column label="Ações" width="430" fixed="right">
+        <el-table-column label="Ações" width="430" fixed="right" align="right">
           <template #default="{ row }">
-            <div class="nx-row-actions">
-              <el-button v-if="row.profile !== 'client'" size="small" @click="setInternal(row)">{{ row.internal ? 'Suspender download' : 'Disponibilizar aos analistas' }}</el-button>
-              <el-button size="small" @click="openAuthorization(row)">{{ row.signed ? 'Renovar autorização' : 'Autorizar' }}</el-button>
-              <el-button size="small" type="primary" :disabled="!row.signed && !isPublished(row)" @click="openPublish(row)">{{ isPublished(row) ? 'Alterar' : 'Publicar' }}</el-button>
-              <el-button size="small" :disabled="isPublished(row)" @click="del(row)"><span :class="{ 'nx-danger-text': !isPublished(row) }">Excluir</span></el-button>
+            <div class="nx-row-actions nx-row-actions-stack">
+              <div class="nx-act-main">
+                <el-button size="small" @click="openAuthorization(row)">{{ row.signed ? 'Renovar autorização' : 'Autorizar' }}</el-button>
+                <el-button size="small" type="primary" :disabled="!row.signed && !isPublished(row)" @click="openPublish(row)">{{ isPublished(row) ? 'Alterar' : 'Publicar' }}</el-button>
+                <el-button size="small" :disabled="isPublished(row)" @click="del(row)"><span :class="{ 'nx-danger-text': !isPublished(row) }">Excluir</span></el-button>
+              </div>
+              <el-button v-if="row.profile !== 'client'" size="small" text class="nx-act-sub" @click="setInternal(row)">{{ row.internal ? 'Suspender download dos analistas' : 'Disponibilizar aos analistas' }}</el-button>
             </div>
           </template>
         </el-table-column>
@@ -634,6 +636,10 @@
   .nx-danger-text { color: #BA1A1A; }
   html.dark .nx-danger-text { color: #FF9C93; }
   .nx-row-actions { display: flex; gap: 6px; flex-wrap: wrap; .el-button { margin: 0 !important; } }
+  // Versões enviadas: ações principais sempre na mesma linha e alinhadas à direita; a distribuição para analistas fica numa linha própria
+  .nx-row-actions-stack { flex-direction: column; align-items: flex-end; flex-wrap: nowrap; gap: 4px; }
+  .nx-act-main { display: flex; gap: 6px; flex-wrap: nowrap; justify-content: flex-end; .el-button { margin: 0 !important; } }
+  .nx-act-sub { color: var(--nx-accent); }
   .nx-cards { list-style: none; margin: 0; padding: 8px 12px 12px; display: flex; flex-direction: column; gap: 10px; }
   .nx-mcard { display: flex; flex-direction: column; gap: 6px; padding: 12px 14px; border-radius: 14px; background: var(--nx-bg); }
   .nx-mcard-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }

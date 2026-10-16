@@ -275,6 +275,9 @@ defineExpose({ reload: load })
 .nx-generation-notes { margin: 0; padding: 8px 12px; border-radius: 10px; background: var(--nx-field); color: var(--nx-text); font-size: 13px; line-height: 1.5; white-space: pre-wrap; }
 .nx-generation-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding-top: 12px; border-top: 1px solid var(--nx-divider);
   .el-button { margin: 0; } .nx-send { margin-left: auto; } .nx-remove { margin-left: auto; } .nx-send + .nx-remove { margin-left: 0; } }
+.nx-generation :deep(.el-checkbox__inner), .nx-generated-bulk :deep(.el-checkbox__inner) { border-color: var(--nx-text-subtle); }
+.nx-generation-actions :deep(.el-button) { height: 36px; }
+.nx-generation-actions :deep(.el-button:not(.el-button--primary):not(.is-text)) { background: var(--nx-surface); border: 1px solid var(--nx-border); color: var(--nx-text); &:hover { background: var(--nx-field); } }
 .nx-download { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 14px; border: 1px solid var(--nx-border); border-radius: var(--nx-radius-btn); color: var(--nx-text); background: var(--nx-surface); font-size: 13px; font-weight: 600; text-decoration: none; box-sizing: border-box;
   &:hover { background: var(--nx-field); } }
 .nx-generation-tech { margin: 0; color: var(--nx-text-subtle); font-size: 12px; line-height: 1.5; }
