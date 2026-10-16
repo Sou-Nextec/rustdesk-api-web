@@ -47,19 +47,21 @@ function showDialog ({ url, scheme, appName }) {
     }).catch(action => { if (action === 'cancel') downloadCurrentApp() })
 }
 
+// Aviso de andamento: roxo da marca, com ícone girando (um aviso cinza com "i" parecia erro).
+const progressToast = (message, extra = {}) => ElMessage({
+  customClass: 'nx-toast-progress', icon: () => h('span', { class: 'nx-toast-spinner', 'aria-hidden': 'true' }), message, ...extra,
+})
+
 // Aviso curto da abertura direta, por 8 s, com saída discreta para o diálogo completo.
 function showOpeningToast ({ appName, notOpened }) {
   let toast = null
-  toast = ElMessage({
-    type: 'info', duration: 8000, showClose: true,
-    message: h('span', null, [
+  toast = progressToast(h('span', null, [
       `Abrindo o ${appLabel(appName)}... `,
       h('a', {
         href: '#', style: 'margin-left:8px;font-size:12px;',
         onClick: (e) => { e.preventDefault(); if (toast) toast.close(); notOpened() },
       }, 'Não abriu? Baixar aplicativo'),
-    ]),
-  })
+    ]), { duration: 8000, showClose: true })
 }
 
 const isAdmin = () => { try { return (useUserStore().route_names || []).includes('*') } catch (e) { return false } }
@@ -91,7 +93,7 @@ async function reviewLink (peerId, link) {
 export async function downloadCurrentApp () {
   const info = await availableApp().catch(() => false)
   if (!info?.data?.available) { ElMessage.info('Nenhuma versão foi disponibilizada para os analistas. Peça ao administrador para disponibilizar em Atualizações do app.'); return }
-  const waiting = ElMessage({ message: `Baixando Nextec Connect ${info.data.version}…`, duration: 0 })
+  const waiting = progressToast(`Baixando Nextec Connect ${info.data.version}…`, { duration: 0 })
   try {
     const response = await fetch(`${import.meta.env.VITE_SERVER_API}/my/app-download?version=${encodeURIComponent(info.data.version)}`, { headers: { 'api-token': getToken() || '' } })
     if (!response.ok || response.headers.get('content-type')?.includes('application/json')) throw new Error('Download indisponível.')
