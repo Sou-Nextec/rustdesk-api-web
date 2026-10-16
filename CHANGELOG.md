@@ -2,6 +2,15 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.47
+
+Adicionar e Conectar viram menus; Suporte rápido sem digitar.
+
+- **Adicionar** (Dispositivos) agora abre um menu: **Suporte rápido**, **Convite de instalação** e **Cadastrar pelo ID**; cada opção abre a sua própria tela, sempre do mesmo tamanho.
+- **Conectar** (topo) também é um menu: **Suporte rápido** e **Conectar pelo ID**. O Suporte rápido deixou de fechar sozinho ao gerar o link.
+- **Suporte rápido sem digitar:** a tela já mostra um **ID do atendimento** aleatório (como `482 913 076`); basta clicar em **Gerar link**. O texto de cliente ou chamado é opcional e o ID vai junto no rótulo.
+- **Convite de instalação:** o padrão passou a ser **um link por cliente para várias máquinas**; a descrição ficou opcional (sem ela vale o apelido e, sem apelido, o nome do cliente). A aba "Em lote" saiu da tela. Ajuste no patch 0041.
+
 ## 2.11.46
 
 Ajustes do servidor que não ficavam salvos.

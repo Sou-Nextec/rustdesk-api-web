@@ -34,23 +34,23 @@
       </el-form-item>
     </div>
 
-    <el-form-item v-if="!batch" label="Quantas máquinas usam este convite">
+    <el-form-item label="Quantas máquinas usam este convite">
       <div class="nx-io-row">
         <el-radio-group v-model="model.mode" :disabled="disabled">
+          <el-radio-button value="client">Várias máquinas (um link só)</el-radio-button>
           <el-radio-button value="single">Uma máquina</el-radio-button>
-          <el-radio-button value="client">Várias (link do cliente)</el-radio-button>
         </el-radio-group>
         <el-input-number v-if="model.mode === 'client'" v-model="model.max_uses" :min="2" :max="100" :disabled="disabled" aria-label="Máximo de máquinas" />
       </div>
       <p class="nx-io-help">{{ model.mode === 'client'
-        ? 'Quem abrir o link cai direto neste cliente até vencer ou chegar ao limite. Cancele o convite se o link vazar.'
+        ? 'Mande o mesmo link a quem for instalar: cada máquina cai direto neste cliente até o link vencer ou chegar ao limite. Cancele o convite se o link vazar.'
         : 'O convite vale para uma máquina e se encerra quando ela se inscreve.' }}</p>
     </el-form-item>
   </el-form>
 </template>
 
 <script setup>
-  const props = defineProps({ model: { type: Object, required: true }, clients: { type: Array, default: () => [] }, disabled: Boolean, batch: Boolean })
+  const props = defineProps({ model: { type: Object, required: true }, clients: { type: Array, default: () => [] }, disabled: Boolean })
 
   const intervals = [
     { v: 15, t: '15 min' }, { v: 30, t: '30 min' }, { v: 60, t: '1 hora' }, { v: 120, t: '2 horas' },
@@ -63,7 +63,7 @@
 <style scoped lang="scss">
   .nx-io-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
   .nx-io-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-  .nx-io-interval { width: 190px; }
+  .nx-io-interval { flex: 1 1 190px; min-width: 190px; }
   .nx-io-help { margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: var(--nx-text-muted); }
   @media (max-width: 640px) { .nx-io-grid { grid-template-columns: 1fr; } }
 </style>
