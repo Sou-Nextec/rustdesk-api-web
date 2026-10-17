@@ -232,6 +232,8 @@ Toda tarefa em fila é idempotente (pode rodar de novo sem efeito duplicado) e r
 - Conectores de fabricante testados contra simulação da API de cada fabricante no CI.
 - **Verificação real semanal e automática:** um teste agendado roda contra os equipamentos que a Nextec já tem (FortiGate,
   MikroTik, pfSense) e avisa se um conector quebrou, antes do cliente perceber. Cresce conforme entram novos fabricantes.
+  Em equipamento de cliente, o teste semanal é só de leitura (versão, login, consulta); teste que altera algo, como
+  rotação de senha, roda só em equipamento da própria Nextec.
 - Fluxos críticos (login, conexão sem senha, rotação, bloqueio) com teste ponta a ponta antes de cada versão.
 
 ### D6. API em duas camadas (17/10/2026)
