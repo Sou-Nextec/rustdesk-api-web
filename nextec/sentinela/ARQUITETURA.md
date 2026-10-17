@@ -97,9 +97,22 @@ flowchart LR
 | Um coletor por cliente | Coletor redundante nos clientes críticos |
 | Sessão passa pelo app do analista | Isolamento de sessão por intermediário (Fase 5) |
 
+## 4. Decisões técnicas pendentes
+
+Levantadas em 17/10/2026; cada uma vira um registro de decisão quando for fechada, antes da etapa da Fase 1 que depende dela.
+
+| Decisão | O que precisa ser definido | Necessária para |
+| --- | --- | --- |
+| Protocolo coletor e agente com o Sentinela | Formato (ex.: gRPC ou mensageria), autenticação mútua do coletor e do agente, reconexão | 2.1 e 1.6 |
+| Modelo de dados do cofre | Estrutura cliente, máquina, conta e segredo, isolada por cliente desde o início | 1.4 |
+| Síncrono ou assíncrono | O que acontece na hora do clique e o que vai para fila (ex.: rotação após a sessão) | 1.6 e 1.7 |
+| Estratégia de testes | Testes dos fluxos críticos e dos conectores por fabricante, que quebram com atualizações | 1.6 e 2.3 |
+| Versionamento da API própria | Como versionar a API que serve painel, app e, no futuro, o MCP | 3.12 |
+
 ## Histórico
 
 | Data | Mudança |
 | --- | --- |
 | 17/10/2026 | Criação |
 | 17/10/2026 | Imagens dos diagramas em `diagramas/` |
+| 17/10/2026 | Decisões técnicas pendentes |
