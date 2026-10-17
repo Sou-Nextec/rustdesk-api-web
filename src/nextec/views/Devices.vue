@@ -7,9 +7,15 @@
         <template #prefix><el-icon><el-icon-Search/></el-icon></template>
       </el-input>
       <el-select v-model="clientFilter" class="nx-filter" placeholder="Todos os clientes" clearable filterable
-                 aria-label="Filtrar por cliente" @change="page = 1">
+                 aria-label="Filtrar por cliente" @change="onClientChange">
         <el-option label="Sem cliente" :value="0"/>
-        <el-option v-for="g in groups" :key="g.id" :label="g.name" :value="g.id"/>
+        <el-option v-for="c in clientChoices" :key="c.value" :label="c.label" :value="c.value"/>
+      </el-select>
+      <!-- filtro do filtro: só aparece quando o cliente escolhido tem subgrupos -->
+      <el-select v-if="subChoices.length" v-model="subFilter" class="nx-filter" placeholder="Todos os subgrupos" clearable
+                 aria-label="Filtrar por subgrupo do cliente" @change="page = 1">
+        <el-option label="Só o cliente (sem subgrupo)" value="none"/>
+        <el-option v-for="s in subChoices" :key="s.value" :label="s.label + ' (' + s.count + ')'" :value="s.value"/>
       </el-select>
       <el-select v-model="statusFilter" class="nx-filter-sm" placeholder="Situação" clearable aria-label="Filtrar por situação"
                  @change="page = 1">
@@ -33,13 +39,19 @@
         </el-dropdown>
         <el-dropdown trigger="click" @command="onAdd">
           <el-button type="primary">
-            <el-icon><el-icon-Plus/></el-icon><span>Adicionar</span><el-icon class="el-icon--right"><el-icon-ArrowDown/></el-icon>
+            <el-icon><el-icon-Plus/></el-icon><span>Adicionar dispositivo</span><el-icon class="el-icon--right"><el-icon-ArrowDown/></el-icon>
           </el-button>
           <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="quick">Suporte rápido</el-dropdown-item>
-              <el-dropdown-item command="invite">Convite de instalação</el-dropdown-item>
-              <el-dropdown-item command="manual" divided>Cadastrar pelo ID</el-dropdown-item>
+            <el-dropdown-menu class="nx-add-menu">
+              <el-dropdown-item command="invite">
+                <span class="nx-add-opt"><strong>Instalar em uma máquina nova</strong><small>Gera um link por cliente. Quem abrir instala e a máquina já entra no cliente certo.</small></span>
+              </el-dropdown-item>
+              <el-dropdown-item command="quick">
+                <span class="nx-add-opt"><strong>Dar suporte agora</strong><small>Gera um código e um link do app de suporte, sem instalar nada.</small></span>
+              </el-dropdown-item>
+              <el-dropdown-item command="manual" divided>
+                <span class="nx-add-opt"><strong>Cadastrar um ID que já existe</strong><small>Registra à mão um dispositivo que você já conhece.</small></span>
+              </el-dropdown-item>
             </el-dropdown-menu>
           </template>
         </el-dropdown>
@@ -101,9 +113,12 @@
         <el-table-column label="Usuário" prop="username" min-width="120"/>
         <el-table-column label="Cliente" min-width="170">
           <template #default="{ row }">
-            <el-tooltip v-if="groupName(row.group_id)" :content="groupName(row.group_id)" placement="top" :show-after="500">
-              <el-tag class="nx-device-client-tag" :style="clientStyle(row.group_id)" disable-transitions>{{ groupName(row.group_id) }}</el-tag>
-            </el-tooltip>
+            <div v-if="groupName(row.group_id)" class="nx-device-client">
+              <el-tooltip :content="groupName(row.group_id)" placement="top" :show-after="500">
+                <el-tag class="nx-device-client-tag" :style="clientStyle(row.group_id)" disable-transitions>{{ partsOf(row.group_id).client }}</el-tag>
+              </el-tooltip>
+              <span v-if="partsOf(row.group_id).sub" class="nx-device-sub">{{ partsOf(row.group_id).sub }}</span>
+            </div>
             <span v-else class="nx-muted">Sem cliente</span>
           </template>
         </el-table-column>
@@ -143,6 +158,10 @@
       <el-empty v-if="!loading && !filtered.length" :image-size="72"
                 :description="all.length ? 'Nenhum dispositivo encontrado com esses filtros.' : 'Nenhum dispositivo conectado a este servidor ainda.'">
         <el-button v-if="all.length" @click="clearFilters">Limpar filtros</el-button>
+        <template v-else>
+          <p class="nx-empty-hint">Para trazer a primeira máquina, crie um convite de instalação: um link por cliente, e a máquina já entra no cliente certo.</p>
+          <el-button type="primary" @click="onAdd('invite')">Instalar em uma máquina nova</el-button>
+        </template>
       </el-empty>
       <div v-if="filtered.length > pageSize || pageSize !== 20" class="nx-pager">
         <el-pagination v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="[20, 50, 100]"
@@ -152,7 +171,7 @@
 
     <!-- editar / adicionar -->
     <SupportQuickDialog v-model="quickVisible" />
-    <InviteDialog v-model="addVisible" :clients="groups" />
+    <InviteDialog v-model="addVisible" :clients="groups" :preselect="inviteClient" />
 
     <el-dialog v-model="form.visible" :title="form.data.row_id ? 'Editar dispositivo' : 'Adicionar dispositivo'" width="640px">
       <el-form label-position="top" class="nx-form" @submit.prevent>
@@ -301,6 +320,7 @@
   import { list as groupList } from '@/api/device_group'
   import InviteDialog from '@/nextec/views/InviteDialog.vue'
   import { clientColorIndex, clientChipStyle } from '@/nextec/client-color.mjs'
+  import { clientOptions, subOptions, matchesClient, matchesSub, deviceClientParts } from '@/nextec/client-groups.mjs'
   import SupportQuickDialog from '@/nextec/views/SupportQuickDialog.vue'
   import { batchCreateFromPeers } from '@/api/address_book'
   import { list as collectionList } from '@/api/address_book_collection'
@@ -336,6 +356,7 @@
     loading.value = false
     if (p) all.value = p.data.list || []
     if (g) groups.value = g.data.list || []
+    normalizeClientFilter()
   }
   onMounted(load)
   onActivated(load)
@@ -343,12 +364,12 @@
   // um tom por cliente na lista (subclientes herdam o do cliente)
   const colorOf = computed(() => clientColorIndex(groups.value))
   const clientStyle = id => clientChipStyle(colorOf.value.get(id))
-  // subgrupos usam o nome "Cliente / Subgrupo": filtrar pelo cliente inclui os subgrupos dele
-  const inClient = (groupId, filterId) => {
-    if (groupId === filterId) return true
-    const parent = groupName(filterId)
-    return !!parent && groupName(groupId).startsWith(parent + ' / ')
-  }
+  // subgrupos usam o nome "Cliente / Subgrupo": o filtro de cliente lista só clientes e inclui os subgrupos deles
+  const partsOf = id => deviceClientParts(groupName(id))
+  const clientChoices = computed(() => clientOptions(groups.value))
+  // o convite já nasce no cliente (ou subgrupo) que a lista está filtrando
+  const inviteClient = computed(() => (typeof subFilter.value === 'number' ? subFilter.value : (typeof clientFilter.value === 'number' && clientFilter.value > 0 ? clientFilter.value : null)))
+  const subChoices = computed(() => subOptions(groups.value, clientFilter.value, groupName, all.value))
 
   const qa = useQuickAccess()
   const toggleFav = (row) => {
@@ -362,6 +383,7 @@
   // ---------- filtros ----------
   const q = ref('')
   const clientFilter = ref(null)
+  const subFilter = ref(null)
   const statusFilter = ref(null)
   const sortOptions = [
     { value: 'online', label: 'Online primeiro' },
@@ -384,7 +406,8 @@
   const filtered = computed(() => {
     const term = norm(q.value.trim())
     return all.value.filter(r => {
-      if (clientFilter.value !== null && clientFilter.value !== '' && !inClient(r.group_id || 0, clientFilter.value)) return false
+      if (!matchesClient(r.group_id || 0, clientFilter.value, groupName)) return false
+      if (!matchesSub(r.group_id || 0, subFilter.value, groupName)) return false
       if (statusFilter.value === 'online' && !isOnline(r)) return false
       if (statusFilter.value === 'offline' && isOnline(r)) return false
       if (statusFilter.value === 'fav' && !qa.isFavorite(r.id)) return false
@@ -399,7 +422,17 @@
       return recent
     })
   })
-  const clearFilters = () => { q.value = ''; clientFilter.value = null; statusFilter.value = null }
+  const clearFilters = () => { q.value = ''; clientFilter.value = null; subFilter.value = null; statusFilter.value = null }
+  const onClientChange = () => { subFilter.value = null; page.value = 1 }
+  // ?client=<id> pode ser o id de um subgrupo (links antigos): vira cliente + subgrupo assim que os grupos carregam
+  const normalizeClientFilter = () => {
+    const id = clientFilter.value
+    if (typeof id !== 'number' || id <= 0) return
+    const { client, sub } = partsOf(id)
+    if (!sub) return
+    const root = clientChoices.value.find(c => c.label === client)
+    if (root) { clientFilter.value = root.value; subFilter.value = id }
+  }
   // pesquisa do topo: Enter abre esta tela com ?q=
   const route = useRoute()
   watch(() => route.query.q, v => { if (v) { clearFilters(); q.value = String(v) } }, { immediate: true })
@@ -422,12 +455,12 @@
     const order = []
     const map = new Map()
     for (const r of pageRows.value) {
-      const name = groupName(r.group_id) || 'Sem cliente'
+      const name = partsOf(r.group_id).client || 'Sem cliente'
       if (!map.has(name)) { map.set(name, []); order.push(name) }
       map.get(name).push(r)
     }
     return order.map((name, i) => {
-      const all = filtered.value.filter(r => (groupName(r.group_id) || 'Sem cliente') === name)
+      const all = filtered.value.filter(r => (partsOf(r.group_id).client || 'Sem cliente') === name)
       return { key: name, title: name, rows: map.get(name), first: i === 0, total: all.length, online: all.filter(isOnline).length }
     })
   })
@@ -599,6 +632,10 @@
   }
   .nx-search { flex: 1 1 240px; max-width: 400px; }
   .nx-filter { width: 200px; }
+  .nx-empty-hint { margin: 0 0 12px; max-width: 420px; color: var(--nx-text-muted); font-size: 13px; line-height: 1.5; text-align: center; }
+  .nx-device-client { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; }
+  .nx-device-sub { display: inline-flex; align-items: center; padding: 0 8px; height: 22px; border: 1px solid var(--nx-border); border-radius: 6px; font-size: 12px; color: var(--nx-text-muted); background: var(--nx-surface); white-space: nowrap; }
+  .nx-device-sub::before { content: '\21B3'; margin-right: 4px; color: var(--nx-text-subtle); }
   .nx-filter-sm { width: 150px; }
   .nx-bar-right { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; .el-button + .el-button { margin-left: 0; } }
 
@@ -669,6 +706,12 @@
 </style>
 
 <style lang="scss">
+  // menu Adicionar dispositivo: cada opção diz o que faz (o menu abre fora do componente, por isso o estilo não é escopado)
+  .nx-add-menu { max-width: 380px; }
+  .nx-add-menu .el-dropdown-menu__item { padding: 8px 14px; line-height: 1.35; align-items: flex-start; }
+  .nx-add-opt { display: flex; flex-direction: column; gap: 2px; white-space: normal; }
+  .nx-add-opt strong { font-size: 14px; color: var(--nx-text); }
+  .nx-add-opt small { font-size: 12px; color: var(--nx-text-muted); }
   // tema escuro do chip do cliente (fora do escopo: o seletor parte de html.dark)
   html.dark .nx-device-client-tag { --el-tag-bg-color: var(--nx-ct-bg-dark, var(--nx-tint)); --el-tag-text-color: var(--nx-ct-fg-dark, var(--nx-text)); }
 </style>

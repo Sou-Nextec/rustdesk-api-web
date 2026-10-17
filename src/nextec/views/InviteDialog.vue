@@ -66,7 +66,8 @@
   import InviteOptions from '@/nextec/views/InviteOptions.vue'
   import { usePublicBase, publicBaseReady, loadPublicBase } from '@/nextec/public-base'
 
-  const props = defineProps({ modelValue: Boolean, clients: { type: Array, default: () => [] } })
+  // preselect: cliente (ou subgrupo) que a lista de Dispositivos já está filtrando, para não escolher de novo
+  const props = defineProps({ modelValue: Boolean, clients: { type: Array, default: () => [] }, preselect: { type: Number, default: null } })
   const emit = defineEmits(['update:modelValue'])
 
   const busy = ref(false)
@@ -96,7 +97,7 @@
   }
   watch(() => props.modelValue, (open) => {
     clearInterval(timer)
-    if (open) { fresh.value = null; error.value = ''; load(); timer = setInterval(() => { if (!document.hidden) load() }, 15000) }
+    if (open) { fresh.value = null; error.value = ''; if (props.preselect) one.client_id = props.preselect; load(); timer = setInterval(() => { if (!document.hidden) load() }, 15000) }
   })
   onBeforeUnmount(() => clearInterval(timer))
 
