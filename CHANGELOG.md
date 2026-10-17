@@ -2,12 +2,23 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
-## 2.11.52
+## 2.12.1
 
 Requisito do instalador à vista no convite.
 
 - **Por que o convite não vinculava a máquina:** o instalador (MSI) só entrega o código do convite ao agente se foi gerado pelo gerador **2.3.11 ou mais novo**. Quem instala com um MSI mais antigo entra como **Pendente**, sem cliente, e o convite fica com 0 usos.
 - **Convite de instalação** agora mostra, junto da versão publicada para todos, o requisito: o instalador precisa ser do gerador 2.3.11 ou mais novo para vincular sozinho (a versão da release é o número que você escolhe ao publicar e pode não coincidir com a do gerador, então o painel não tenta adivinhar). O convite fica preso à versão que estava publicada quando foi criado.
+
+## 2.12.0
+
+Dispositivos: cliente e subgrupo separados, e adicionar uma máquina sem adivinhar.
+
+- **Filtro de cliente só com clientes:** a lista deixa de misturar "Cartório Adriana Celiac" e "Cartório Adriana Celiac / Servidores". Escolher o cliente mostra as máquinas dele e as de todos os subgrupos. Um subgrupo cujo cliente não existe como grupo aparece como cliente próprio, para não ficar fora do filtro.
+- **Filtro de subgrupo (filtro do filtro):** aparece ao lado quando o cliente escolhido tem subgrupos, com a contagem de máquinas de cada um e a opção "Só o cliente (sem subgrupo)". Trocar o cliente limpa o subgrupo. Links antigos `?client=<id do subgrupo>` viram cliente mais subgrupo.
+- **Coluna Cliente mostra o grupo:** a etiqueta colorida é o cliente e, ao lado, o subgrupo (ex.: `↳ Servidores`). "Agrupar por cliente" agrupa pelo cliente, com os subgrupos dentro da mesma seção.
+- **Adicionar dispositivo com opções que dizem o que fazem:** o botão agora é "Adicionar dispositivo" e o menu tem "Instalar em uma máquina nova" (convite por cliente), "Dar suporte agora" (código e link do suporte avulso, sem instalar) e "Cadastrar um ID que já existe" (à mão), cada um com uma linha de explicação. Antes: "Suporte rápido", "Convite de instalação" e "Cadastrar pelo ID".
+- **O convite já nasce no cliente filtrado:** com um cliente (ou subgrupo) escolhido na lista, "Instalar em uma máquina nova" abre com ele selecionado.
+- **Lista vazia leva ao primeiro passo:** sem nenhuma máquina, a tela oferece "Instalar em uma máquina nova" em vez de só avisar.
 
 ## 2.11.50
 
