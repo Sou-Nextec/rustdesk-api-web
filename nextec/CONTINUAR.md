@@ -118,6 +118,7 @@ Em ordem (detalhes em `nextec/PENDENCIAS.md`):
 | Pendências e ideias | `nextec/PENDENCIAS.md` |
 | Projeto Sentinela: abertura (fechado) | `nextec/sentinela/ABERTURA.md` |
 | Projeto Sentinela: roadmap (fases, etapas, critérios) | `nextec/sentinela/ROADMAP.md` |
+| Projeto Sentinela: arquitetura inicial e diagramas | `nextec/sentinela/ARQUITETURA.md` |
 | Novidades por versão | `CHANGELOG.md` |
 | Patches da API (0001 a 0018) | `nextec/backend/LEIAME.md` |
 | Correções locais de autorização e identidade (0019) | `nextec/backend/0019-LEIAME.md` |

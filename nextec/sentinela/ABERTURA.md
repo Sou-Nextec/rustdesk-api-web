@@ -287,7 +287,22 @@ Também definidos:
 - RMM: NinjaOne, Datto e N-able.
 - Documentação viva: estilo IT Glue.
 
-## 18. Ordem aprovada
+## 18. Arquitetura inicial
+
+**Definido** (modo básico, empresa pequena; detalhes e diagramas em `nextec/sentinela/ARQUITETURA.md`)
+- Autenticação: o usuário é redirecionado ao provedor de identidade configurado (Entra ID por padrão), por OIDC ou SAML
+  genérico, faz login com MFA, e o Sentinela confere grupo, permissões e janela de horário antes de liberar a lista de
+  clientes e máquinas. Login local fica para o futuro.
+- Servidor 1 (API e painel, equivalente ao app01) e servidor 2 (banco e cofre, separado por segurança, equivalente ao
+  app02), na Contabo.
+- Gravações em armazenamento de objetos compatível com S3, fora dos dois servidores.
+- Backup diário cifrado do banco e do cofre fora do provedor principal.
+- Coletor por cliente, dentro da rede dele, só com conexão de saída; nada entra de fora para dentro.
+- Fluxo: login no provedor, autorização no Sentinela, clique na máquina, credencial buscada no cofre, ordem de conexão,
+  credencial aplicada pelo coletor ou pelo agente sem aparecer, sessão gravada no armazenamento de objetos e evento no
+  log de auditoria do servidor 1.
+
+## 19. Ordem aprovada
 
 1. Base segura.
 2. Infraestrutura crítica.
@@ -296,3 +311,4 @@ Também definidos:
 5. Avançado.
 
 Detalhamento, etapas, critérios de entrega e dependências: `nextec/sentinela/ROADMAP.md`.
+Arquitetura: `nextec/sentinela/ARQUITETURA.md`.
