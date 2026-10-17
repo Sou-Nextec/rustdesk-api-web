@@ -2,9 +2,8 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
-## 2.12.1
+## 2.12.2
 
-<<<<<<< HEAD
 Senhas dos servidores: dá para saber e mudar de onde vem a regra de cada máquina, e a lista fica limpa.
 
 - **Coluna "Regra da senha":** cada máquina mostra quem manda: **Do cliente** (troca a cada X), **Da máquina** (regra só dela) ou **Desligada** (nesta máquina ou no cliente) e **Sem regra**. A regra da máquina ganha da do cliente, como no servidor.
@@ -12,13 +11,14 @@ Senhas dos servidores: dá para saber e mudar de onde vem a regra de cada máqui
 - **Regras dos clientes mostram o impacto:** nova coluna "Máquinas" (quantas seguem e quantas têm regra própria) e aviso de que a regra vale só para as máquinas direto no grupo: subgrupo (ex.: "Cliente / Servidores") não herda a do cliente e precisa da própria.
 - **Situação limpa:** só o estado (ex.: "Agente ativo") e problemas. Última consulta, próxima verificação, app, versão da senha e a regra pronta aparecem ao passar o mouse (e ficam disponíveis para leitor de tela).
 - **Coluna Ações sem corte:** "Remover agente" saiu da linha e fica no menu ⋯, com a explicação ("O agente está parado: remova e reinstale"); o menu abre alinhado ao fim e não sai da tela.
-=======
+
+## 2.12.1
+
 Requisito do instalador à vista no convite.
 
 - **Por que o convite não vinculava a máquina:** o instalador (MSI) só entrega o código do convite ao agente se foi gerado pelo gerador **2.3.11 ou mais novo**. Quem instala com um MSI mais antigo entra como **Pendente**, sem cliente, e o convite fica com 0 usos.
 - **Convite de instalação** agora mostra, junto da versão publicada para todos, o requisito: o instalador precisa ser do gerador 2.3.11 ou mais novo para vincular sozinho (a versão da release é o número que você escolhe ao publicar e pode não coincidir com a do gerador, então o painel não tenta adivinhar). O convite fica preso à versão que estava publicada quando foi criado.
 
->>>>>>> 9233131e01ac6bd4a0d4dfd64adaf3664a3fba07
 ## 2.12.0
 
 Dispositivos: cliente e subgrupo separados, e adicionar uma máquina sem adivinhar.
