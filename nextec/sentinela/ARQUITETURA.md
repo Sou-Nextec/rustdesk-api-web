@@ -172,6 +172,19 @@ erDiagram
 | Política de rotação | Ligada à conta: intervalo de tempo, troca após cada uso e se a rotação depende de aprovação |
 | Concessão de acesso | Liga usuário ou grupo a uma conta: validade, janela de horário e se exige aprovação |
 
+**Requisitos de segurança do cofre (obrigatórios na etapa 1.4):**
+
+| Requisito | Como |
+| --- | --- |
+| Cifragem em camadas | Chave mestra (no servidor 2 no modo básico; KMS ou HSM no intermediário) protege a chave de cada cliente, que cifra cada versão do segredo |
+| Algoritmo | Cifragem autenticada (AES-256-GCM ou XChaCha20-Poly1305), com nonce único por versão; biblioteca consolidada, nunca criptografia própria |
+| Isolamento entre clientes | Toda consulta filtrada por cliente no banco (segurança por linha), além da checagem na aplicação |
+| Segredo fora de log e de navegador | Nunca em log, erro, URL ou resposta ao navegador; só sai para o app ou coletor por ticket de uso único |
+| Auditoria à prova de alteração | Registro só de inclusão, encadeado por hash, com quem, quando, qual versão e qual motivo (chamado) |
+| Menor privilégio no banco | Usuário do banco da aplicação sem permissão de apagar histórico; administração do banco separada |
+| Rotação das próprias chaves | Chave de cliente trocável sem parar o serviço (recifrar as versões em segundo plano) |
+| Memória | Segredo decifrado só no momento do uso e descartado em seguida |
+
 **A detalhar na etapa 1.4:** como a chave do cliente cifra cada versão do segredo (chave mestra protegendo as chaves dos
 clientes), por quanto tempo as versões expiradas ficam guardadas e o que entra no registro de uso de cada versão.
 
