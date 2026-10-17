@@ -4,10 +4,10 @@ Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no p
 
 ## 2.11.52
 
-Aviso quando o instalador publicado não suporta convites.
+Requisito do instalador à vista no convite.
 
 - **Por que o convite não vinculava a máquina:** o instalador (MSI) só entrega o código do convite ao agente se foi gerado pelo gerador **2.3.11 ou mais novo**. Quem instala com um MSI mais antigo entra como **Pendente**, sem cliente, e o convite fica com 0 usos.
-- **Convite de instalação** agora avisa quando a versão publicada para todos é anterior a isso e explica o caminho: gerar um novo instalador, publicar em Atualizações do app para todos e criar o convite de novo (ele fica preso à versão que estava publicada quando foi criado).
+- **Convite de instalação** agora mostra, junto da versão publicada para todos, o requisito: o instalador precisa ser do gerador 2.3.11 ou mais novo para vincular sozinho (a versão da release é o número que você escolhe ao publicar e pode não coincidir com a do gerador, então o painel não tenta adivinhar). O convite fica preso à versão que estava publicada quando foi criado.
 
 ## 2.11.50
 

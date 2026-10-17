@@ -60,21 +60,3 @@ export function parseBatchLines (text, max = 200) {
   if (items.length > max) throw new Error(`O lote aceita até ${max} linhas.`)
   return items
 }
-
-// O convite só vincula a máquina ao cliente se o instalador (MSI) foi gerado com o gerador 2.3.11 ou mais novo: é dele que
-// vem o caminho do arquivo, de onde o agente lê o código. A versão do pacote é a do gerador que o construiu.
-export const MIN_INVITE_PACKAGE = '2.3.11'
-
-// true = a versão suporta convites (ou não deu para saber: nunca bloqueia nem avisa à toa).
-export function packageSupportsInvites (version, min = MIN_INVITE_PACKAGE) {
-  const parse = (v) => String(v || '').trim().replace(/^v/i, '').split('.').map(n => parseInt(n, 10))
-  const a = parse(version)
-  const b = parse(min)
-  if (a.length < 2 || a.some(Number.isNaN) || b.some(Number.isNaN)) return true
-  for (let i = 0; i < Math.max(a.length, b.length); i++) {
-    const x = a[i] || 0
-    const y = b[i] || 0
-    if (x !== y) return x > y
-  }
-  return true
-}

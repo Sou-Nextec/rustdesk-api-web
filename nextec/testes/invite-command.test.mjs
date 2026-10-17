@@ -38,17 +38,3 @@ test('linhas do lote: apelido; descrição, vazias ignoradas, limite', () => {
     { alias: 'PC-01', label: 'Mesa 1' }, { alias: 'PC-02', label: 'PC-02' }, { alias: 'PC-03', label: 'Sala; A' }])
   assert.throws(() => parseBatchLines('a\n'.repeat(5), 4), /até 4/)
 })
-
-test('versão do pacote que suporta convites (gerador 2.3.11 ou mais novo)', async () => {
-  const { packageSupportsInvites } = await import('../../src/nextec/invite-command.mjs')
-  assert.equal(packageSupportsInvites('2.3.6'), false)
-  assert.equal(packageSupportsInvites('2.3.10'), false)
-  assert.equal(packageSupportsInvites('2.3.11'), true)
-  assert.equal(packageSupportsInvites('2.4.0'), true)
-  assert.equal(packageSupportsInvites('v3.0.0'), true)
-  assert.equal(packageSupportsInvites('2.3'), false)
-  // sem dado confiável nada é presumido
-  assert.equal(packageSupportsInvites(''), true)
-  assert.equal(packageSupportsInvites('abc'), true)
-  assert.equal(packageSupportsInvites(undefined), true)
-})
