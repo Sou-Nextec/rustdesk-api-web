@@ -95,7 +95,7 @@ flowchart LR
 | Hoje (básico) | Depois (intermediário em diante) |
 | --- | --- |
 | 2 VPS | Alta disponibilidade em mais de um local |
-| Chave mestra no servidor 2 | Chave mestra em KMS ou HSM |
+| Chave mestra em cofre de chaves próprio, fora do banco | Chave mestra em KMS ou HSM |
 | Um coletor por cliente | Coletor redundante nos clientes críticos |
 | Sessão passa pelo app do analista | Isolamento de sessão por intermediário (Fase 5) |
 
@@ -127,7 +127,7 @@ protocolo do RustDesk (servidor de ID e relay), que não será trocado. Confirma
 coletor; concentrar a sessão no coletor fica para a Fase 5, junto do isolamento de sessão. O agente atual, que fala HTTPS com a API, pode
 continuar assim e migrar para o gRPC quando houver ganho; o coletor, que é novo, já nasce em gRPC.
 
-**A detalhar na etapa 2.1:** emissão, rotação e revogação dos certificados do coletor e do agente.
+**Certificados:** ver D8.
 
 ### D2. Nenhuma porta de entrada no cliente (17/10/2026)
 
@@ -198,7 +198,7 @@ configuráveis e granulares desde a base, para servir também a um possível pro
 
 | Requisito | Como |
 | --- | --- |
-| Cifragem em camadas | Chave mestra (no servidor 2 no modo básico; KMS ou HSM no intermediário) protege a chave de cada cliente, que cifra cada versão do segredo |
+| Cifragem em camadas | Cada versão do segredo é cifrada com a chave do cliente; a chave do cliente é cifrada pela chave mestra, que fica num cofre de chaves dedicado (ex.: OpenBao ou HashiCorp Vault auto-hospedado, depois KMS ou HSM), nunca no mesmo banco dos dados. Banco vazado sem o cofre de chaves não decifra nada |
 | Algoritmo | Cifragem autenticada (AES-256-GCM ou XChaCha20-Poly1305), com nonce único por versão; biblioteca consolidada, nunca criptografia própria |
 | Isolamento entre clientes | Toda consulta filtrada por cliente no banco (segurança por linha), além da checagem na aplicação |
 | Segredo fora de log e de navegador | Nunca em log, erro, URL ou resposta ao navegador; só sai para o app ou coletor por ticket de uso único |
@@ -207,8 +207,9 @@ configuráveis e granulares desde a base, para servir também a um possível pro
 | Rotação das próprias chaves | Chave de cliente trocável sem parar o serviço (recifrar as versões em segundo plano) |
 | Memória | Segredo decifrado só no momento do uso e descartado em seguida |
 
-**A detalhar na etapa 1.4:** como a chave do cliente cifra cada versão do segredo (chave mestra protegendo as chaves dos
-clientes), por quanto tempo as versões expiradas ficam guardadas e o que entra no registro de uso de cada versão.
+**Retenção das versões expiradas (definida em 17/10/2026):** configurável por cliente e por tipo de conta, de um dia
+até indefinido. Sem configuração, nada é apagado. O prazo nunca fica abaixo do piso legal do cliente (ex.: 5 anos para
+cartório). Cada uso de versão registra quem, quando, qual versão e qual motivo.
 
 ### D4. Síncrono ou em fila (17/10/2026)
 
@@ -278,6 +279,17 @@ validação do Sentinela, com duas camadas em sequência:
 **Por quê:** é o modelo de confiança zero usado no mercado (um ponto que aplica a política e avalia o risco de forma
 contínua, não só no login). Evita uma segunda classe de acesso com regras diferentes para API ou IA.
 
+### D8. Certificados do coletor e do agente (17/10/2026)
+
+**Decisão:** o Sentinela é a autoridade certificadora própria (PKI interna), no modelo usado pelo Teleport.
+
+- **Emissão:** na instalação, o coletor ou agente recebe um token de inscrição de uso único e curta duração; com ele se
+  registra e recebe o certificado definitivo, gerado com chave privada criada na própria máquina, que nunca sai dela.
+- **Validade curta:** cerca de 90 dias (configurável), com renovação automática enquanto o equipamento está saudável.
+- **Revogação imediata:** coletor comprometido ou contrato encerrado, o admin revoga no painel e o servidor deixa de
+  aceitar a conexão na hora (lista de revogados consultada a cada conexão).
+- **Chave da autoridade certificadora** guardada no cofre de chaves dedicado (D3), nunca no banco.
+
 ## Histórico
 
 | Data | Mudança |
@@ -292,3 +304,4 @@ contínua, não só no login). Evita uma segunda classe de acesso com regras dif
 | 17/10/2026 | D3: permissões e rotação granulares, perfis e padrões iniciais |
 | 17/10/2026 | D4 síncrono ou em fila, D5 testes, D6 API em duas camadas |
 | 17/10/2026 | D7: eixo único de validação (permissão e risco) |
+| 17/10/2026 | D8: certificados; D3: chave mestra fora do banco e retenção configurável |
