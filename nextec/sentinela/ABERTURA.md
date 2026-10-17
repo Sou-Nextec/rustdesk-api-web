@@ -1,10 +1,11 @@
-# Documento de abertura da plataforma de acesso privilegiado e RMM
+# Projeto Sentinela: documento de abertura
 
 Registro histórico da conversa de 17/10/2026 que definiu a visão da plataforma. **Este documento é fechado:** não recebe
-alterações depois de aprovado. Mudanças de rumo entram no roadmap (`nextec/plataforma/ROADMAP.md`), que é o documento vivo.
+alterações depois de aprovado. Mudanças de rumo entram no roadmap (`nextec/sentinela/ROADMAP.md`), que é o documento vivo.
 
-O nome da plataforma e o nome deste documento ainda serão definidos. Enquanto isso, o texto usa "plataforma" e
-"Nextec Connect" (nome atual do acesso remoto).
+**Nome (definido):** Projeto Sentinela internamente; **Sentinela** como nome da plataforma. O nome é independente da
+marca Nextec, pensando num possível produto. O texto usa "plataforma" para o Sentinela e "Nextec Connect" para o acesso
+remoto atual, que passa a fazer parte dele.
 
 ## 1. Ponto de partida
 
@@ -26,7 +27,8 @@ O nome da plataforma e o nome deste documento ainda serão definidos. Enquanto i
 
 ## 3. Visão
 
-- Login único pelo Entra ID, com MFA. A partir dele o analista acessa tudo da Nextec e dos clientes.
+- Login único com MFA por um provedor de identidade externo (hoje o Entra ID). A partir dele o analista acessa tudo da
+  Nextec e dos clientes.
 - Tudo de clientes passa pela plataforma: acesso remoto, navegador, túnel ou VPN por usuário ou por empresa.
 - Bloqueou o usuário num lugar, corta tudo: painel, app, sessões abertas e senhas que ele usou.
 - A Nextec administra as máquinas do cliente pela plataforma, mesmo quando o cliente tem AD.
@@ -36,14 +38,17 @@ O nome da plataforma e o nome deste documento ainda serão definidos. Enquanto i
 ## 4. Identidade e acesso
 
 **Definido**
-- SSO pelo Entra ID com MFA resistente a phishing (passkey ou Authenticator com correspondência de número).
+- Provedor de identidade plugável: a plataforma não fica presa ao Entra. Suporte genérico a OIDC e SAML, para trocar
+  por Keycloak, Authentik ou outro sem refazer nada. O Entra ID é o primeiro provedor.
+- MFA resistente a phishing (passkey ou Authenticator com correspondência de número).
+- Usuário local da própria plataforma (com MFA próprio) fica para o roadmap futuro.
 - Acesso condicional: dispositivo gerenciado e país permitido.
 - Acesso just-in-time: o analista pede, recebe por tempo definido e a liberação expira sozinha.
 - Aprovação para contas críticas (root, Administrador do domínio) e dupla custódia para as mais críticas.
 - Janela de acesso por usuário, fornecedor e cliente (ex.: horário comercial). Fora dela, o acesso é bloqueado ou vira
   pedido de aprovação de emergência, e a tentativa gera alerta.
 - Fornecedor eventual: convite ou código único, com prazo, escopo restrito e MFA próprio.
-- Prestador recorrente: login próprio na plataforma (conta convidada no Entra).
+- Prestador recorrente: login próprio na plataforma (conta convidada no provedor de identidade).
 - Aprovação de acessos pelo celular, com um toque.
 - Sessão com tempo máximo e reautenticação para contas críticas.
 - Encerrar sessão remotamente e bloquear o usuário em tempo real.
@@ -147,11 +152,11 @@ O nome da plataforma e o nome deste documento ainda serão definidos. Enquanto i
 - Dois modos, escolhidos por sistema:
   - **Navegador isolado no coletor**, para painéis críticos (firewall, iDRAC, iLO, hipervisor, NAS, console do M365):
     o analista recebe só a imagem, a senha é injetada lá dentro, a sessão é gravada e downloads e cópias seguem o perfil;
-  - **Proxy com identidade**, para sistemas de menor risco: túnel com login do Entra na frente e log de cada acesso.
+  - **Proxy com identidade**, para sistemas de menor risco: túnel com o login da plataforma na frente e log de cada acesso.
 - O alvo nunca fica exposto na internet; HTTP sem criptografia trafega dentro do túnel.
 - As mesmas regras de janela, aprovação, auditoria e corte imediato valem para a web.
 - Segundo fator de sistemas do cliente, classificado no onboarding em quatro casos:
-  1. aceita SSO (SAML ou OIDC): federar com o Entra ou com a plataforma como provedor, sem senha guardada;
+  1. aceita SSO (SAML ou OIDC): federar com o provedor de identidade ou com a plataforma como provedor, sem senha guardada;
   2. código de aplicativo (TOTP): refazer o cadastro e guardar a semente no cofre; a plataforma gera e injeta o código;
   3. código por SMS ou e-mail: receber num número ou e-mail controlado pela plataforma, que lê e preenche;
   4. chave física ou push em celular específico: acesso manual, com aprovação e gravação.
@@ -242,7 +247,7 @@ O nome da plataforma e o nome deste documento ainda serão definidos. Enquanto i
 ## 14. Integrações e API
 
 **Definido**
-- A plataforma consome: Entra ID e Microsoft 365, Jira, Acronis, fabricantes (firewall, switch, câmera), fontes de
+- A plataforma consome: provedor de identidade (OIDC ou SAML; Entra ID primeiro), Microsoft 365, Jira, Acronis, fabricantes (firewall, switch, câmera), fontes de
   vulnerabilidade (NVD, CISA, fabricantes), Jev e uma IA maior, WhatsApp e e-mail, Grafana ou SIEM.
 - A plataforma oferece uma API própria documentada, com o mesmo controle de acesso, para n8n, scripts e um servidor MCP.
 - Princípio: nada acessa nada direto; tudo passa pela plataforma, inclusive as automações.
@@ -289,4 +294,4 @@ Também definidos:
 4. Conformidade e cliente.
 5. Avançado.
 
-Detalhamento, etapas, critérios de entrega e dependências: `nextec/plataforma/ROADMAP.md`.
+Detalhamento, etapas, critérios de entrega e dependências: `nextec/sentinela/ROADMAP.md`.

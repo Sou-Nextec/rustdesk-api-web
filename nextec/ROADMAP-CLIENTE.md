@@ -36,7 +36,7 @@ Executar [plano de estabilização](../docs/superpowers/plans/2026-10-11-estabil
 
 ## P3 — PAM, identidade e continuidade
 
-> Substituído em 17/10/2026 por `nextec/plataforma/ROADMAP.md`. Itens mantidos aqui só como histórico.
+> Substituído em 17/10/2026 por `nextec/sentinela/ROADMAP.md` (Projeto Sentinela). Itens mantidos aqui só como histórico.
 
 - [ ] Avaliar PAM existente para cofre, rotação, credenciais temporárias e acesso individual ao sistema operacional.
 - [ ] Integrar PAM à identidade IAM/Entra e às permissões do painel; privilégios mínimos e elevação auditável.

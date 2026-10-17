@@ -1,6 +1,6 @@
-# Roadmap da plataforma de acesso privilegiado e RMM
+# Projeto Sentinela: roadmap
 
-Documento vivo. A origem de cada item está no documento de abertura (`nextec/plataforma/ABERTURA.md`), que é fechado.
+Documento vivo. A origem de cada item está no documento de abertura (`nextec/sentinela/ABERTURA.md`), que é fechado.
 Este roadmap substitui a seção "P3: PAM, identidade e continuidade" de `nextec/ROADMAP-CLIENTE.md`; os itens P0 a P2 de lá
 continuam valendo e são pré-requisito da Fase 1.
 
@@ -28,12 +28,12 @@ Corre ao lado de todas as fases e funciona como porta de saída.
 
 ## Fase 1: Base segura
 
-Objetivo: o analista entra pelo Entra, clica e acessa servidores sem conhecer nenhuma senha, e o bloqueio corta tudo.
+Objetivo: o analista entra pelo provedor de identidade (Entra primeiro), clica e acessa servidores sem conhecer nenhuma senha, e o bloqueio corta tudo.
 
 | Etapa | Entrega | Critério de entrega | Depende de | Paralelo |
 | --- | --- | --- | --- | --- |
 | 1.1 | Segurança básica da plataforma | MFA para todos e login local desativado; cifragem em trânsito e em repouso; admin separado do operador; varredura de dependências e de código no CI; backup cifrado fora da VPS com uma restauração testada e registrada; logs de auditoria em destino só de escrita; gerência dos servidores fora da internet. Evidência: produção | P0 do `ROADMAP-CLIENTE.md` | Sim, com 1.2 e 1.3 |
-| 1.2 | SSO pelo Entra e bloqueio sincronizado | Login do painel e do app só pelo Entra com MFA; usuário desativado no Entra perde painel e app em até 5 minutos; sessões abertas derrubadas; acesso condicional (dispositivo gerenciado, país). Evidência: piloto com a equipe | Nenhuma | Sim, com 1.1 e 1.3 |
+| 1.2 | SSO plugável e bloqueio sincronizado | Login do painel e do app só pelo provedor de identidade com MFA, por OIDC e SAML genéricos (Entra primeiro; trocar por Keycloak ou Authentik só por configuração); usuário desativado no provedor perde painel e app em até 5 minutos; sessões abertas derrubadas; acesso condicional (dispositivo gerenciado, país). Evidência: piloto com a equipe | Nenhuma | Sim, com 1.1 e 1.3 |
 | 1.3 | Contrato, termo de uso e plano de continuidade | Cláusula de gestão de senhas e entrega no fim do contrato aprovada; modo de contingência descrito (como acessar o cliente com a plataforma fora) | Nenhuma | Sim, com tudo |
 | 1.4 | Cofre de contas do SO | Contas do SO por máquina com chave por cliente; revelação só por admin com justificativa e auditoria; senha de emergência lacrada; exportação cifrada de fim de contrato. Evidência: CI | 1.1 | Sim, com 1.5 |
 | 1.5 | Descoberta e mapeamento antes de rotacionar | Agente lista contas administrativas locais e de domínio e os serviços e tarefas agendadas que usam cada conta; painel mostra o que bloqueia a rotação. Evidência: piloto em 1 cliente | Agente atual | Sim, com 1.4 |
@@ -45,7 +45,7 @@ Objetivo: o analista entra pelo Entra, clica e acessa servidores sem conhecer ne
 | 1.11 | Experiência de um clique | Tela "meus clientes" com busca, favoritos e conectar; sem nenhum campo de senha para o analista | 1.7 | Sim, com 1.10 |
 
 **Porta de saída:** segurança básica em produção; piloto de rotação e conexão sem senha em 1 cliente por 30 dias sem
-incidente; bloqueio no Entra comprovado cortando painel, app e sessão.
+incidente; bloqueio no provedor de identidade comprovado cortando painel, app e sessão.
 
 **Paralelo com a fase seguinte:** a etapa 2.1 (coletor) pode começar depois de 1.4.
 
@@ -140,7 +140,8 @@ Objetivo: chegar ao nível dos grandes PAMs e evoluir com o que é novo.
 | 5.8 | IA operando pela plataforma | Agentes de IA com identidade própria e regras do PAM; copiloto na sessão; resumo da sessão no chamado; proteção contra injeção de prompt | 3.7, 4.6 | Sim, com tudo |
 | 5.9 | Simulação antes da mudança | Antes de alterar o firewall, mostrar o que abre, o que fecha e regras redundantes | 2.3 | Sim, com tudo |
 | 5.10 | Segurança top | Zero trust entre componentes; builds reproduzíveis e assinados; monitoramento 24 horas; programa de recompensa por falhas; ISO 27001 e SOC 2 (decisão de negócio) | 3.14 | Itens entre si |
-| 5.11 | Extrapolar | Avaliar criptografia pós-quântica no cofre, computação confidencial e passkeys para os analistas | 5.10 | Sim, com tudo |
+| 5.11 | Usuário local | Login local da própria plataforma, com MFA próprio, para quem não usa provedor externo | 1.2 | Sim, com tudo |
+| 5.12 | Extrapolar | Avaliar criptografia pós-quântica no cofre, computação confidencial e passkeys para os analistas | 5.10 | Sim, com tudo |
 
 **Porta de saída:** não há; a Fase 5 é contínua.
 
@@ -169,3 +170,4 @@ Fase 3 (3.12 API) -> 4.6 MCP -> 5.8 IA pela plataforma
 | Data | Mudança |
 | --- | --- |
 | 17/10/2026 | Criação a partir do documento de abertura |
+| 17/10/2026 | Nome Sentinela; provedor de identidade plugável (OIDC e SAML) e usuário local no futuro |
