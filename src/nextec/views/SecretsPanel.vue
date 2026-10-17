@@ -476,6 +476,8 @@
 
   let inflight = false
   const lastSeen = ref(new Map())
+  // inventário completo de máquinas (id e grupo): o resumo do overview não traz as máquinas de grupos com regra desligada
+  const allPeers = ref([])
   // silent: atualização automática, sem spinner e sem trocar a lista por erro se uma rodada falhar.
   const load = async (silent = false) => {
     if (silent && inflight) return
@@ -494,6 +496,7 @@
     if (ov) {
       const n = normalizeOverview(ov)
       // presença: só troca quando a lista de máquinas respondeu; se falhar, vale o último valor conhecido
+      if (peers && peers.data && Array.isArray(peers.data.list)) allPeers.value = peers.data.list.map(p => ({ peer_id: String(p.id), group_id: p.group_id || 0 }))
       if (peers && peers.data && Array.isArray(peers.data.list)) lastSeen.value = new Map(peers.data.list.map(p => [String(p.id), Number(p.last_online_time) || 0]))
       devices.value = n.devices.map(d => (lastSeen.value.has(String(d.peer_id)) ? { ...d, peer_last_online: lastSeen.value.get(String(d.peer_id)) } : d))
       policies.value = n.policies
@@ -684,7 +687,8 @@
     load()
   }
   const usageText = (p) => {
-    const u = groupUsage(p, devices.value, policies.value)
+    // o inventário completo manda; se ele não respondeu, vale o que o overview trouxe
+    const u = groupUsage(p, allPeers.value.length ? allPeers.value : devices.value, policies.value)
     if (!u.total) return 'nenhuma máquina'
     return `${u.follow} ${u.follow === 1 ? 'segue' : 'seguem'}` + (u.own ? ` · ${u.own} com regra própria` : '')
   }

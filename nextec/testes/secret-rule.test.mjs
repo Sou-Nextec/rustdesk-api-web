@@ -75,6 +75,15 @@ test('regras dos clientes mostram quantas máquinas seguem e quantas têm regra 
   assert.deepEqual(groupUsage(policies[2], devices, policies), { follow: 0, own: 0, total: 0 })
 })
 
+test('a contagem usa o inventário completo: grupo com regra desligada ainda tem as máquinas que o seguem', () => {
+  const off = { kind: 'group', ref: '9', enabled: false, interval_minutes: 60 }
+  const inventario = [{ peer_id: 'x1', group_id: 9 }, { peer_id: 'x2', group_id: 9 }, { peer_id: 'x3', group_id: 9 }]
+  const p = [...policies, off, { kind: 'peer', ref: 'x3', enabled: true, interval_minutes: 15 }]
+  assert.deepEqual(groupUsage(off, inventario, p), { follow: 2, own: 1, total: 3 })
+  // o resumo do servidor omite essas máquinas: sozinho ele subconta
+  assert.equal(groupUsage(off, [], p).total, 0)
+})
+
 test('intervalo em texto', () => {
   assert.equal(everyText(15), '15 min')
   assert.equal(everyText(60), 'hora')
