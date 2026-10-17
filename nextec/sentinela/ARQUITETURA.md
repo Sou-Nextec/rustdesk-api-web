@@ -129,6 +129,10 @@ sessão pelo PSM, que grava e consulta o cofre; não usa protocolo de transporte
 **Alternativa descartada:** WebSocket com mensagens próprias, mais simples de depurar, mas sem contrato tipado nem
 streaming nativo equivalente.
 
+**Escopo:** o gRPC é o canal de controle (ordens, credenciais, rotação, inventário, eventos). A sessão remota continua no
+protocolo do RustDesk (servidor de ID e relay), que não será trocado. O agente atual, que fala HTTPS com a API, pode
+continuar assim e migrar para o gRPC quando houver ganho; o coletor, que é novo, já nasce em gRPC.
+
 **A detalhar na etapa 2.1:** emissão, rotação e revogação dos certificados do coletor e do agente.
 
 ## Histórico
