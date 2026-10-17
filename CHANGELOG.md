@@ -2,6 +2,13 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.12.1
+
+Requisito do instalador à vista no convite.
+
+- **Por que o convite não vinculava a máquina:** o instalador (MSI) só entrega o código do convite ao agente se foi gerado pelo gerador **2.3.11 ou mais novo**. Quem instala com um MSI mais antigo entra como **Pendente**, sem cliente, e o convite fica com 0 usos.
+- **Convite de instalação** agora mostra, junto da versão publicada para todos, o requisito: o instalador precisa ser do gerador 2.3.11 ou mais novo para vincular sozinho (a versão da release é o número que você escolhe ao publicar e pode não coincidir com a do gerador, então o painel não tenta adivinhar). O convite fica preso à versão que estava publicada quando foi criado.
+
 ## 2.12.0
 
 Dispositivos: cliente e subgrupo separados, e adicionar uma máquina sem adivinhar.
