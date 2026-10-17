@@ -101,13 +101,7 @@ flowchart LR
 
 ## 4. Decisões técnicas pendentes
 
-Levantadas em 17/10/2026; cada uma vira um registro de decisão quando for fechada, antes da etapa da Fase 1 que depende dela.
-
-| Decisão | O que precisa ser definido | Necessária para |
-| --- | --- | --- |
-| Síncrono ou assíncrono | O que acontece na hora do clique e o que vai para fila (ex.: rotação após a sessão) | 1.6 e 1.7 |
-| Estratégia de testes | Testes dos fluxos críticos e dos conectores por fabricante, que quebram com atualizações | 1.6 e 2.3 |
-| Versionamento da API própria | Como versionar a API que serve painel, app e, no futuro, o MCP | 3.12 |
+Nenhuma no momento. As cinco levantadas em 17/10/2026 viraram as decisões D1 a D6 abaixo.
 
 ## 5. Decisões tomadas
 
@@ -216,6 +210,44 @@ configuráveis e granulares desde a base, para servir também a um possível pro
 **A detalhar na etapa 1.4:** como a chave do cliente cifra cada versão do segredo (chave mestra protegendo as chaves dos
 clientes), por quanto tempo as versões expiradas ficam guardadas e o que entra no registro de uso de cada versão.
 
+### D4. Síncrono ou em fila (17/10/2026)
+
+**Decisão:** o que o usuário espera ver na hora é síncrono; o que é pesado ou pode precisar repetir vai para fila em
+segundo plano, com a tela mostrando o andamento.
+
+| Síncrono | Em fila |
+| --- | --- |
+| Login, listar clientes e máquinas, abrir sessão, revelar senha (admin) | Rotação programada por tempo, rotação em massa, relatórios, varredura de vulnerabilidade, atualizações em lote, backup de configuração |
+
+**Exceção de segurança:** a rotação logo após o uso da senha é imediata (síncrona ou com prioridade máxima na fila), para a
+senha usada não continuar valendo. Se falhar, gera alerta e nova tentativa; nunca fica esquecida.
+
+Toda tarefa em fila é idempotente (pode rodar de novo sem efeito duplicado) e registra resultado e falha na auditoria.
+
+### D5. Estratégia de testes (17/10/2026)
+
+**Decisão:** abordagem enxuta, sem laboratório caro, e tudo automático.
+
+- Testes automáticos de código (unidade e fluxo) rodando no CI a cada mudança, sem custo.
+- Conectores de fabricante testados contra simulação da API de cada fabricante no CI.
+- **Verificação real semanal e automática:** um teste agendado roda contra os equipamentos que a Nextec já tem (FortiGate,
+  MikroTik, pfSense) e avisa se um conector quebrou, antes do cliente perceber. Cresce conforme entram novos fabricantes.
+- Fluxos críticos (login, conexão sem senha, rotação, bloqueio) com teste ponta a ponta antes de cada versão.
+
+### D6. API em duas camadas (17/10/2026)
+
+**Decisão:** separar API interna e API externa.
+
+| Camada | Para quem | Regras |
+| --- | --- | --- |
+| Interna | Painel e app do Sentinela | Sem documentação pública; pode mudar junto com o painel e o app |
+| Externa | Integrações, portal do cliente, MCP (equipe e, no futuro, clientes) | Documentada e versionada (ex.: /v1), com aviso antes de desativar uma versão |
+
+- Toda chamada à API externa tem dono: quem integra é tratado como um usuário dentro do mesmo modelo de concessão (D3),
+  com o mesmo escopo granular, auditoria e corte imediato. Nada de token solto sem dono.
+- O MCP usa a API externa; nunca um caminho paralelo.
+- Tokens de integração com validade e escopo mínimo, revogáveis no painel, e limite de requisições.
+
 ## Histórico
 
 | Data | Mudança |
@@ -228,3 +260,4 @@ clientes), por quanto tempo as versões expiradas ficam guardadas e o que entra 
 | 17/10/2026 | D2: nenhuma porta de entrada no cliente |
 | 17/10/2026 | D1 confirmada (RustDesk direto ao relay); D3: modelo de dados do cofre |
 | 17/10/2026 | D3: permissões e rotação granulares, perfis e padrões iniciais |
+| 17/10/2026 | D4 síncrono ou em fila, D5 testes, D6 API em duas camadas |

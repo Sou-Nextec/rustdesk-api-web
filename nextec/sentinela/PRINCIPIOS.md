@@ -50,6 +50,10 @@ não apareça na tela. Mudar amanhã deve ser só trocar um valor.
 - **Auditoria:** toda mudança de configuração registra quem, quando, valor antigo e novo.
 - **Limites de segurança não se desligam:** a configuração ajusta dentro de um piso seguro (ex.: MFA sempre ligado,
   auditoria sempre ativa, retenção mínima legal). Um valor que enfraqueça a segurança abaixo do piso é recusado.
+- **Identidade visual em tokens de tema:** cores, logo, fontes e nome ficam em variáveis de tema centralizadas (tokens de
+  design, variáveis CSS). Nenhuma cor ou logo fixa espalhada no código; trocar num lugar só muda a plataforma inteira.
+- **Automatizar o que puder:** tarefa repetitiva (testes, verificações, relatórios, rotações) nasce agendada e automática,
+  com registro do resultado; manual só quando exigir decisão humana.
 - **Segredo não é configuração:** senhas, tokens e chaves ficam no cofre ou em variável de ambiente, nunca no arquivo ou
   na tela de configuração.
 
@@ -59,3 +63,4 @@ não apareça na tela. Mudar amanhã deve ser só trocar um valor.
 | --- | --- |
 | 17/10/2026 | Criação |
 | 17/10/2026 | Princípio 5: tudo configurável |
+| 17/10/2026 | Tokens de tema e automatizar o que puder |

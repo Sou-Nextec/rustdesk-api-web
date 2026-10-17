@@ -86,8 +86,10 @@ remoto atual, que passa a fazer parte dele.
 - A credencial injetada passa pela memória do app do analista. A rotação após uso torna a senha descartável; a solução
   definitiva é o isolamento de sessão (seção 15).
 - Validar o `OsLogin` na tela de bloqueio de um Windows Server com a versão do app gerada hoje.
-- Nome Sentinela: antes de investir em marca, consultar o INPI (classes 9 e 42) e o domínio .com.br. Em 17/10/2026,
-  sentinela.com, sentinela.app, sentinela.io, sentinela.dev e usesentinela.com já estavam registrados por terceiros.
+- Nome Sentinela: sem problema para uso interno, mas há conflito se virar produto. Existem a Sentinela Security
+  Intelligence (cibersegurança desde 2004, sentinelasecurity.com.br) e o sentinela.ai (risco e compliance), no mesmo setor;
+  sentinela.com.br, sentinela.com, .app, .io, .dev e usesentinela.com já têm dono. Antes de qualquer lançamento,
+  revisar nome e marca e consultar o INPI (classes 9 e 42).
 - Identidade visual própria do Sentinela: preferência por base grafite; cor de destaque a definir. Até lá, os materiais
   seguem a identidade da Nextec.
 
