@@ -5,6 +5,10 @@
               title="Nenhuma versão está publicada para todos."
               description="O convite entrega o MSI publicado. Publique uma versão em Atualizações do app e volte aqui." />
 
+    <el-alert v-if="release && !supportsInvites" type="warning" show-icon :closable="false" class="nx-add-alert"
+              :title="`A versão publicada (${release.version}) é anterior ao suporte a convites.`"
+              description="Quem instalar com ela entra como Pendente, sem cliente. Gere um novo instalador no Gerar cliente (gerador 2.3.11 ou mais novo), publique em Atualizações do app para todos e crie o convite de novo: o convite fica preso à versão que estava publicada." />
+
     <p class="nx-add-lead">Um link por cliente: quem abrir baixa o instalador, instala como qualquer programa e a máquina já entra no cliente certo. Ou você cola o comando silencioso.</p>
 
     <el-form label-position="top" class="nx-add-grid" @submit.prevent>
@@ -62,7 +66,7 @@
   import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { invitesList, inviteCreate, inviteRevoke } from '@/nextec/api'
-  import { inviteLink, inviteCommand, inviteMessage } from '@/nextec/invite-command.mjs'
+  import { inviteLink, inviteCommand, inviteMessage, packageSupportsInvites } from '@/nextec/invite-command.mjs'
   import InviteOptions from '@/nextec/views/InviteOptions.vue'
   import { usePublicBase, publicBaseReady, loadPublicBase } from '@/nextec/public-base'
 
@@ -73,6 +77,7 @@
   const loaded = ref(false)
   const release = ref(null)
   const rows = ref([])
+  const supportsInvites = computed(() => !release.value || packageSupportsInvites(release.value.version))
   const error = ref('')
   const fresh = ref(null)
   // padrão: um link por cliente para várias máquinas (a ideia é mandar um link só e cada instalação entrar no cliente certo)
