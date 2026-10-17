@@ -121,7 +121,8 @@
   // fromAuto: aberto sozinho pela tela; clicar no botão é uma escolha da pessoa e limpa as travas da entrada automática
   const handleOIDCLogin = async (provider, fromAuto = false) => {
     if (!fromAuto) clearSsoFlags(sessionStorage)
-    return userStore.oidc(provider, platform, browser)
+    // entrada automática cancelada enquanto a chamada estava pendente: o resultado é descartado, sem redirecionar
+    return userStore.oidc(provider, platform, browser, () => !fromAuto || autoStarting.value)
   }
   const stopAuto = () => {
     autoStarting.value = false
@@ -160,10 +161,12 @@
       // um único provedor (a Microsoft): abre o fluxo sozinho, com as travas contra loop e contra reconexão após sair de propósito
       const auto = autoSsoProvider({ ops, query: route.query, storage: sessionStorage, now: Date.now() })
       if (auto) {
-        autoStarting.value = true
-        markAttempt(sessionStorage)
-        const started = await handleOIDCLogin(auto, true)
-        if (!started) autoStarting.value = false
+        // sem como gravar a trava contra loop, não redireciona sozinho (a pessoa clica)
+        if (markAttempt(sessionStorage)) {
+          autoStarting.value = true
+          const started = await handleOIDCLogin(auto, true)
+          if (!started) autoStarting.value = false
+        }
       }
       disablePwd.value = res.data.disable_pwd
       allowRegister.value = res.data.register
@@ -187,8 +190,10 @@
         ElMessage.success(T('LoginSuccess'))
         router.push({ path: redirect || '/', replace: true })
       } else {
-        // a volta do login externo falhou: descarta o código velho e mostra a tela (a trava de tentativa evita o loop)
+        // a volta do login externo falhou: descarta o código velho e mostra a tela. Registra a hora da volta para a trava contra
+        // loop contar daqui (um login que levou minutos, com senha ou MFA, não pode disparar outro redirecionamento na hora)
         removeCode()
+        markAttempt(sessionStorage)
         loadLoginOptions()
       }
     } else {

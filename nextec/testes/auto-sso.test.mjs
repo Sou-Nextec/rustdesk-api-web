@@ -40,11 +40,26 @@ test('uma tentativa que volta para o login não vira loop', () => {
   assert.equal(autoSsoProvider({ ops: ['Microsoft'], storage: s, now: t0 + RETRY_WINDOW_MS + 1 }), 'Microsoft')
 })
 
-test('sem armazenamento disponível não quebra e entra sozinho', () => {
+test('login demorado (senha, MFA): a volta com erro registra o horário e suprime o próximo redirecionamento', () => {
+  const s = memory()
+  const t0 = 1_000_000
+  markAttempt(s, t0)                       // saiu para o Entra
+  const volta = t0 + 5 * 60 * 1000         // voltou 5 minutos depois, com erro
+  markAttempt(s, volta)                    // a tela registra a volta
+  assert.equal(autoSsoProvider({ ops: ['Microsoft'], storage: s, now: volta + 1_000 }), '')
+  assert.ok(RETRY_WINDOW_MS >= 5 * 60 * 1000)
+})
+
+test('sem como gravar as travas, não entra sozinho (melhor um clique do que um loop)', () => {
   const broken = { getItem() { throw new Error('bloqueado') }, setItem() { throw new Error('bloqueado') }, removeItem() { throw new Error('bloqueado') } }
-  assert.equal(autoSsoProvider({ ops: ['Microsoft'], storage: broken }), 'Microsoft')
-  assert.doesNotThrow(() => { markAttempt(broken); markLoggedOut(broken); clearSsoFlags(broken) })
-  assert.equal(autoSsoProvider({ ops: ['Microsoft'], storage: undefined }), 'Microsoft')
+  assert.equal(autoSsoProvider({ ops: ['Microsoft'], storage: broken }), '')
+  assert.equal(autoSsoProvider({ ops: ['Microsoft'], storage: undefined }), '')
+  assert.equal(markAttempt(broken), false)
+  assert.equal(markAttempt(memory()), true)
+  assert.doesNotThrow(() => { markLoggedOut(broken); clearSsoFlags(broken) })
+  // armazenamento que aceita gravar mas não devolve o valor também conta como quebrado
+  const amnesia = { getItem: () => null, setItem() {}, removeItem() {} }
+  assert.equal(autoSsoProvider({ ops: ['Microsoft'], storage: amnesia }), '')
 })
 
 test('o provedor Microsoft ganha o rótulo e os outros usam a tradução', () => {

@@ -66,7 +66,8 @@ export const useUserStore = defineStore({
       }
       return false
     },
-    async oidc (provider, platform, browser) {
+    // canNavigate: devolve false quando a pessoa desistiu enquanto a chamada estava pendente (entrada automática cancelada)
+    async oidc (provider, platform, browser, canNavigate = () => true) {
       // oidc data need to be implement
       const data = {
         deviceInfo: {
@@ -79,7 +80,7 @@ export const useUserStore = defineStore({
         uuid: '',//crypto.randomUUID(), // 自动生成 UUID
       }
       const res = await oidcAuth(data).catch(_ => false)
-      if (res) {
+      if (res && canNavigate()) {
         const { code, url } = res.data
         setCode(code)
         if (provider == 'webauth') {
