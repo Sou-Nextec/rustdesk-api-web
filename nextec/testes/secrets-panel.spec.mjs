@@ -122,9 +122,9 @@ describe('Senhas dos servidores, fluxo guiado', () => {
     expect(host.querySelector('.nx-hero-title').textContent).toBe('1 máquina com agente parado. Reinstale o agente.')
     expect(host.querySelector('.nx-hero-cta').textContent.trim()).toBe('Reinstalar agente')
     expect(host.querySelector('.nx-next').textContent.trim()).toBe('Reinstalar agente')
-    // Remover agente fica visível e explicado
-    const remover = buttons().filter(t => t === 'Remover agente')
-    expect(remover.length).toBe(1)
+    // Remover agente saiu da linha (cortava a coluna Ações) e fica no menu "Mais ações", explicado
+    expect(buttons().filter(t => t === 'Remover agente').length).toBe(0)
+    expect([...host.querySelectorAll('button')].some(b => b.getAttribute('aria-label') === 'Mais ações')).toBe(true)
   })
 
   it('estado parado com contato antigo mostra há quanto tempo e volta à etapa 2', async () => {

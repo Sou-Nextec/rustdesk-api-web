@@ -2,6 +2,16 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.12.2
+
+Senhas dos servidores: dá para saber e mudar de onde vem a regra de cada máquina, e a lista fica limpa.
+
+- **Coluna "Regra da senha":** cada máquina mostra quem manda: **Do cliente** (troca a cada X), **Da máquina** (regra só dela) ou **Desligada** (nesta máquina ou no cliente) e **Sem regra**. A regra da máquina ganha da do cliente, como no servidor.
+- **Janela "Regra da senha desta máquina"** (clique no selo ou em ⋯ > Regra da senha): diz o que vale hoje e deixa escolher **Seguir o cliente**, **Regra só desta máquina** (com intervalo) ou **Desligar nesta máquina**. Seguir o cliente remove a regra própria da máquina. A janela lembra que mudar a regra do cliente muda todas as que o seguem, e as com regra própria não mudam.
+- **Regras dos clientes mostram o impacto:** nova coluna "Máquinas" (quantas seguem e quantas têm regra própria) e aviso de que a regra vale só para as máquinas direto no grupo: subgrupo (ex.: "Cliente / Servidores") não herda a do cliente e precisa da própria.
+- **Situação limpa:** só o estado (ex.: "Agente ativo") e problemas. Última consulta, próxima verificação, app, versão da senha e a regra pronta aparecem ao passar o mouse (e ficam disponíveis para leitor de tela).
+- **Coluna Ações sem corte:** "Remover agente" saiu da linha e fica no menu ⋯, com a explicação ("O agente está parado: remova e reinstale"); o menu abre alinhado ao fim e não sai da tela.
+
 ## 2.12.1
 
 Requisito do instalador à vista no convite.

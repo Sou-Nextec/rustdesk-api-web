@@ -148,40 +148,35 @@
             <el-button size="small" type="primary" class="nx-next" @click="onNext(row)">{{ nextStep(row, nowSec).label }}</el-button>
           </template>
         </el-table-column>
-        <el-table-column label="Situação" min-width="230">
+        <el-table-column label="Regra da senha" min-width="170">
           <template #default="{ row }">
-            <div v-if="contact(row).state === 'ativo'">
-              <span class="nx-dot is-on" aria-hidden="true"></span>
-              <span>{{ contact(row).headline }}</span>
-              <span class="nx-muted nx-small"> · {{ contact(row).detail }}</span>
-              <div class="nx-muted nx-small nx-next-check">{{ nextCheckText(row) }}</div>
-              <div v-if="row.app_name" class="nx-muted nx-small nx-app-name">App {{ row.app_name }}</div>
-            </div>
-            <div v-else-if="contact(row).state === 'parado'" class="nx-stalled" role="status">
-              <span class="nx-dot is-warn" aria-hidden="true"></span>
-              <span class="nx-warn-text">{{ contact(row).headline }}</span>
-              <div class="nx-small">{{ contact(row).detail }}</div>
-            </div>
-            <div v-else-if="contact(row).state === 'pendente_aprovacao'" class="nx-muted">
-              <span class="nx-dot is-warn" aria-hidden="true"></span>{{ contact(row).headline }}
-            </div>
-            <div v-else class="nx-muted"><span class="nx-dot is-off" aria-hidden="true"></span>{{ contact(row).headline }}</div>
-            <div v-if="row.managed && contact(row).state === 'ativo'" class="nx-small"><span class="nx-dot is-on" aria-hidden="true"></span>Senha troca a cada {{ every(row.interval_minutes) }}</div>
-            <div v-else-if="row.managed && contact(row).offline" class="nx-small nx-muted"><span class="nx-dot is-off" aria-hidden="true"></span>Regra pronta; a troca volta quando a máquina ligar</div>
-            <div v-else-if="row.managed && contact(row).state === 'parado'" class="nx-small nx-warn-text"><span class="nx-dot is-warn" aria-hidden="true"></span>Regra pronta, mas o agente está parado</div>
-            <div v-else-if="row.managed" class="nx-small nx-warn-text"><span class="nx-dot is-warn" aria-hidden="true"></span>Regra pronta, falta o agente</div>
-            <div v-else class="nx-small nx-muted"><span class="nx-dot is-off" aria-hidden="true"></span>Senha automática desligada</div>
-            <div v-if="agentError(row) && contact(row).state !== 'sem_agente'" class="nx-agent-error nx-small" role="alert">
-              <span class="nx-dot is-warn" aria-hidden="true"></span>
-              <span class="nx-warn-text">{{ agentError(row).text }}</span>
-              <div>{{ agentError(row).action }}</div>
-            </div>
-            <div v-if="row.has_password" class="nx-small nx-muted">Senha versão {{ row.version }}, trocada {{ ago(row.active_at).toLowerCase() }}<template v-if="row.managed">, próxima {{ until(row.next_rotation_at) }}</template></div>
-            <div v-else-if="row.managed && contact(row).state === 'ativo' && !agentError(row)" class="nx-small nx-muted">Aguardando a primeira troca</div>
-            <div v-if="row.force_rotate && row.enrolled" class="nx-small nx-warn-text nx-rotation-pending"><span class="nx-dot is-warn" aria-hidden="true"></span>Troca solicitada: começa em até 1 minuto</div>
+            <button type="button" class="nx-rule" :class="'is-' + ruleBadge(ruleOf(row, policies)).tone"
+                    :aria-label="'Alterar a regra da senha de ' + (row.alias || row.hostname || fmtId(row.peer_id)) + '. Hoje: ' + ruleBadge(ruleOf(row, policies)).title" @click="openRule(row)">
+              <span class="nx-rule-title">{{ ruleBadge(ruleOf(row, policies)).title }}</span>
+              <span class="nx-rule-detail">{{ ruleBadge(ruleOf(row, policies)).detail }}</span>
+              <span class="nx-rule-edit">Alterar</span>
+            </button>
           </template>
         </el-table-column>
-        <el-table-column label="Ações" width="260" fixed="right">
+        <el-table-column label="Situação" min-width="200">
+          <template #default="{ row }">
+            <!-- limpo: só o estado (e problemas). O resto aparece ao passar o mouse -->
+            <el-tooltip placement="top-start" :show-after="250" popper-class="nx-status-tip">
+              <template #content>
+                <ul class="nx-status-lines"><li v-for="(line, i) in statusLines(row)" :key="i">{{ line }}</li></ul>
+              </template>
+              <div class="nx-status" tabindex="0">
+                <span class="nx-dot" :class="statusDot(row)" aria-hidden="true"></span>
+                <span :class="{ 'nx-warn-text': contact(row).state === 'parado', 'nx-muted': contact(row).state !== 'ativo' && contact(row).state !== 'parado' }">{{ contact(row).headline }}</span>
+                <div v-if="agentError(row) && contact(row).state !== 'sem_agente'" class="nx-small nx-warn-text" role="alert">{{ agentError(row).text }}</div>
+                <div v-if="row.force_rotate && row.enrolled" class="nx-small nx-warn-text">Troca em andamento</div>
+                <!-- o mesmo texto da dica, para leitor de tela e para quem não usa o mouse -->
+                <span class="nx-sr">{{ statusLines(row).join(' ') }}</span>
+              </div>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+        <el-table-column label="Ações" width="250" fixed="right">
           <template #default="{ row }">
             <div class="nx-row-actions">
               <el-tooltip :content="secretActionState(row).revealReason" :disabled="secretActionState(row).canReveal" placement="top">
@@ -190,16 +185,14 @@
               <el-tooltip :content="secretActionState(row).rotateReason" :disabled="secretActionState(row).canRotate" placement="top">
                 <span class="nx-disabled-action"><el-button size="small" :disabled="!secretActionState(row).canRotate" @click="rotate(row)">Trocar agora</el-button></span>
               </el-tooltip>
-              <el-tooltip v-if="contact(row).state === 'parado'" :content="REMOVE_AGENT_HELP" placement="top">
-                <el-button size="small" @click="onRow('unenroll', row)"><span class="nx-danger-text">Remover agente</span></el-button>
-              </el-tooltip>
-              <el-dropdown trigger="click" @command="cmd => onRow(cmd, row)">
+              <el-dropdown trigger="click" placement="bottom-end" @command="cmd => onRow(cmd, row)">
                 <el-button size="small" aria-label="Mais ações"><el-icon><el-icon-MoreFilled/></el-icon></el-button>
                 <template #dropdown>
-                  <el-dropdown-menu>
-                    <el-dropdown-item v-if="!row.managed" command="on">Ligar senha automática</el-dropdown-item>
-                    <el-dropdown-item v-else command="off">Desligar nesta máquina</el-dropdown-item>
-                    <el-dropdown-item v-if="row.enrolled && contact(row).state !== 'parado'" command="unenroll" divided><span class="nx-danger-text">Remover agente</span></el-dropdown-item>
+                  <el-dropdown-menu class="nx-row-menu">
+                    <el-dropdown-item command="rule">Regra da senha…</el-dropdown-item>
+                    <el-dropdown-item v-if="row.enrolled" command="unenroll" divided>
+                      <span class="nx-row-menu-item"><span class="nx-danger-text">Remover agente</span><small>{{ contact(row).state === 'parado' ? 'O agente está parado: remova e reinstale.' : 'Apaga o cadastro e as senhas guardadas.' }}</small></span>
+                    </el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
               </el-dropdown>
@@ -309,9 +302,28 @@
       <template #footer><el-button type="primary" @click="show.visible = false">Fechar</el-button></template>
     </el-dialog>
 
+    <!-- regra de uma máquina -->
+    <el-dialog v-model="ruleDlg.visible" class="nx-dlg" title="Regra da senha desta máquina" width="560px">
+      <p class="nx-help nx-help-top"><strong>{{ ruleDlg.name }}</strong> ({{ fmtId(ruleDlg.peer) }}) · {{ ruleDlg.client ? 'cliente ' + ruleDlg.client : 'sem cliente' }}</p>
+      <p class="nx-rule-now" role="status">Hoje vale: <strong>{{ ruleDlg.nowTitle }}</strong>, {{ ruleDlg.nowDetail }}.</p>
+      <el-radio-group v-model="ruleDlg.choice" class="nx-radios nx-rule-choices">
+        <el-radio value="client" :disabled="!ruleDlg.client">Seguir o cliente<small>{{ ruleDlg.followText }}</small></el-radio>
+        <el-radio value="machine">Regra só desta máquina<small>Vale só aqui, e ganha da regra do cliente.</small></el-radio>
+        <el-select v-if="ruleDlg.choice === 'machine'" v-model="ruleDlg.interval" class="nx-rule-interval" aria-label="Trocar a cada">
+          <el-option v-for="o in intervals" :key="o.value" :label="'Trocar a cada ' + o.label" :value="o.value"/>
+        </el-select>
+        <el-radio value="off">Desligar nesta máquina<small>A senha não troca aqui, mesmo que o cliente tenha regra.</small></el-radio>
+      </el-radio-group>
+      <p class="nx-help">Mudar a regra do cliente muda todas as máquinas que seguem o cliente; máquinas com regra própria não mudam. <el-button link type="primary" @click="ruleDlg.visible = false; rules.visible = true">Ver as regras dos clientes</el-button></p>
+      <template #footer>
+        <el-button @click="ruleDlg.visible = false">Cancelar</el-button>
+        <el-button type="primary" :loading="ruleDlg.saving" @click="saveRule">Salvar</el-button>
+      </template>
+    </el-dialog>
+
     <!-- regras por grupo -->
-    <el-dialog v-model="rules.visible" class="nx-dlg" title="Regras de senha automática" width="680px">
-      <p class="nx-help nx-help-top">Máquinas dos grupos ligados abaixo passam a trocar a senha sozinhas, no intervalo escolhido. Uma regra na própria máquina vale mais que a do grupo.</p>
+    <el-dialog v-model="rules.visible" class="nx-dlg" title="Regras de senha automática" width="720px">
+      <p class="nx-help nx-help-top">Máquinas dos grupos ligados abaixo passam a trocar a senha sozinhas, no intervalo escolhido. Uma regra na própria máquina vale mais que a do grupo. A regra vale só para as máquinas que estão direto no grupo: um subgrupo (ex.: "Cliente / Servidores") não herda a do cliente e precisa da própria regra.</p>
       <el-table :data="groupPolicies" empty-text="Nenhum grupo ligado ainda." aria-label="Regras por grupo">
         <el-table-column label="Grupo" min-width="200">
           <template #default="{ row }">{{ groupName(Number(row.ref)) || 'grupo ' + row.ref }}</template>
@@ -319,6 +331,11 @@
         <el-table-column label="Ligada" width="90">
           <template #default="{ row }">
             <el-switch v-model="row.enabled" aria-label="Ligada" @change="savePolicy(row)"/>
+          </template>
+        </el-table-column>
+        <el-table-column label="Máquinas" min-width="150">
+          <template #default="{ row }">
+            <span class="nx-small">{{ usageText(row) }}</span>
           </template>
         </el-table-column>
         <el-table-column label="Trocar a cada" width="150">
@@ -424,6 +441,7 @@
   import { nextCheck, createAutoRefresh } from '@/nextec/agent-cycle.mjs'
   import { createRotationWatch, ROTATION_NOTICE } from '@/nextec/rotation-watch.mjs'
   import { agentContact, agentError, lastContactAt, REMOVE_AGENT_HELP } from '@/nextec/agent-state.mjs'
+  import { ruleOf, ruleBadge, ruleChange, ruleChoice, followText, groupUsage } from '@/nextec/secret-rule.mjs'
   import { list as groupList, create as groupCreate } from '@/api/device_group'
   import { list as peerList, update as peerUpdate } from '@/api/peer'
   import MachineSteps from './MachineSteps.vue'
@@ -458,6 +476,8 @@
 
   let inflight = false
   const lastSeen = ref(new Map())
+  // inventário completo de máquinas (id e grupo): o resumo do overview não traz as máquinas de grupos com regra desligada
+  const allPeers = ref([])
   // silent: atualização automática, sem spinner e sem trocar a lista por erro se uma rodada falhar.
   const load = async (silent = false) => {
     if (silent && inflight) return
@@ -476,6 +496,7 @@
     if (ov) {
       const n = normalizeOverview(ov)
       // presença: só troca quando a lista de máquinas respondeu; se falhar, vale o último valor conhecido
+      if (peers && peers.data && Array.isArray(peers.data.list)) allPeers.value = peers.data.list.map(p => ({ peer_id: String(p.id), group_id: p.group_id || 0 }))
       if (peers && peers.data && Array.isArray(peers.data.list)) lastSeen.value = new Map(peers.data.list.map(p => [String(p.id), Number(p.last_online_time) || 0]))
       devices.value = n.devices.map(d => (lastSeen.value.has(String(d.peer_id)) ? { ...d, peer_last_online: lastSeen.value.get(String(d.peer_id)) } : d))
       policies.value = n.policies
@@ -505,6 +526,33 @@
   const nextCheckText = (row) => nextCheck(lastContactAt(row), nowSec.value).text
   // Situação do agente a partir da última consulta REAL (last_sync_at), nunca do cadastro.
   const contact = (row) => agentContact(row, nowSec.value)
+  const statusDot = (row) => {
+    const st = contact(row).state
+    return st === 'ativo' ? 'is-on' : (st === 'parado' || st === 'pendente_aprovacao' ? 'is-warn' : 'is-off')
+  }
+  // detalhes que saem da lista e aparecem só ao passar o mouse em Situação
+  const statusLines = (row) => {
+    const c = contact(row)
+    const out = []
+    if (c.detail) out.push(c.detail)
+    const next = nextCheckText(row)
+    if (next) out.push(next)
+    if (row.app_name) out.push('App ' + row.app_name)
+    const err = agentError(row)
+    if (err && c.state !== 'sem_agente') out.push(`${err.text} ${err.action || ''}`.trim())
+    // regra pronta (a origem e o intervalo ficam na coluna Regra da senha)
+    if (row.managed && c.state === 'ativo') out.push(`Senha troca a cada ${every(row.interval_minutes)}`)
+    else if (row.managed && c.offline) out.push('Regra pronta; a troca volta quando a máquina ligar')
+    else if (row.managed && c.state === 'parado') out.push('Regra pronta, mas o agente está parado')
+    else if (row.managed) out.push('Regra pronta, falta o agente')
+    else out.push('Senha automática desligada')
+    if (row.has_password) {
+      out.push(`Senha versão ${row.version}, trocada ${ago(row.active_at).toLowerCase()}${row.managed ? ', próxima ' + until(row.next_rotation_at) : ''}`)
+    } else if (row.managed && c.state === 'ativo' && !err) out.push('Aguardando a primeira troca')
+    if (row.force_rotate && row.enrolled) out.push('Troca solicitada: começa em até 1 minuto')
+    if (!out.length) out.push('Sem mais detalhes.')
+    return out
+  }
   onMounted(() => { load(); refresher.start() })
   onBeforeUnmount(() => { refresher.stop(); rotationWatch.stop() })
   const reloadGroups = async () => {
@@ -616,7 +664,36 @@
     const r = await secretsPolicy({ kind: p.kind, ref: p.ref, remove: true }).catch(() => false)
     if (r) { ElMessage.success('Regra removida.'); load() }
   }
+  // ---------- regra de uma máquina ----------
+  const ruleDlg = reactive({ visible: false, peer: '', name: '', client: '', choice: 'client', interval: 180, nowTitle: '', nowDetail: '', followText: '', saving: false })
+  const openRule = (row) => {
+    const rule = ruleOf(row, policies.value)
+    const badge = ruleBadge(rule)
+    const client = groupName(row.group_id)
+    Object.assign(ruleDlg, {
+      visible: true, peer: row.peer_id, name: row.alias || row.hostname || fmtId(row.peer_id), client,
+      choice: client || rule.source === 'machine' ? ruleChoice(rule) : 'machine',
+      interval: rule.source === 'machine' && rule.interval ? rule.interval : (rule.clientRule && rule.clientRule.interval_minutes) || 180,
+      nowTitle: badge.title, nowDetail: badge.detail, followText: followText(rule, client), saving: false,
+    })
+  }
+  const saveRule = async () => {
+    ruleDlg.saving = true
+    const r = await secretsPolicy(ruleChange(ruleDlg.peer, ruleDlg.choice, ruleDlg.interval)).catch(() => false)
+    ruleDlg.saving = false
+    if (!r) return
+    ElMessage.success(ruleDlg.choice === 'client' ? 'Agora esta máquina segue a regra do cliente.' : ruleDlg.choice === 'off' ? 'Senha automática desligada nesta máquina.' : 'Regra salva só para esta máquina.')
+    ruleDlg.visible = false
+    load()
+  }
+  const usageText = (p) => {
+    // o inventário completo manda; se ele não respondeu, vale o que o overview trouxe
+    const u = groupUsage(p, allPeers.value.length ? allPeers.value : devices.value, policies.value)
+    if (!u.total) return 'nenhuma máquina'
+    return `${u.follow} ${u.follow === 1 ? 'segue' : 'seguem'}` + (u.own ? ` · ${u.own} com regra própria` : '')
+  }
   const onRow = async (cmd, row) => {
+    if (cmd === 'rule') return openRule(row)
     if (cmd === 'on' || cmd === 'off') {
       const r = await secretsPolicy({ kind: 'peer', ref: row.peer_id, enabled: cmd === 'on', interval_minutes: row.interval_minutes || 180 }).catch(() => false)
       if (r) { ElMessage.success(cmd === 'on' ? 'Senha automática ligada.' : 'Senha automática desligada.'); load() }
@@ -859,7 +936,23 @@
     &.is-off { background: #9A97AD; }
     &.is-warn { background: #9A5B00; box-shadow: 0 0 0 3px #FEF3C7; }
   }
-  .nx-row-actions { display: flex; gap: 6px; flex-wrap: nowrap; .el-button { margin: 0 !important; } }
+  .nx-row-actions { display: flex; gap: 6px; flex-wrap: nowrap; justify-content: flex-end; .el-button { margin: 0 !important; } }
+  .nx-status { cursor: default; outline-offset: 2px; }
+  .nx-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .nx-rule { display: grid; gap: 1px; text-align: left; padding: 6px 10px; border: 1px solid var(--nx-border); border-radius: 10px; background: var(--nx-surface); color: var(--nx-text); font: inherit; cursor: pointer; min-height: 44px; max-width: 100%;
+    &:hover { background: var(--nx-field); }
+    &:focus-visible { outline: 2px solid var(--nx-accent); outline-offset: 2px; }
+    .nx-rule-title { font-weight: 600; font-size: 13px; }
+    .nx-rule-detail { font-size: 12px; color: var(--nx-text-muted); }
+    .nx-rule-edit { font-size: 12px; color: var(--nx-accent); font-weight: 600; }
+    &.is-client { border-left: 4px solid #613CB3; }
+    &.is-machine { border-left: 4px solid #B26A00; }
+    &.is-off { border-left: 4px solid #9A97AD; }
+    &.is-none { border-style: dashed; }
+  }
+  .nx-rule-now { margin: 0 0 10px; padding: 8px 12px; border-radius: 10px; background: var(--nx-bg); font-size: 13px; }
+  .nx-rule-choices { gap: 6px; width: 100%; .el-radio { height: auto; align-items: flex-start; white-space: normal; margin-right: 0; } small { display: block; font-size: 12px; color: var(--nx-text-muted); font-weight: 400; } }
+  .nx-rule-interval { width: 100%; max-width: 260px; margin: 0 0 4px 24px; }
   .nx-disabled-action { display: inline-flex; }
   .nx-pager { padding: 12px 18px; border-top: 1px solid var(--nx-divider); display: flex; justify-content: flex-end; }
   .nx-help { margin: 6px 0 0; font-size: 12px; line-height: 1.5; color: var(--nx-text-muted); }
@@ -880,4 +973,12 @@
   html.dark .nx-chip.is-ok { background: #0F3A2B; color: #6EE7B7; }
   html.dark .nx-hero { border-left-color: #B79CFF; }
   html.dark .nx-error, html.dark .nx-danger-text { color: #FFB4AB; }
+</style>
+<style lang="scss">
+  // dicas e menus abrem fora do componente, por isso o estilo não é escopado
+  .nx-status-tip { max-width: 360px; }
+  .nx-status-lines { margin: 0; padding-left: 16px; font-size: 12px; line-height: 1.5; }
+  .nx-row-menu .el-dropdown-menu__item { align-items: flex-start; }
+  .nx-row-menu-item { display: flex; flex-direction: column; gap: 1px; white-space: normal; max-width: 240px; }
+  .nx-row-menu-item small { font-size: 12px; color: var(--nx-text-muted); }
 </style>
