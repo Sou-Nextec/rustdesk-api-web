@@ -87,7 +87,9 @@ export const useUserStore = defineStore({
         } else {
           window.location.href = url
         }
+        return true
       }
+      return false
     },
     async query (code) {
       const params = { 'code': code, uuid: '' }
