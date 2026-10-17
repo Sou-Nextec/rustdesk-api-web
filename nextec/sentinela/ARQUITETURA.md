@@ -105,7 +105,6 @@ Levantadas em 17/10/2026; cada uma vira um registro de decisão quando for fecha
 
 | Decisão | O que precisa ser definido | Necessária para |
 | --- | --- | --- |
-| Modelo de dados do cofre | Estrutura cliente, máquina, conta e segredo, isolada por cliente desde o início | 1.4 |
 | Síncrono ou assíncrono | O que acontece na hora do clique e o que vai para fila (ex.: rotação após a sessão) | 1.6 e 1.7 |
 | Estratégia de testes | Testes dos fluxos críticos e dos conectores por fabricante, que quebram com atualizações | 1.6 e 2.3 |
 | Versionamento da API própria | Como versionar a API que serve painel, app e, no futuro, o MCP | 3.12 |
@@ -130,7 +129,8 @@ sessão pelo PSM, que grava e consulta o cofre; não usa protocolo de transporte
 streaming nativo equivalente.
 
 **Escopo:** o gRPC é o canal de controle (ordens, credenciais, rotação, inventário, eventos). A sessão remota continua no
-protocolo do RustDesk (servidor de ID e relay), que não será trocado. O agente atual, que fala HTTPS com a API, pode
+protocolo do RustDesk (servidor de ID e relay), que não será trocado. Confirmado em 17/10/2026: o RustDesk não passa pelo
+coletor; concentrar a sessão no coletor fica para a Fase 5, junto do isolamento de sessão. O agente atual, que fala HTTPS com a API, pode
 continuar assim e migrar para o gRPC quando houver ganho; o coletor, que é novo, já nasce em gRPC.
 
 **A detalhar na etapa 2.1:** emissão, rotação e revogação dos certificados do coletor e do agente.
@@ -149,6 +149,32 @@ rede interna).
 **Por quê:** fechar as portas de entrada elimina a maior superfície de ataque (RDP e SSH expostos). Manter RDP e SSH
 pela rede interna, via coletor, cobre o que o agente não alcança e dá uma segunda via se o agente cair.
 
+### D3. Modelo de dados do cofre (17/10/2026)
+
+**Decisão:** modelo multicliente desde o início, com a hierarquia abaixo.
+
+```mermaid
+erDiagram
+    CLIENTE ||--o{ ATIVO : possui
+    ATIVO ||--o{ CONTA : tem
+    CONTA ||--o{ SEGREDO : "versões"
+    CONTA ||--|| POLITICA_ROTACAO : segue
+    CONTA ||--o{ CONCESSAO : "liberada por"
+    CONCESSAO }o--|| USUARIO_OU_GRUPO : para
+```
+
+| Entidade | O que guarda |
+| --- | --- |
+| Cliente | Topo da hierarquia (cartório ou empresa); modo de acesso (exclusivo ou compartilhado); chave de cifragem própria |
+| Ativo | Recurso do cliente (servidor, firewall, câmera etc.): tipo, fabricante, modelo e forma de conexão |
+| Conta | Credencial dentro de um ativo; um ativo pode ter várias (Administrador, root, nominal); cada uma com segredo, política e histórico próprios |
+| Segredo | Versionado e nunca sobrescrito: cada rotação cria uma versão nova e marca a anterior como expirada, para auditar quem usou qual senha e quando |
+| Política de rotação | Ligada à conta: intervalo de tempo, troca após cada uso e se a rotação depende de aprovação |
+| Concessão de acesso | Liga usuário ou grupo a uma conta: validade, janela de horário e se exige aprovação |
+
+**A detalhar na etapa 1.4:** como a chave do cliente cifra cada versão do segredo (chave mestra protegendo as chaves dos
+clientes), por quanto tempo as versões expiradas ficam guardadas e o que entra no registro de uso de cada versão.
+
 ## Histórico
 
 | Data | Mudança |
@@ -159,3 +185,4 @@ pela rede interna, via coletor, cobre o que o agente não alcança e dá uma seg
 | 17/10/2026 | Imagens refeitas na identidade visual, com gerador versionado |
 | 17/10/2026 | D1: gRPC com mTLS entre coletor, agente e Sentinela |
 | 17/10/2026 | D2: nenhuma porta de entrada no cliente |
+| 17/10/2026 | D1 confirmada (RustDesk direto ao relay); D3: modelo de dados do cofre |
