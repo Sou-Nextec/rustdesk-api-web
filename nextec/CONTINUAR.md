@@ -22,7 +22,8 @@ isoladas, para continuar recebendo as atualizações do projeto original:
 O hbbs/hbbr (servidor de ID e relay) usa a imagem oficial `lejianwen/rustdesk-server-s6:v0.1.2`, fixa de propósito.
 
 Pastas locais fora dos repositórios, dentro de `RustyDesk Admin`: `implantacao-remoto` (material de implantação anterior),
-`clientes-gerados` (executáveis gerados pelo rdgen, para teste; não versionar) e `backupsdgen-backup` (cópia do volume `exe`
+`clientes-gerados` (executáveis gerados pelo rdgen, para teste; não versionar) e `backups
+dgen-backup` (cópia do volume `exe`
 do rdgen antigo; pode conter dados sensíveis, não versionar).
 
 ## 2. Onde roda
@@ -119,6 +120,7 @@ Em ordem (detalhes em `nextec/PENDENCIAS.md`):
 | Projeto Sentinela: abertura (fechado) | `nextec/sentinela/ABERTURA.md` |
 | Projeto Sentinela: roadmap (fases, etapas, critérios) | `nextec/sentinela/ROADMAP.md` |
 | Projeto Sentinela: arquitetura inicial e diagramas | `nextec/sentinela/ARQUITETURA.md` |
+| Projeto Sentinela: princípios, correções e achados | `nextec/sentinela/PRINCIPIOS.md`, `CORRECOES.md`, `ACHADOS.md` |
 | Novidades por versão | `CHANGELOG.md` |
 | Patches da API (0001 a 0018) | `nextec/backend/LEIAME.md` |
 | Correções locais de autorização e identidade (0019) | `nextec/backend/0019-LEIAME.md` |

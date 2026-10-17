@@ -292,7 +292,12 @@ Também definidos:
 **Definido:** a arquitetura fica em documento próprio, `nextec/sentinela/ARQUITETURA.md` (boa prática de separar visão e
 arquitetura).
 
-## 19. Ordem aprovada
+## 19. Princípios de engenharia
+
+**Definido:** segurança como base, interface só com o essencial, documentação contínua (correções e achados) e boas
+práticas de programação assistida por IA. Regras em `nextec/sentinela/PRINCIPIOS.md`.
+
+## 20. Ordem aprovada
 
 1. Base segura.
 2. Infraestrutura crítica.
