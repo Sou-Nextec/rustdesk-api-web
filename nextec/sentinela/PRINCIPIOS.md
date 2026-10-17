@@ -37,8 +37,25 @@ Documentar enquanto programa, não depois.
 - Nenhum dado real de cliente, senha ou token em prompt, teste ou exemplo.
 - Código gerado é tratado como código de terceiros: ler antes de aceitar, conferir dependências novas e licenças.
 
+## 5. Tudo configurável
+
+Tudo que puder ser configurável nasce como configuração desde o início, nunca como valor fixo no código, mesmo que ainda
+não apareça na tela. Mudar amanhã deve ser só trocar um valor.
+
+- **Exemplos:** nome do produto, logo, cores e textos (tema), permissões e perfis, políticas de rotação, prazos de
+  retenção, janelas de horário, limites de sessão, endereços e integrações.
+- **Camadas com precedência:** padrão de fábrica, depois global, depois cliente, depois grupo e item. O mais específico vence.
+- **Padrões documentados:** toda configuração tem valor padrão seguro e descrição do que faz.
+- **Validação:** valor inválido é recusado com mensagem clara; nunca derruba o sistema.
+- **Auditoria:** toda mudança de configuração registra quem, quando, valor antigo e novo.
+- **Limites de segurança não se desligam:** a configuração ajusta dentro de um piso seguro (ex.: MFA sempre ligado,
+  auditoria sempre ativa, retenção mínima legal). Um valor que enfraqueça a segurança abaixo do piso é recusado.
+- **Segredo não é configuração:** senhas, tokens e chaves ficam no cofre ou em variável de ambiente, nunca no arquivo ou
+  na tela de configuração.
+
 ## Histórico
 
 | Data | Mudança |
 | --- | --- |
 | 17/10/2026 | Criação |
+| 17/10/2026 | Princípio 5: tudo configurável |
