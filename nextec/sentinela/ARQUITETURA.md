@@ -155,12 +155,16 @@ pela rede interna, via coletor, cobre o que o agente não alcança e dá uma seg
 
 ```mermaid
 erDiagram
-    CLIENTE ||--o{ ATIVO : possui
+    CLIENTE ||--o{ GRUPO_DE_ATIVOS : organiza
+    GRUPO_DE_ATIVOS ||--o{ ATIVO : contém
     ATIVO ||--o{ CONTA : tem
+    ATIVO ||--o{ ESCOPO : "subdivide (pasta, serviço, banco)"
     CONTA ||--o{ SEGREDO : "versões"
-    CONTA ||--|| POLITICA_ROTACAO : segue
-    CONTA ||--o{ CONCESSAO : "liberada por"
+    POLITICA_ROTACAO ||--o{ CONTA : "aplicada a"
+    PERFIL ||--o{ PERMISSAO : reúne
+    CONCESSAO }o--|| PERFIL : usa
     CONCESSAO }o--|| USUARIO_OU_GRUPO : para
+    CONCESSAO }o--|| ALVO : "sobre (cliente, grupo, ativo, conta ou escopo)"
 ```
 
 | Entidade | O que guarda |
@@ -169,8 +173,32 @@ erDiagram
 | Ativo | Recurso do cliente (servidor, firewall, câmera etc.): tipo, fabricante, modelo e forma de conexão |
 | Conta | Credencial dentro de um ativo; um ativo pode ter várias (Administrador, root, nominal); cada uma com segredo, política e histórico próprios |
 | Segredo | Versionado e nunca sobrescrito: cada rotação cria uma versão nova e marca a anterior como expirada, para auditar quem usou qual senha e quando |
-| Política de rotação | Ligada à conta: intervalo de tempo, troca após cada uso e se a rotação depende de aprovação |
-| Concessão de acesso | Liga usuário ou grupo a uma conta: validade, janela de horário e se exige aprovação |
+| Grupo de ativos | Agrupamento dentro do cliente (ex.: servidores, rede, câmeras), para aplicar política e permissão em lote |
+| Escopo | Parte de um ativo que pode receber permissão própria (ex.: uma pasta, um serviço, um banco de dados) |
+| Política de rotação | Modelo configurável: intervalo de tempo, troca após cada uso e se depende de aprovação; aplicada no nível global, do cliente, do grupo de ativos ou da conta |
+| Perfil | Conjunto de permissões (ação sobre tipo de recurso, ex.: conectar, ler, revelar senha, alterar configuração); vem com perfis padrão e aceita perfis novos |
+| Concessão de acesso | Liga usuário ou grupo a um perfil sobre um alvo (cliente, grupo de ativos, ativo, conta ou escopo), com validade, janela de horário e se exige aprovação |
+
+**Granularidade (definida em 17/10/2026):** nada de valor fixo no código. Política de rotação e permissões são
+configuráveis e granulares desde a base, para servir também a um possível produto.
+
+- **Precedência:** a regra mais específica vence (conta, depois grupo de ativos, depois cliente, depois global). Uma
+  negação explícita sempre vence uma permissão.
+- **Perfis padrão prontos** (ex.: Administrador, Analista N2, Analista N1, Fornecedor, Somente leitura). Qualquer perfil
+  novo pode ser criado do zero ou clonado de um padrão.
+- **Escopo fino:** o modelo já prevê permissão abaixo do ativo (ex.: só leitura numa pasta de um servidor). A aplicação
+  completa disso entra por fases: na Fase 1, concessão por cliente, grupo, ativo e conta; o escopo dentro do ativo
+  depende de o agente aplicar a restrição no próprio sistema (ex.: conta temporária com permissão só naquela pasta) e
+  fica para quando o RMM estiver pronto.
+
+**Padrões iniciais de rotação** (ponto de partida, ajustáveis por cliente e por conta):
+
+| Tipo de conta | Padrão |
+| --- | --- |
+| Administrador local, root, domínio e contas nominais com privilégio | Após cada uso e, no máximo, a cada 30 dias |
+| Conta de serviço e de aplicação | A cada 60 a 90 dias, só depois do mapeamento de dependências |
+| Equipamento de rede e painéis web | A cada 90 dias e após cada uso de escrita |
+| Conta de emergência | Só após uso |
 
 **Requisitos de segurança do cofre (obrigatórios na etapa 1.4):**
 
@@ -199,3 +227,4 @@ clientes), por quanto tempo as versões expiradas ficam guardadas e o que entra 
 | 17/10/2026 | D1: gRPC com mTLS entre coletor, agente e Sentinela |
 | 17/10/2026 | D2: nenhuma porta de entrada no cliente |
 | 17/10/2026 | D1 confirmada (RustDesk direto ao relay); D3: modelo de dados do cofre |
+| 17/10/2026 | D3: permissões e rotação granulares, perfis e padrões iniciais |
