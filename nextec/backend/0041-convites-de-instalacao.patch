@@ -207,10 +207,10 @@ index 0000000..a9269b9
 +}
 diff --git a/http/controller/api/nextec_invite_public.go b/http/controller/api/nextec_invite_public.go
 new file mode 100644
-index 0000000..702d575
+index 0000000..ab040dd
 --- /dev/null
 +++ b/http/controller/api/nextec_invite_public.go
-@@ -0,0 +1,83 @@
+@@ -0,0 +1,78 @@
 +package api
 +
 +import (
@@ -228,36 +228,31 @@ index 0000000..702d575
 +// o código no nome (<app>-<código>.msi): é assim que o instalador sabe de qual convite veio.
 +type NextecInvitePublic struct{}
 +
-+const supportInvitePageReady = `<p class="eyebrow">Instalação</p>
-+<h1 id="titulo">Instalar o aplicativo Nextec</h1>
-+<p class="who">Instalação para <strong>{{WHO}}</strong></p>
-+<a class="btn" href="{{CODE}}/baixar" download>
-+<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/></svg>
-+Baixar o instalador</a>
-+<p class="meta">Para Windows 10 ou 11 &middot; versão {{VERSION}} &middot; {{SIZE}}</p>
-+<h2>Como instalar</h2>
++const supportInvitePageReady = `<h1 id="titulo">Vamos instalar o <span>aplicativo</span>.</h1>
++<p class="lead">Instalação para <strong>{{WHO}}</strong>.</p>
++<a class="cta" href="{{CODE}}/baixar" download><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v10m0 0l-4-4m4 4l4-4M5 19h14"/></svg><span>Baixar o instalador</span></a>
++<p class="meta">Windows 10 ou 11 &middot; versão {{VERSION}} &middot; {{SIZE}}</p>
++<p class="meta">Este link vale até <strong>{{UNTIL}}</strong> e foi feito para esta instalação. Não o compartilhe.</p>
++<section class="how">
++<h2>Depois de baixar</h2>
 +<ol class="steps">
-+<li><strong>Abra o arquivo baixado</strong><span>Procure o instalador na pasta Downloads e dê dois cliques. Não renomeie o arquivo.</span></li>
-+<li><strong>Confirme a permissão do Windows</strong><span>Se o Windows pedir permissão de administrador, clique em Sim.</span></li>
-+<li><strong>Aguarde terminar</strong><span>Leva menos de um minuto. A Nextec já enxerga a máquina quando terminar.</span></li>
++<li><div><strong>Abra o arquivo.</strong><span> Procure o instalador na pasta Downloads e dê dois cliques. Não renomeie o arquivo.</span></div></li>
++<li><div><strong>Confirme a permissão.</strong><span> Se o Windows pedir permissão de administrador, clique em Sim.</span></div></li>
++<li><div><strong>Aguarde terminar.</strong><span> Leva menos de um minuto. A Nextec já enxerga a máquina quando terminar.</span></div></li>
 +</ol>
 +<details>
-+<summary>O Windows mostrou um aviso?</summary>
-+<p>É normal para programas que não vêm da loja do Windows. Clique em <strong>Mais informações</strong> e depois em <strong>Executar assim mesmo</strong>.</p>
++<summary><span>O Windows mostrou um aviso?</span></summary>
++<p>É normal para programas fora da loja do Windows. Clique em <strong>Mais informações</strong> e depois em <strong>Executar assim mesmo</strong>.</p>
 +</details>
-+<div class="note">
-+<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.2 8-8 9-4.8-1-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg>
-+<div>Este link vale até <strong>{{UNTIL}}</strong> e foi feito para esta instalação. Não o compartilhe.</div>
-+</div>`
++</section>`
 +
-+const supportInvitePageGone = `<div class="empty">
-+<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6"/><path d="M12 16.5v.5"/></svg>
-+<h1 id="titulo">Este link de instalação não está disponível</h1>
++const supportInvitePageGone = `<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="#4901fa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="44" height="44" style="margin-bottom:10px"><circle cx="12" cy="12" r="9"/><path d="M12 7v6"/><path d="M12 16.5v.5"/></svg>
++<h1 id="titulo">Este link <span>não está disponível</span>.</h1>
 +<p class="lead">Ele venceu, foi cancelado ou já foi usado. Peça um novo link a quem enviou este.</p>
 +</div>`
 +
 +func supportInviteRender(c *gin.Context, status int, body string) {
-+	page := strings.NewReplacer("{{LOGO}}", supportLogo, "{{BODY}}", body).Replace(supportPageTpl)
++	page := strings.NewReplacer("{{LOGO}}", supportLogo, "{{ART}}", supportArt, "{{BODY}}", body).Replace(supportPageTpl)
 +	c.Data(status, "text/html; charset=utf-8", []byte(page))
 +}
 +

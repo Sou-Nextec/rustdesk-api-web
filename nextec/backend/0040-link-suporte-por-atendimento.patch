@@ -109,7 +109,7 @@ new file mode 100644
 index 0000000..f61bf20
 --- /dev/null
 +++ b/http/controller/api/nextec_support_link.go
-@@ -0,0 +1,82 @@
+@@ -0,0 +1,77 @@
 +package api
 +
 +import (
@@ -124,32 +124,27 @@ index 0000000..f61bf20
 +// NextecSupportLinkPublic: página pública de um link de suporte por atendimento (/s/<token>) e o download do app.
 +type NextecSupportLinkPublic struct{}
 +
-+const supportLinkPageReady = `<p class="eyebrow">Atendimento remoto</p>
-+<h1 id="titulo">Vamos atender você à distância</h1>
-+<p class="who">Código do atendimento<strong style="display:block;margin-top:2px;font-size:28px;letter-spacing:.06em">{{WHO}}</strong></p>
-+<a class="btn" href="{{TOKEN}}/baixar" download>
-+<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="M7 11l5 5 5-5"/><path d="M5 20h14"/></svg>
-+Baixar aplicativo de suporte</a>
-+<p class="meta">Para Windows 10 ou 11 &middot; {{SIZE}} &middot; Suporte-Nextec.exe</p>
-+<h2>Como funciona</h2>
++const supportLinkPageReady = `<h1 id="titulo">Vamos resolver isso <span>juntos</span>.</h1>
++<p class="lead">Baixe o aplicativo e abra. Leva menos de um minuto.</p>
++<p class="code"><span>Código do atendimento</span><strong>{{WHO}}</strong></p>
++<a class="cta" href="{{TOKEN}}/baixar" download><svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v10m0 0l-4-4m4 4l4-4M5 19h14"/></svg><span>Baixar aplicativo</span></a>
++<p class="meta">Windows 10 ou 11 &middot; {{SIZE}} &middot; Suporte-Nextec.exe</p>
++<section class="how">
++<h2>Depois de baixar</h2>
 +<ol class="steps">
-+<li><strong>Abra o arquivo baixado</strong><span>Procure Suporte-Nextec.exe na pasta Downloads e dê dois cliques.</span></li>
-+<li><strong>Deixe a janela aberta</strong><span>A Nextec vê que o aplicativo abriu e pede a conexão sozinha.</span></li>
-+<li><strong>Aceite a conexão</strong><span>Quando o técnico pedir, clique em Aceitar na janela do aplicativo.</span></li>
++<li><div><strong>Abra o arquivo.</strong><span> Suporte-Nextec.exe, na pasta Downloads.</span></div></li>
++<li><div><strong>Avise o técnico.</strong><span> Diga que o aplicativo está aberto.</span></div></li>
++<li><div><strong>Aceite a conexão.</strong><span> Clique em Aceitar quando o técnico pedir.</span></div></li>
 +</ol>
 +<details>
-+<summary>O Windows mostrou um aviso?</summary>
-+<p>É normal para programas que não vêm da loja do Windows. Clique em <strong>Mais informações</strong> e depois em <strong>Executar assim mesmo</strong>.</p>
++<summary><span>O Windows mostrou um aviso?</span></summary>
++<p>É normal para programas fora da loja do Windows. Clique em <strong>Mais informações</strong> e depois em <strong>Executar assim mesmo</strong>.</p>
 +</details>
-+<div class="note">
-+<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.2 8-8 9-4.8-1-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg>
-+<div><strong>Você está no controle.</strong> Ninguém entra no seu computador sem você aceitar. Para encerrar o atendimento, feche o aplicativo.</div>
-+</div>`
++</section>`
 +
-+const supportLinkPageGone = `<div class="empty">
-+<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6"/><path d="M12 16.5v.5"/></svg>
-+<h1 id="titulo">Este link venceu ou foi cancelado</h1>
-+<p class="lead">Peça um novo link ao técnico da Nextec que está atendendo você. Leva só um instante.</p>
++const supportLinkPageGone = `<div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="#4901fa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" width="44" height="44" style="margin-bottom:10px"><circle cx="12" cy="12" r="9"/><path d="M12 7v6"/><path d="M12 16.5v.5"/></svg>
++<h1 id="titulo">Este link <span>não está disponível</span>.</h1>
++<p class="lead">Ele venceu, foi cancelado ou o aplicativo de suporte saiu do ar. Peça um novo link a quem enviou este.</p>
 +</div>`
 +
 +func supportLinkIP(c *gin.Context) string {
@@ -160,7 +155,7 @@ index 0000000..f61bf20
 +}
 +
 +func supportLinkRender(c *gin.Context, status int, body string) {
-+	page := strings.NewReplacer("{{LOGO}}", supportLogo, "{{BODY}}", body).Replace(supportPageTpl)
++	page := strings.NewReplacer("{{LOGO}}", supportLogo, "{{ART}}", supportArt, "{{BODY}}", body).Replace(supportPageTpl)
 +	c.Data(status, "text/html; charset=utf-8", []byte(page))
 +}
 +
@@ -174,7 +169,7 @@ index 0000000..f61bf20
 +		return
 +	}
 +	body := strings.NewReplacer(
-+		"{{WHO}}", html.EscapeString(supportLinkCode(link.Label)),
++		"{{WHO}}", html.EscapeString(link.Token),
 +		"{{TOKEN}}", link.Token,
 +		"{{SIZE}}", supportMB(app.Size),
 +	).Replace(supportLinkPageReady)

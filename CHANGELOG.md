@@ -2,6 +2,13 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.11.52
+
+Páginas do cliente no layout novo e código do atendimento igual ao da URL.
+
+- **Páginas públicas** (`/atendimento/<código>`, `/instalador/<código>` e `/suporte`) refeitas no modelo de duas colunas do Nextec, com a foto da atendente. Cabem na tela **sem barra de rolagem** em notebooks e desktops (o conteúdo se compacta em telas baixas) e se adaptam ao celular, sem a foto. Patch 0044.
+- **Código do atendimento = o da URL:** o Suporte rápido não sorteia mais um número à parte. O código mostrado no painel e na página do cliente é o próprio código do link (`/atendimento/FZ4ZKGAB`). A tela inicial do Suporte rápido ficou só com o botão **Gerar link** (chamado e validade em "Opções") e o link já é copiado ao gerar.
+
 ## 2.11.50
 
 Lista de dispositivos mais fácil de ler.
