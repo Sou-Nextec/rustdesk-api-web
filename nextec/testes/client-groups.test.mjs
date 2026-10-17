@@ -69,6 +69,15 @@ test('o filtro de subgrupo refina dentro do cliente', () => {
   assert.equal(inClient.filter(d => matchesSub(d.group_id, null, nameOf)).length, 4)
 })
 
+test('a contagem do subgrupo inclui os níveis abaixo, igual ao filtro', () => {
+  const deep = [...groups, { id: 7, name: 'Cartório Adriana Celiac / Servidores / Banco' }]
+  const of = id => deep.find(g => g.id === id)?.name || ''
+  const devs = [...devices, { id: 'h', group_id: 7 }]
+  const servidores = subOptions(deep, 1, of, devs).find(s => s.value === 2)
+  assert.equal(servidores.count, 3)
+  assert.equal(devs.filter(d => matchesClient(d.group_id, 1, of) && matchesSub(d.group_id, 2, of)).length, servidores.count)
+})
+
 test('subgrupo com níveis abaixo inclui os níveis', () => {
   const deep = [...groups, { id: 7, name: 'Cartório Adriana Celiac / Servidores / Banco' }]
   const of = id => deep.find(g => g.id === id)?.name || ''

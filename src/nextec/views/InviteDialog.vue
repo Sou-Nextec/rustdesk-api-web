@@ -97,7 +97,7 @@
   }
   watch(() => props.modelValue, (open) => {
     clearInterval(timer)
-    if (open) { fresh.value = null; error.value = ''; if (props.preselect && !one.client_id) one.client_id = props.preselect; load(); timer = setInterval(() => { if (!document.hidden) load() }, 15000) }
+    if (open) { fresh.value = null; error.value = ''; if (props.preselect) one.client_id = props.preselect; load(); timer = setInterval(() => { if (!document.hidden) load() }, 15000) }
   })
   onBeforeUnmount(() => clearInterval(timer))
 

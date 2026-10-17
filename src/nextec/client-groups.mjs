@@ -39,12 +39,11 @@ export function clientRootOf(clientValue, nameOf) {
 export function subOptions(groups, clientValue, nameOf, devices = []) {
   const root = clientRootOf(clientValue, nameOf)
   if (!root) return []
-  const counts = new Map()
-  for (const d of devices) counts.set(d.group_id || 0, (counts.get(d.group_id || 0) || 0) + 1)
   return list(groups)
     .map(g => ({ g, parts: splitGroupName(g.name) }))
     .filter(x => x.parts.client === root && x.parts.sub)
-    .map(x => ({ value: x.g.id, label: x.parts.sub, count: counts.get(x.g.id) || 0 }))
+    // a contagem usa o mesmo critério do filtro: inclui as máquinas dos níveis abaixo do subgrupo
+    .map(x => ({ value: x.g.id, label: x.parts.sub, count: devices.filter(d => matchesSub(d.group_id || 0, x.g.id, nameOf)).length }))
     .sort(byLabel)
 }
 
