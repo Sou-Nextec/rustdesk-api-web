@@ -86,6 +86,8 @@ remoto atual, que passa a fazer parte dele.
 - A credencial injetada passa pela memória do app do analista. A rotação após uso torna a senha descartável; a solução
   definitiva é o isolamento de sessão (seção 15).
 - Validar o `OsLogin` na tela de bloqueio de um Windows Server com a versão do app gerada hoje.
+- Identidade visual própria do Sentinela: preferência por base grafite; cor de destaque a definir. Até lá, os materiais
+  seguem a identidade da Nextec.
 
 ## 6. Modo de acesso por cliente
 

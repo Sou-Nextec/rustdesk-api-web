@@ -105,11 +105,31 @@ Levantadas em 17/10/2026; cada uma vira um registro de decisão quando for fecha
 
 | Decisão | O que precisa ser definido | Necessária para |
 | --- | --- | --- |
-| Protocolo coletor e agente com o Sentinela | Formato (ex.: gRPC ou mensageria), autenticação mútua do coletor e do agente, reconexão | 2.1 e 1.6 |
 | Modelo de dados do cofre | Estrutura cliente, máquina, conta e segredo, isolada por cliente desde o início | 1.4 |
 | Síncrono ou assíncrono | O que acontece na hora do clique e o que vai para fila (ex.: rotação após a sessão) | 1.6 e 1.7 |
 | Estratégia de testes | Testes dos fluxos críticos e dos conectores por fabricante, que quebram com atualizações | 1.6 e 2.3 |
 | Versionamento da API própria | Como versionar a API que serve painel, app e, no futuro, o MCP | 3.12 |
+
+## 5. Decisões tomadas
+
+### D1. Protocolo entre coletor, agente e Sentinela (17/10/2026)
+
+**Decisão:** gRPC sobre HTTP/2 com mTLS, em túnel reverso aberto pelo coletor ou agente (conexão de saída, permanente).
+
+- Coletor e agente iniciam a conexão; o Sentinela nunca abre conexão para dentro da rede do cliente.
+- Autenticação mútua por certificado (mTLS): cada coletor e agente tem identidade própria, emitida na inscrição e
+  revogável no painel.
+- Uma porta só (443), com roteamento por SNI, para passar em firewalls de cliente sem regra especial.
+- Contrato tipado (Protocol Buffers), com streaming para sessões e eventos, e reconexão automática.
+
+**Por quê:** melhor desempenho para streaming de sessão, tipagem forte e padrão de mercado. O Teleport usa o mesmo modelo
+(gRPC com mTLS em túnel reverso, SNI numa porta só). A CyberArk mantém os protocolos nativos (RDP, SSH) e intermedeia a
+sessão pelo PSM, que grava e consulta o cofre; não usa protocolo de transporte proprietário.
+
+**Alternativa descartada:** WebSocket com mensagens próprias, mais simples de depurar, mas sem contrato tipado nem
+streaming nativo equivalente.
+
+**A detalhar na etapa 2.1:** emissão, rotação e revogação dos certificados do coletor e do agente.
 
 ## Histórico
 
@@ -119,3 +139,4 @@ Levantadas em 17/10/2026; cada uma vira um registro de decisão quando for fecha
 | 17/10/2026 | Imagens dos diagramas em `diagramas/` |
 | 17/10/2026 | Decisões técnicas pendentes |
 | 17/10/2026 | Imagens refeitas na identidade visual, com gerador versionado |
+| 17/10/2026 | D1: gRPC com mTLS entre coletor, agente e Sentinela |
