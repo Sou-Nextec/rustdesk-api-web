@@ -17,6 +17,11 @@ test('com mais de um provedor ou nenhum, a pessoa escolhe', () => {
   assert.equal(autoSsoProvider({ ops: null, storage: memory() }), '')
 })
 
+test('WebAuth (pop-up) nunca é aberto sozinho', () => {
+  assert.equal(autoSsoProvider({ ops: ['webauth'], storage: memory() }), '')
+  assert.equal(autoSsoProvider({ ops: ['WebAuth'], storage: memory() }), '')
+})
+
 test('?manual=1 ou ?senha=1 mostram o formulário de sempre', () => {
   assert.equal(autoSsoProvider({ ops: ['Microsoft'], query: { manual: '1' }, storage: memory() }), '')
   assert.equal(autoSsoProvider({ ops: ['Microsoft'], query: { senha: '' }, storage: memory() }), '')

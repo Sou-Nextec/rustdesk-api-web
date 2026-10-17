@@ -29,6 +29,8 @@ const storageWorks = (storage) => {
 export function autoSsoProvider({ ops, query = {}, storage, now = Date.now() }) {
   const list = Array.isArray(ops) ? ops.filter(Boolean) : []
   if (list.length !== 1) return ''
+  // WebAuth abre um pop-up, que o navegador bloqueia sem um clique da pessoa: nunca é aberto sozinho
+  if (String(list[0]).toLowerCase() === 'webauth') return ''
   if (!storage || !storageWorks(storage)) return ''
   // ?manual=1 (ou ?senha=1) mostra o formulário de sempre, para quem precisa entrar com usuário e senha
   if (query.manual !== undefined || query.senha !== undefined) return ''
