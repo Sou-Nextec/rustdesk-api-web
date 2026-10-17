@@ -3,6 +3,9 @@
 Visão inicial da arquitetura, para uma empresa pequena: começa no modo básico e cresce sem refazer o desenho.
 Origem: conversa de 17/10/2026 (`nextec/sentinela/ABERTURA.md`). Documento vivo; mudanças entram no histórico no fim.
 
+Os diagramas abaixo estão em Mermaid (o GitHub desenha sozinho). Versões em imagem: `diagramas/autenticacao.png` e
+`diagramas/infraestrutura.png`; ao mudar um diagrama aqui, gerar a imagem de novo.
+
 ## 1. Autenticação
 
 ```mermaid
@@ -10,7 +13,7 @@ sequenceDiagram
     autonumber
     actor U as Analista, fornecedor ou prestador
     participant S as Sentinela (API e painel)
-    participant IdP as Provedor de identidade<br/>(Entra primeiro; Keycloak, Authentik ou outro)
+    participant IdP as Provedor de identidade<br/>(Entra primeiro, Keycloak, Authentik ou outro)
     participant C as Cofre
     participant A as Agente ou coletor no cliente
 
@@ -99,3 +102,4 @@ flowchart LR
 | Data | Mudança |
 | --- | --- |
 | 17/10/2026 | Criação |
+| 17/10/2026 | Imagens dos diagramas em `diagramas/` |
