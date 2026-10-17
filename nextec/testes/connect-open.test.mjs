@@ -244,3 +244,33 @@ test('o aviso nunca altera o link autorizado pelo servidor', async () => {
   const r = await prepareConnection('1', deps(data, async (id, link) => { link.url = 'outro://x'; return true }))
   assert.equal(r.url, 'client-nextec-connect://1?password=segredo')
 })
+
+test('celular abre o RustDesk direto: detecção, protocolo e loja', async () => {
+  const { isMobileBrowser, toMobileUrl, mobileStoreUrl, PLAY_STORE_URL, APP_STORE_URL } = await import('../../src/nextec/connect-open.mjs')
+  assert.equal(isMobileBrowser('Mozilla/5.0 (Linux; Android 14; SM-S911B) Chrome/126 Mobile Safari/537.36'), true)
+  assert.equal(isMobileBrowser('Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) Safari/604.1'), true)
+  assert.equal(isMobileBrowser('Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126 Safari/537.36'), false)
+  assert.equal(isMobileBrowser('', true), true)
+  assert.equal(toMobileUrl('nextec-connect://536822159?password=abc'), 'rustdesk://536822159?password=abc')
+  assert.equal(toMobileUrl('nextec-connect://file-transfer/536822159?password=abc'), 'rustdesk://file-transfer/536822159?password=abc')
+  assert.equal(toMobileUrl('rustdesk://123'), 'rustdesk://123')
+  assert.equal(mobileStoreUrl('Mozilla/5.0 (iPhone; CPU iPhone OS 17_5)'), APP_STORE_URL)
+  assert.equal(mobileStoreUrl('Mozilla/5.0 (Linux; Android 14)'), PLAY_STORE_URL)
+})
+
+test('iPad com Safari em modo computador (UA de Mac) conta como celular; Mac de verdade não', async () => {
+  const { isMobileBrowser, isIpadOs, mobileStoreUrl, APP_STORE_URL } = await import('../../src/nextec/connect-open.mjs')
+  const macUa = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15'
+  assert.equal(isIpadOs(macUa, 'MacIntel', 5), true)
+  assert.equal(isMobileBrowser(macUa, false, 'MacIntel', 5), true)
+  assert.equal(isMobileBrowser(macUa, false, 'MacIntel', 0), false)
+  assert.equal(isMobileBrowser(macUa), false)
+  assert.equal(mobileStoreUrl(macUa, 'MacIntel', 5), APP_STORE_URL)
+})
+
+test('a ação pedida vai no link do celular (transferir arquivos)', async () => {
+  const { toMobileUrl } = await import('../../src/nextec/connect-open.mjs')
+  const { urlForAction } = await import('../../src/nextec/connect-action.mjs')
+  assert.equal(toMobileUrl(urlForAction('nextec-connect://536822159?password=abc', 'file-transfer')), 'rustdesk://file-transfer/536822159?password=abc')
+  assert.equal(toMobileUrl(urlForAction('nextec-connect://536822159?password=abc', '')), 'rustdesk://536822159?password=abc')
+})
