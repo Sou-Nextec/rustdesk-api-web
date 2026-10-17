@@ -137,3 +137,20 @@ export async function openConnection ({ url, link = {}, store, launch, watch, to
   const opened = await launchWatched({ url, scheme, store, launch, watch })
   return { ...decision, scheme, opened }
 }
+
+// ---------- celular ----------
+// No celular só existe o app oficial do RustDesk (protocolo rustdesk://); o protocolo do Nextec Connect é de Windows. Por isso,
+// em navegador de celular o painel abre o RustDesk direto, sem diálogo, trocando o protocolo do link autorizado.
+export const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.carriez.flutter_hbb'
+export const APP_STORE_URL = 'https://apps.apple.com/app/rustdesk-remote-desktop/id1581225015'
+
+export function isMobileBrowser (ua = '', uaDataMobile = false) {
+  if (uaDataMobile === true) return true
+  return /Android|iPhone|iPad|iPod/i.test(String(ua))
+}
+
+export function toMobileUrl (url) {
+  return String(url || '').replace(/^[a-z][a-z0-9+.-]*:\/\//i, 'rustdesk://')
+}
+
+export const mobileStoreUrl = (ua = '') => (/iPhone|iPad|iPod/i.test(String(ua)) ? APP_STORE_URL : PLAY_STORE_URL)

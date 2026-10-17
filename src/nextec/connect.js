@@ -12,7 +12,7 @@ import { connectSettings, connectNote, availableApp, secretsRotate } from './api
 import { useQuickAccess } from './quick-access'
 import { prepareConnection } from './connect-flow.mjs'
 import { urlForAction } from './connect-action.mjs'
-import { appLabel, createOpenedStore, launchWatched, openConnection, passwordNotice, watchOpened } from './connect-open.mjs'
+import { appLabel, createOpenedStore, isMobileBrowser, launchWatched, mobileStoreUrl, openConnection, passwordNotice, toMobileUrl, watchOpened } from './connect-open.mjs'
 
 // localStorage pode lançar (modo privado, bloqueio): nunca derruba a conexão.
 const safeStorage = {
@@ -144,7 +144,14 @@ export async function connectDevice (id, { action = '' } = {}) {
         return response.ok ? body : { ...body, code: body?.code === 0 ? response.status : body?.code }
       },
     })
-    if (prepared) {
+    if (prepared && isMobileBrowser(navigator.userAgent, navigator.userAgentData && navigator.userAgentData.mobile)) {
+      // celular: abre o RustDesk direto (protocolo rustdesk://), sem diálogo; o aviso leva à loja se o app não estiver instalado
+      progressToast(h('span', null, [
+        'Abrindo o RustDesk... ',
+        h('a', { href: mobileStoreUrl(navigator.userAgent), target: '_blank', rel: 'noopener', style: 'margin-left:8px;font-size:12px;' }, 'Não abriu? Instalar o RustDesk'),
+      ]), { duration: 8000, showClose: true })
+      launch(toMobileUrl(prepared.url))
+    } else if (prepared) {
       openConnection({
         url: urlForAction(prepared.url, action), link: prepared.link, store: openedStore(), launch,
         watch: () => watchOpened({ win: window, doc: document }),

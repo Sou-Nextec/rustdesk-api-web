@@ -244,3 +244,16 @@ test('o aviso nunca altera o link autorizado pelo servidor', async () => {
   const r = await prepareConnection('1', deps(data, async (id, link) => { link.url = 'outro://x'; return true }))
   assert.equal(r.url, 'client-nextec-connect://1?password=segredo')
 })
+
+test('celular abre o RustDesk direto: detecção, protocolo e loja', async () => {
+  const { isMobileBrowser, toMobileUrl, mobileStoreUrl, PLAY_STORE_URL, APP_STORE_URL } = await import('../../src/nextec/connect-open.mjs')
+  assert.equal(isMobileBrowser('Mozilla/5.0 (Linux; Android 14; SM-S911B) Chrome/126 Mobile Safari/537.36'), true)
+  assert.equal(isMobileBrowser('Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) Safari/604.1'), true)
+  assert.equal(isMobileBrowser('Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/126 Safari/537.36'), false)
+  assert.equal(isMobileBrowser('', true), true)
+  assert.equal(toMobileUrl('nextec-connect://536822159?password=abc'), 'rustdesk://536822159?password=abc')
+  assert.equal(toMobileUrl('nextec-connect://file-transfer/536822159?password=abc'), 'rustdesk://file-transfer/536822159?password=abc')
+  assert.equal(toMobileUrl('rustdesk://123'), 'rustdesk://123')
+  assert.equal(mobileStoreUrl('Mozilla/5.0 (iPhone; CPU iPhone OS 17_5)'), APP_STORE_URL)
+  assert.equal(mobileStoreUrl('Mozilla/5.0 (Linux; Android 14)'), PLAY_STORE_URL)
+})
