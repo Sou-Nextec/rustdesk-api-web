@@ -144,13 +144,15 @@ export async function connectDevice (id, { action = '' } = {}) {
         return response.ok ? body : { ...body, code: body?.code === 0 ? response.status : body?.code }
       },
     })
-    if (prepared && isMobileBrowser(navigator.userAgent, navigator.userAgentData && navigator.userAgentData.mobile)) {
+    const nav = { ua: navigator.userAgent, platform: navigator.platform || '', touch: navigator.maxTouchPoints || 0 }
+    if (prepared && isMobileBrowser(nav.ua, navigator.userAgentData && navigator.userAgentData.mobile, nav.platform, nav.touch)) {
       // celular: abre o RustDesk direto (protocolo rustdesk://), sem diálogo; o aviso leva à loja se o app não estiver instalado
       progressToast(h('span', null, [
         'Abrindo o RustDesk... ',
-        h('a', { href: mobileStoreUrl(navigator.userAgent), target: '_blank', rel: 'noopener', style: 'margin-left:8px;font-size:12px;' }, 'Não abriu? Instalar o RustDesk'),
+        h('a', { href: mobileStoreUrl(nav.ua, nav.platform, nav.touch), target: '_blank', rel: 'noopener', style: 'margin-left:8px;font-size:12px;' }, 'Não abriu? Instalar o RustDesk'),
       ]), { duration: 8000, showClose: true })
-      launch(toMobileUrl(prepared.url))
+      // a ação pedida (ex.: transferir arquivos) entra no link antes de trocar o protocolo
+      launch(toMobileUrl(urlForAction(prepared.url, action)))
     } else if (prepared) {
       openConnection({
         url: urlForAction(prepared.url, action), link: prepared.link, store: openedStore(), launch,

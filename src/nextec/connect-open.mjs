@@ -144,13 +144,18 @@ export async function openConnection ({ url, link = {}, store, launch, watch, to
 export const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.carriez.flutter_hbb'
 export const APP_STORE_URL = 'https://apps.apple.com/app/rustdesk-remote-desktop/id1581225015'
 
-export function isMobileBrowser (ua = '', uaDataMobile = false) {
+// iPadOS 13+ no Safari "pede o site de computador" e envia um UA idêntico ao do Mac: o que o separa de um Mac de verdade é a tela de toque.
+export function isIpadOs (ua = '', platform = '', touchPoints = 0) {
+  return /Macintosh|MacIntel/i.test(`${ua} ${platform}`) && Number(touchPoints) > 1
+}
+
+export function isMobileBrowser (ua = '', uaDataMobile = false, platform = '', touchPoints = 0) {
   if (uaDataMobile === true) return true
-  return /Android|iPhone|iPad|iPod/i.test(String(ua))
+  return /Android|iPhone|iPad|iPod/i.test(String(ua)) || isIpadOs(ua, platform, touchPoints)
 }
 
 export function toMobileUrl (url) {
   return String(url || '').replace(/^[a-z][a-z0-9+.-]*:\/\//i, 'rustdesk://')
 }
 
-export const mobileStoreUrl = (ua = '') => (/iPhone|iPad|iPod/i.test(String(ua)) ? APP_STORE_URL : PLAY_STORE_URL)
+export const mobileStoreUrl = (ua = '', platform = '', touchPoints = 0) => (/iPhone|iPad|iPod/i.test(String(ua)) || isIpadOs(ua, platform, touchPoints) ? APP_STORE_URL : PLAY_STORE_URL)

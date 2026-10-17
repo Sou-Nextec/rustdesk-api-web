@@ -7,7 +7,7 @@ Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no p
 Conectar abre o RustDesk direto no celular.
 
 - **No celular**, o botão **Conectar** (lista de dispositivos, topo, Início) não abria nada: o painel tentava o protocolo do Nextec Connect, que só existe no Windows. Agora, em navegador de Android ou iPhone, ele abre o **RustDesk** direto (`rustdesk://`), com a senha automática quando há, sem diálogo. Se o app não estiver instalado, o aviso traz o link "Não abriu? Instalar o RustDesk" (Google Play ou App Store).
-- No computador nada muda.
+- Vale também para **Transferir arquivos** (abre direto a transferência) e para o **iPad** com o Safari em modo computador (o Safari do iPad se apresenta como Mac; o painel separa pelo toque). No computador nada muda.
 
 ## 2.12.3
 
