@@ -2,12 +2,40 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
-## 2.11.52
+## 2.12.3
 
 Páginas do cliente no layout novo e código do atendimento igual ao da URL.
 
 - **Páginas públicas** (`/atendimento/<código>`, `/instalador/<código>` e `/suporte`) refeitas no modelo de duas colunas do Nextec, com a foto da atendente. Cabem na tela **sem barra de rolagem** em notebooks e desktops (o conteúdo se compacta em telas baixas) e se adaptam ao celular, sem a foto. Patch 0044.
 - **Código do atendimento = o da URL:** o Suporte rápido não sorteia mais um número à parte. O código mostrado no painel e na página do cliente é o próprio código do link (`/atendimento/FZ4ZKGAB`). A tela inicial do Suporte rápido ficou só com o botão **Gerar link** (chamado e validade em "Opções") e o link já é copiado ao gerar.
+
+## 2.12.2
+
+Senhas dos servidores: dá para saber e mudar de onde vem a regra de cada máquina, e a lista fica limpa.
+
+- **Coluna "Regra da senha":** cada máquina mostra quem manda: **Do cliente** (troca a cada X), **Da máquina** (regra só dela) ou **Desligada** (nesta máquina ou no cliente) e **Sem regra**. A regra da máquina ganha da do cliente, como no servidor.
+- **Janela "Regra da senha desta máquina"** (clique no selo ou em ⋯ > Regra da senha): diz o que vale hoje e deixa escolher **Seguir o cliente**, **Regra só desta máquina** (com intervalo) ou **Desligar nesta máquina**. Seguir o cliente remove a regra própria da máquina. A janela lembra que mudar a regra do cliente muda todas as que o seguem, e as com regra própria não mudam.
+- **Regras dos clientes mostram o impacto:** nova coluna "Máquinas" (quantas seguem e quantas têm regra própria) e aviso de que a regra vale só para as máquinas direto no grupo: subgrupo (ex.: "Cliente / Servidores") não herda a do cliente e precisa da própria.
+- **Situação limpa:** só o estado (ex.: "Agente ativo") e problemas. Última consulta, próxima verificação, app, versão da senha e a regra pronta aparecem ao passar o mouse (e ficam disponíveis para leitor de tela).
+- **Coluna Ações sem corte:** "Remover agente" saiu da linha e fica no menu ⋯, com a explicação ("O agente está parado: remova e reinstale"); o menu abre alinhado ao fim e não sai da tela.
+
+## 2.12.1
+
+Requisito do instalador à vista no convite.
+
+- **Por que o convite não vinculava a máquina:** o instalador (MSI) só entrega o código do convite ao agente se foi gerado pelo gerador **2.3.11 ou mais novo**. Quem instala com um MSI mais antigo entra como **Pendente**, sem cliente, e o convite fica com 0 usos.
+- **Convite de instalação** agora mostra, junto da versão publicada para todos, o requisito: o instalador precisa ser do gerador 2.3.11 ou mais novo para vincular sozinho (a versão da release é o número que você escolhe ao publicar e pode não coincidir com a do gerador, então o painel não tenta adivinhar). O convite fica preso à versão que estava publicada quando foi criado.
+
+## 2.12.0
+
+Dispositivos: cliente e subgrupo separados, e adicionar uma máquina sem adivinhar.
+
+- **Filtro de cliente só com clientes:** a lista deixa de misturar "Cartório Adriana Celiac" e "Cartório Adriana Celiac / Servidores". Escolher o cliente mostra as máquinas dele e as de todos os subgrupos. Um subgrupo cujo cliente não existe como grupo aparece como cliente próprio, para não ficar fora do filtro.
+- **Filtro de subgrupo (filtro do filtro):** aparece ao lado quando o cliente escolhido tem subgrupos, com a contagem de máquinas de cada um e a opção "Só o cliente (sem subgrupo)". Trocar o cliente limpa o subgrupo. Links antigos `?client=<id do subgrupo>` viram cliente mais subgrupo.
+- **Coluna Cliente mostra o grupo:** a etiqueta colorida é o cliente e, ao lado, o subgrupo (ex.: `↳ Servidores`). "Agrupar por cliente" agrupa pelo cliente, com os subgrupos dentro da mesma seção.
+- **Adicionar dispositivo com opções que dizem o que fazem:** o botão agora é "Adicionar dispositivo" e o menu tem "Instalar em uma máquina nova" (convite por cliente), "Dar suporte agora" (código e link do suporte avulso, sem instalar) e "Cadastrar um ID que já existe" (à mão), cada um com uma linha de explicação. Antes: "Suporte rápido", "Convite de instalação" e "Cadastrar pelo ID".
+- **O convite já nasce no cliente filtrado:** com um cliente (ou subgrupo) escolhido na lista, "Instalar em uma máquina nova" abre com ele selecionado.
+- **Lista vazia leva ao primeiro passo:** sem nenhuma máquina, a tela oferece "Instalar em uma máquina nova" em vez de só avisar.
 
 ## 2.11.50
 

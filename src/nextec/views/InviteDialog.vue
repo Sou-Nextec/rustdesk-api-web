@@ -5,6 +5,10 @@
               title="Nenhuma versão está publicada para todos."
               description="O convite entrega o MSI publicado. Publique uma versão em Atualizações do app e volte aqui." />
 
+    <el-alert v-if="release" type="info" show-icon :closable="false" class="nx-add-alert"
+              :title="`Instalador publicado para todos: ${release.version}`"
+              description="Para vincular a máquina ao cliente, ele precisa ter sido gerado pelo gerador 2.3.11 ou mais novo. Com um instalador mais antigo a máquina entra como Pendente e você escolhe o cliente à mão. O convite fica preso à versão publicada quando foi criado." />
+
     <p class="nx-add-lead">Um link por cliente: quem abrir baixa o instalador, instala como qualquer programa e a máquina já entra no cliente certo. Ou você cola o comando silencioso.</p>
 
     <el-form label-position="top" class="nx-add-grid" @submit.prevent>
@@ -66,7 +70,8 @@
   import InviteOptions from '@/nextec/views/InviteOptions.vue'
   import { usePublicBase, publicBaseReady, loadPublicBase } from '@/nextec/public-base'
 
-  const props = defineProps({ modelValue: Boolean, clients: { type: Array, default: () => [] } })
+  // preselect: cliente (ou subgrupo) que a lista de Dispositivos já está filtrando, para não escolher de novo
+  const props = defineProps({ modelValue: Boolean, clients: { type: Array, default: () => [] }, preselect: { type: Number, default: null } })
   const emit = defineEmits(['update:modelValue'])
 
   const busy = ref(false)
@@ -96,7 +101,7 @@
   }
   watch(() => props.modelValue, (open) => {
     clearInterval(timer)
-    if (open) { fresh.value = null; error.value = ''; load(); timer = setInterval(() => { if (!document.hidden) load() }, 15000) }
+    if (open) { fresh.value = null; error.value = ''; if (props.preselect) one.client_id = props.preselect; load(); timer = setInterval(() => { if (!document.hidden) load() }, 15000) }
   })
   onBeforeUnmount(() => clearInterval(timer))
 
