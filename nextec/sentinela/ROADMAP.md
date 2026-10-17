@@ -33,7 +33,7 @@ Objetivo: o analista entra pelo provedor de identidade (Entra primeiro), clica e
 | Etapa | Entrega | Critério de entrega | Depende de | Paralelo |
 | --- | --- | --- | --- | --- |
 | 1.1 | Segurança básica da plataforma | MFA para todos e login local desativado; cifragem em trânsito e em repouso; admin separado do operador; varredura de dependências e de código no CI; backup cifrado fora da VPS com uma restauração testada e registrada; logs de auditoria em destino só de escrita; gerência dos servidores fora da internet. Evidência: produção | P0 do `ROADMAP-CLIENTE.md` | Sim, com 1.2 e 1.3 |
-| 1.2 | SSO plugável e bloqueio sincronizado | Login do painel e do app só pelo provedor de identidade com MFA, por OIDC e SAML genéricos (Entra primeiro; trocar por Keycloak ou Authentik só por configuração); usuário desativado no provedor perde painel e app em até 5 minutos; sessões abertas derrubadas; acesso condicional (dispositivo gerenciado, país). Evidência: piloto com a equipe | Nenhuma | Sim, com 1.1 e 1.3 |
+| 1.2 | SSO plugável e bloqueio sincronizado | Login do painel e do app só pelo provedor de identidade com MFA resistente a phishing, por OIDC e SAML genéricos (Entra primeiro; trocar por Keycloak ou Authentik só por configuração); usuário desativado no provedor perde painel e app em até 5 minutos; sessões abertas derrubadas; acesso condicional (dispositivo gerenciado, país). Evidência: piloto com a equipe | Nenhuma | Sim, com 1.1 e 1.3 |
 | 1.3 | Contrato, termo de uso e plano de continuidade | Cláusula de gestão de senhas e entrega no fim do contrato aprovada; modo de contingência descrito (como acessar o cliente com a plataforma fora) | Nenhuma | Sim, com tudo |
 | 1.4 | Cofre de contas do SO | Contas do SO por máquina com chave por cliente; revelação só por admin com justificativa e auditoria; senha de emergência lacrada; exportação cifrada de fim de contrato. Evidência: CI | 1.1 | Sim, com 1.5 |
 | 1.5 | Descoberta e mapeamento antes de rotacionar | Agente lista contas administrativas locais e de domínio e os serviços e tarefas agendadas que usam cada conta; painel mostra o que bloqueia a rotação. Evidência: piloto em 1 cliente | Agente atual | Sim, com 1.4 |
@@ -57,13 +57,13 @@ Objetivo: firewall, switch, hipervisor, banco e painéis web pela plataforma, co
 
 | Etapa | Entrega | Critério de entrega | Depende de | Paralelo |
 | --- | --- | --- | --- | --- |
-| 2.1 | Coletor na rede do cliente | Coletor instalável por cliente, autenticado na plataforma, sem porta aberta para a internet; atualização assinada. Evidência: piloto | 1.4 | Sim, com 2.5 |
+| 2.1 | Coletor na rede do cliente | Coletor instalável por cliente, autenticado na plataforma, sem porta aberta para a internet; atualização assinada. Evidência: piloto | 1.4 | Sim, com 2.2 |
 | 2.2 | Gravação e armazenamento | Vídeo das sessões gráficas e log de comandos do terminal; armazenamento S3 com camada fria e trava contra exclusão até o fim da retenção; mascaramento de dados pessoais; envio de logs ao Grafana ou SIEM. Evidência: piloto | 1.10 | Sim, com 2.1 |
 | 2.3 | Firewalls do primeiro grupo | FortiGate, MikroTik e pfSense: gerência só pelo coletor; perfis leitura e escrita; conta e token da Nextec rotacionados; conta de emergência lacrada; remoção de contas padrão; backup de configuração antes e depois com diferença no chamado; alerta de mudança fora (syslog); reverter com um clique; alerta de regra perigosa. Evidência: piloto por fabricante | 2.1, 2.2 | Fabricantes entre si |
 | 2.4 | Firewalls do segundo grupo | SonicWall, Sophos, OPNsense e UniFi com o mesmo critério de 2.3 | 2.3 | Fabricantes entre si |
 | 2.5 | Acesso web | Navegador isolado no coletor para painéis críticos (senha injetada, sessão gravada, download e cópia por perfil); proxy com identidade para os de menor risco; alvo nunca exposto; HTTP só dentro do túnel. Evidência: piloto | 2.1 | Sim, com 2.3 |
 | 2.6 | Segundo fator e rotação web | Classificação de cada sistema nos 4 casos (SSO, TOTP no cofre, SMS ou e-mail da plataforma, manual aprovado); rotação em camadas (API, SSH, automação do navegador, troca assistida) com teste de login antes de descartar | 2.5 | Sim, com 2.7 |
-| 2.7 | Conectores Hikvision e Intelbras | Rotação de senha de DVR pela API dos dois fabricantes. Evidência: piloto | 2.6 | Sim, com 2.6 |
+| 2.7 | Conectores Hikvision e Intelbras | Rotação de senha de DVR pela API dos dois fabricantes, com teste de login antes de descartar a anterior. Evidência: piloto | 2.1 | Sim, com 2.6 |
 | 2.8 | Switches, hipervisores, banco, nuvem | Switches; Proxmox, Hyper-V e VMware; MySQL com usuário criado na hora e consultas registradas; consoles M365, Azure, Acronis e NAS pelo navegador isolado; inventário e rotação de chaves SSH e certificados com alerta de vencimento | 2.1, 2.5 | Itens entre si |
 | 2.9 | Controles de sessão | Bloqueio de transferência de arquivos e área de transferência por perfil; tempo máximo de sessão e reautenticação para contas críticas; encerrar sessão remota | 2.2 | Sim, com 2.8 |
 | 2.10 | Descoberta web e sistemas externos | Varredura de painéis esquecidos (impressora, câmera, no-break); alerta de certificado interno; portais de terceiros pelo navegador isolado | 2.5 | Sim, com 2.8 |
@@ -141,7 +141,7 @@ Objetivo: chegar ao nível dos grandes PAMs e evoluir com o que é novo.
 | 5.9 | Simulação antes da mudança | Antes de alterar o firewall, mostrar o que abre, o que fecha e regras redundantes | 2.3 | Sim, com tudo |
 | 5.10 | Segurança top | Zero trust entre componentes; builds reproduzíveis e assinados; monitoramento 24 horas; programa de recompensa por falhas; ISO 27001 e SOC 2 (decisão de negócio) | 3.14 | Itens entre si |
 | 5.11 | Usuário local | Login local da própria plataforma, com MFA próprio, para quem não usa provedor externo | 1.2 | Sim, com tudo |
-| 5.12 | Extrapolar | Avaliar criptografia pós-quântica no cofre, computação confidencial e passkeys para os analistas | 5.10 | Sim, com tudo |
+| 5.12 | Extrapolar | Avaliar criptografia pós-quântica no cofre, computação confidencial e passkeys para os analistas | 5.10 | Sim, com 5.4 a 5.9 |
 
 **Porta de saída:** não há; a Fase 5 é contínua.
 

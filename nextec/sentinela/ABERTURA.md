@@ -40,7 +40,8 @@ remoto atual, que passa a fazer parte dele.
 **Definido**
 - Provedor de identidade plugável: a plataforma não fica presa ao Entra. Suporte genérico a OIDC e SAML, para trocar
   por Keycloak, Authentik ou outro sem refazer nada. O Entra ID é o primeiro provedor.
-- MFA resistente a phishing (passkey ou Authenticator com correspondência de número).
+- MFA resistente a phishing: passkey (FIDO2, inclusive no Microsoft Authenticator), Windows Hello for Business ou
+  certificado. Notificação push e código de aplicativo, mesmo com correspondência de número, não atendem.
 - Usuário local da própria plataforma (com MFA próprio) fica para o roadmap futuro.
 - Acesso condicional: dispositivo gerenciado e país permitido.
 - Acesso just-in-time: o analista pede, recebe por tempo definido e a liberação expira sozinha.
