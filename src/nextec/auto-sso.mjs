@@ -42,6 +42,9 @@ export function autoSsoProvider({ ops, query = {}, storage, now = Date.now() }) 
 export const markAttempt = (storage, now = Date.now()) => write(storage, TRY_KEY, String(now))
 // Saída explícita (menu do usuário): a próxima visita à tela de login mostra o botão em vez de reconectar na hora.
 export const markLoggedOut = (storage) => write(storage, OFF_KEY, '1')
+// Clique manual no botão: a pessoa escolheu entrar, então a trava de "saí de propósito" cai; a de tentativa NÃO cai (quem chama
+// registra uma nova), para um retorno com erro não disparar o login automático em seguida.
+export const clearLoggedOut = (storage) => drop(storage, OFF_KEY)
 // Entrou de novo (por qualquer método): limpa as duas travas.
 export const clearSsoFlags = (storage) => { drop(storage, OFF_KEY); drop(storage, TRY_KEY) }
 

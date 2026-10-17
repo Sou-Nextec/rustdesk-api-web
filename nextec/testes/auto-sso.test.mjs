@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { autoSsoProvider, markAttempt, markLoggedOut, clearSsoFlags, providerLabel, isMicrosoft, RETRY_WINDOW_MS } from '../../src/nextec/auto-sso.mjs'
+import { autoSsoProvider, markAttempt, markLoggedOut, clearLoggedOut, clearSsoFlags, providerLabel, isMicrosoft, RETRY_WINDOW_MS } from '../../src/nextec/auto-sso.mjs'
 
 const memory = () => {
   const data = new Map()
@@ -60,6 +60,20 @@ test('sem como gravar as travas, não entra sozinho (melhor um clique do que um 
   // armazenamento que aceita gravar mas não devolve o valor também conta como quebrado
   const amnesia = { getItem: () => null, setItem() {}, removeItem() {} }
   assert.equal(autoSsoProvider({ ops: ['Microsoft'], storage: amnesia }), '')
+})
+
+test('clique manual: tira a marca de saída mas registra a tentativa, então um retorno com erro não reconecta sozinho', () => {
+  const s = memory()
+  const t0 = 1_000_000
+  markLoggedOut(s)
+  // a pessoa clica no botão da Microsoft
+  clearLoggedOut(s)
+  markAttempt(s, t0)
+  // o retorno falhou e a tela de login carregou de novo: não dispara outro login automático
+  assert.equal(autoSsoProvider({ ops: ['Microsoft'], storage: s, now: t0 + 20_000 }), '')
+  // depois de um login com sucesso as travas caem e o token expirado volta a entrar sozinho
+  clearSsoFlags(s)
+  assert.equal(autoSsoProvider({ ops: ['Microsoft'], storage: s, now: t0 + 30_000 }), 'Microsoft')
 })
 
 test('o provedor Microsoft ganha o rótulo e os outros usam a tradução', () => {

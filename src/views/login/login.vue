@@ -56,7 +56,7 @@
   import { useRoute, useRouter } from 'vue-router'
   import { loginOptions, captcha } from '@/api/login'
   import { getCode, removeCode } from '@/utils/auth'
-  import { autoSsoProvider, markAttempt, markLoggedOut, clearSsoFlags, providerLabel } from '@/nextec/auto-sso.mjs'
+  import { autoSsoProvider, markAttempt, markLoggedOut, clearLoggedOut, clearSsoFlags, providerLabel } from '@/nextec/auto-sso.mjs'
 
   const oauthInfo = ref({})
   const userStore = useUserStore()
@@ -118,9 +118,13 @@
     form.captcha_id = captchaRes.data.captcha.id
   }
 
-  // fromAuto: aberto sozinho pela tela; clicar no botão é uma escolha da pessoa e limpa as travas da entrada automática
+  // fromAuto: aberto sozinho pela tela. Clicar no botão é uma escolha da pessoa: tira a marca de "saí de propósito", mas registra a
+  // tentativa, para que um retorno com erro não dispare a entrada automática logo depois.
   const handleOIDCLogin = async (provider, fromAuto = false) => {
-    if (!fromAuto) clearSsoFlags(sessionStorage)
+    if (!fromAuto) {
+      clearLoggedOut(sessionStorage)
+      markAttempt(sessionStorage)
+    }
     // entrada automática cancelada enquanto a chamada estava pendente: o resultado é descartado, sem redirecionar
     return userStore.oidc(provider, platform, browser, () => !fromAuto || autoStarting.value)
   }
