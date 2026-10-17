@@ -19,6 +19,7 @@ ICONS = {
     "shield": '<path d="M12 2l8 3v6c0 5-3.4 9.3-8 11-4.6-1.7-8-6-8-11V5z"/><circle cx="12" cy="10" r="2.2"/><path d="M12 12.2V16"/>',
     "server": '<rect x="3" y="3" width="18" height="5" rx="1"/><rect x="3" y="10" width="18" height="5" rx="1"/><rect x="3" y="17" width="18" height="4" rx="1"/><path d="M7 5.5h.01M7 12.5h.01M7 19h.01"/><path d="M12 5.5h5M12 12.5h5"/>',
     "vault": '<ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v12c0 1.7 3.6 3 8 3s8-1.3 8-3V5"/><path d="M4 11c0 1.7 3.6 3 8 3s8-1.3 8-3"/>',
+    "key": '<circle cx="8" cy="15" r="4"/><path d="M11 12l9-9M17 6l2 2M15 8l2 2"/>',
     "lock": '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/><path d="M12 15v2"/>',
     "bucket": '<path d="M4 6h16l-2 14H6z"/><ellipse cx="12" cy="6" rx="8" ry="2.5"/><path d="M9 11l2 2 4-4"/>',
     "backup": '<path d="M7 18a5 5 0 0 1-.6-10A6 6 0 0 1 18 9a4.5 4.5 0 0 1-.5 9"/><path d="M12 12v8M9 17l3 3 3-3"/>',
@@ -106,6 +107,8 @@ def infra():
     s.append(card(470, 190, 300, 330, "server", "Servidor 1", ["API e painel do Sentinela", "Autorização e janela de horário", "Orquestra as conexões", "ID e relay do acesso remoto", "Auditoria (só escrita)"], accent=True))
     s.append(card(910, 190, 300, 150, "vault", "Servidor 2", ["Banco de dados e cofre", "Chave por cliente", "Sem porta pública"], accent=True))
     s.append(icon("lock", 1176, 300, 22, NAVY))
+    s.append(card(890, 362, 340, 86, "key", "Cofre de chaves", ["Chave mestra e da CA (fora do banco)"]))
+    s.append(arrow([(1060, 340), (1060, 358)]))
     s.append(card(470, 600, 300, 150, "bucket", "Armazenamento S3", ["Gravações de sessão", "Camada fria", "Trava contra exclusão"]))
     s.append(zone(1320, 130, 440, 200, "Outro provedor"))
     s.append(card(1336, 180, 408, 130, "backup", "Backup externo", ["Banco e cofre, cifrado, diário", "Restauração testada"]))

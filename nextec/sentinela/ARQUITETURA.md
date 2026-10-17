@@ -52,6 +52,7 @@ flowchart LR
     subgraph Nuvem["Nuvem da Nextec"]
         S1["Servidor 1<br/>API, painel, auditoria,<br/>ID e relay do acesso remoto"]
         S2["Servidor 2<br/>Banco de dados e cofre<br/>(sem acesso pela internet)"]
+        KMS["Cofre de chaves<br/>chave mestra e da CA<br/>(fora do banco)"]
         OBJ[("Armazenamento de objetos S3<br/>gravações de sessão<br/>camada fria e trava contra exclusão")]
     end
 
@@ -67,6 +68,7 @@ flowchart LR
     AN -- "HTTPS / sessão" --> S1
     IDP -- "token" --> S1
     S1 -- "rede privada" --> S2
+    S2 -- "pede chave" --> KMS
     S1 -- "gravações" --> OBJ
     S2 -- "backup cifrado" --> BKP
     COL -- "túnel de saída" --> S1
@@ -78,6 +80,7 @@ flowchart LR
 | --- | --- | --- |
 | Servidor 1 | Recebe o login, decide permissões, serve a interface, orquestra conexões, guarda a auditoria (destino só de escrita) | VPS na Contabo (equivalente ao app01 atual) |
 | Servidor 2 | Banco de dados e cofre (senhas, tokens, dados sensíveis), separado do servidor 1 por segurança; só aceita conexão do servidor 1 | VPS na Contabo, sem porta pública (equivalente ao app02 atual) |
+| Cofre de chaves | Chave mestra que protege as chaves dos clientes e chave da autoridade certificadora (D3, D8); fora do banco | Serviço próprio (ex.: OpenBao), mesmo no modo básico |
 | Armazenamento de objetos | Gravações de sessão (o que mais ocupa), com camada fria e trava contra exclusão até o fim da retenção | Serviço compatível com S3 (ex.: bucket da Contabo ou Backblaze) |
 | Backup externo | Cópia diária, cifrada, do banco e do cofre; restauração testada | Outro provedor, fora do principal |
 | Coletor | Alcança equipamentos sem agente (firewall, switch, câmeras, painéis web), roda o navegador isolado e rotaciona senhas | Máquina pequena dentro de cada cliente |
@@ -290,6 +293,19 @@ contínua, não só no login). Evita uma segunda classe de acesso com regras dif
   aceitar a conexão na hora (lista de revogados consultada a cada conexão).
 - **Chave da autoridade certificadora** guardada no cofre de chaves dedicado (D3), nunca no banco.
 
+### D9. Acesso individual no Linux, sem root compartilhado (17/10/2026)
+
+**Decisão:**
+- Cada analista tem usuário nominal no Linux, criado e removido pelo agente do Sentinela conforme ganha ou perde acesso
+  àquela máquina.
+- Em vez de distribuir a senha de root, o sudo libera comandos específicos por perfil, sem senha ou com aprovação; o log
+  do sistema mostra o usuário real, não "root".
+- Shell root completo e interativo só com chave SSH de uso único, gerada pelo Sentinela para aquela sessão; nada de
+  senha fixa de root. A sessão inteira é gravada.
+- A senha de root continua existindo só como conta de emergência no cofre, rotacionada e lacrada.
+
+**Por quê:** elimina o root compartilhado, mantém auditoria por pessoa e usa a rotação e o cofre já definidos (D3).
+
 ## Histórico
 
 | Data | Mudança |
@@ -305,3 +321,4 @@ contínua, não só no login). Evita uma segunda classe de acesso com regras dif
 | 17/10/2026 | D4 síncrono ou em fila, D5 testes, D6 API em duas camadas |
 | 17/10/2026 | D7: eixo único de validação (permissão e risco) |
 | 17/10/2026 | D8: certificados; D3: chave mestra fora do banco e retenção configurável |
+| 17/10/2026 | D9: acesso individual no Linux; cofre de chaves no desenho |

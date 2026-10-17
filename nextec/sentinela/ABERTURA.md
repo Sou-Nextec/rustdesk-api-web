@@ -81,8 +81,8 @@ remoto atual, que passa a fazer parte dele.
 - Testar o login com a senha nova antes de descartar a antiga, em qualquer rotação.
 
 **Em aberto**
-- Linux: o modo terminal do RustDesk abre o shell com a conta do serviço e não valida a senha do root. Caminhos
-  levantados: usuário temporário com sudo criado pelo agente, ou certificado SSH de curta duração.
+- Linux: o modo terminal do RustDesk abre o shell com a conta do serviço e não valida a senha do root. Resolvido depois
+  na decisão D9 do `ARQUITETURA.md` (usuário nominal, sudo por perfil e chave SSH de uso único).
 - A credencial injetada passa pela memória do app do analista. A rotação após uso torna a senha descartável; a solução
   definitiva é o isolamento de sessão (seção 15).
 - Validar o `OsLogin` na tela de bloqueio de um Windows Server com a versão do app gerada hoje.
