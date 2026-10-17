@@ -116,6 +116,8 @@ Em ordem (detalhes em `nextec/PENDENCIAS.md`):
 | --- | --- |
 | Visão do painel e o que é nosso por arquivo | `README.nextec.md` |
 | Pendências e ideias | `nextec/PENDENCIAS.md` |
+| Visão da plataforma de acesso privilegiado e RMM (fechado) | `nextec/plataforma/ABERTURA.md` |
+| Roadmap da plataforma (fases, etapas, critérios) | `nextec/plataforma/ROADMAP.md` |
 | Novidades por versão | `CHANGELOG.md` |
 | Patches da API (0001 a 0018) | `nextec/backend/LEIAME.md` |
 | Correções locais de autorização e identidade (0019) | `nextec/backend/0019-LEIAME.md` |
