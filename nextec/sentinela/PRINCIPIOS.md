@@ -57,6 +57,32 @@ não apareça na tela. Mudar amanhã deve ser só trocar um valor.
 - **Segredo não é configuração:** senhas, tokens e chaves ficam no cofre ou em variável de ambiente, nunca no arquivo ou
   na tela de configuração.
 
+## 6. Documentação obrigatória, em dois níveis
+
+Nada fica pronto sem documentação. Não é documentar cada detalhe: é qualquer pessoa conseguir entender e usar.
+
+**Nível 1, documentação técnica e histórica**
+- Toda funcionalidade nova tem uma página explicando o que faz, como funciona e por quê, com desenho quando ajudar.
+- `CHANGELOG.md` por versão, que alimenta a tela "Novidades" dentro da plataforma.
+- Decisões em `ARQUITETURA.md`, evolução em `ROADMAP.md`, bugs em `CORRECOES.md`, oportunidades em `ACHADOS.md`.
+- Viu algo que precisa de documentação e não dá para fazer na hora? Registra em `ACHADOS.md` para não se perder.
+
+**Nível 2, ajuda dentro da plataforma**
+- Cada tela tem botão de ajuda próprio daquela tela, nunca um texto genérico.
+- A ajuda diz o que cada parte faz e o passo a passo para usar ("faça isso, depois isso"), em linguagem simples, para a
+  pessoa trabalhar sozinha sem treinamento ou certificação.
+- O painel atual já tem esse mecanismo (botão de ajuda por tela, chaves `NxHelp<Rota>`); o Sentinela segue o mesmo modelo.
+- Os textos de ajuda também são configuráveis (princípio 5), não fixos no código.
+
+**Regra de manutenção (definição de pronto)**
+Uma mudança só está pronta quando vem com, no mesmo PR:
+1. o código e os testes;
+2. a documentação técnica atualizada;
+3. o texto de ajuda da tela atualizado;
+4. a linha no `CHANGELOG.md`.
+
+A revisão do PR confere os quatro; faltando um, não entra.
+
 ## Histórico
 
 | Data | Mudança |
@@ -64,3 +90,4 @@ não apareça na tela. Mudar amanhã deve ser só trocar um valor.
 | 17/10/2026 | Criação |
 | 17/10/2026 | Princípio 5: tudo configurável |
 | 17/10/2026 | Tokens de tema e automatizar o que puder |
+| 17/10/2026 | Princípio 6: documentação obrigatória em dois níveis |
