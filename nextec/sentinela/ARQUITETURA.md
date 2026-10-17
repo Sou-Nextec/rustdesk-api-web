@@ -248,6 +248,33 @@ Toda tarefa em fila é idempotente (pode rodar de novo sem efeito duplicado) e r
 - O MCP usa a API externa; nunca um caminho paralelo.
 - Tokens de integração com validade e escopo mínimo, revogáveis no painel, e limite de requisições.
 
+### D7. Eixo único de validação (17/10/2026)
+
+**Decisão:** toda entrada (painel, app, API externa e MCP; pessoa, integração ou agente de IA) passa pelo mesmo eixo de
+validação do Sentinela, com duas camadas em sequência:
+
+1. **Permissão:** quem é, se a concessão (D3) cobre aquela ação naquele alvo, se está na janela de horário.
+2. **Risco:** mesmo com permissão, o comportamento é suspeito? Ex.: volume fora do padrão, horário ou origem incomuns,
+   sequência de ações rara para aquele perfil, token usado de dois lugares ao mesmo tempo.
+
+| Resultado do risco | Ação |
+| --- | --- |
+| Normal | Passa |
+| Suspeito leve | Passa, mas pede MFA de novo ou limita a ação |
+| Suspeito | Segura e pede aprovação humana |
+| Alto | Bloqueia, derruba a sessão e alerta |
+
+**Cuidados:**
+- O eixo não pode virar ponto único de falha: roda em mais de uma instância quando houver alta disponibilidade; se a
+  checagem de permissão falhar, nega (falha fechada).
+- A checagem de risco precisa ser rápida (triagem leve, como o Jev); a análise profunda roda em paralelo e pode derrubar a
+  sessão depois.
+- Começa só observando e registrando por um período, para medir alarmes falsos antes de bloquear.
+- Toda decisão do eixo vai para a auditoria, com o motivo.
+
+**Por quê:** é o modelo de confiança zero usado no mercado (um ponto que aplica a política e avalia o risco de forma
+contínua, não só no login). Evita uma segunda classe de acesso com regras diferentes para API ou IA.
+
 ## Histórico
 
 | Data | Mudança |
@@ -261,3 +288,4 @@ Toda tarefa em fila é idempotente (pode rodar de novo sem efeito duplicado) e r
 | 17/10/2026 | D1 confirmada (RustDesk direto ao relay); D3: modelo de dados do cofre |
 | 17/10/2026 | D3: permissões e rotação granulares, perfis e padrões iniciais |
 | 17/10/2026 | D4 síncrono ou em fila, D5 testes, D6 API em duas camadas |
+| 17/10/2026 | D7: eixo único de validação (permissão e risco) |
