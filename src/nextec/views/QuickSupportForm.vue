@@ -1,13 +1,12 @@
 <template>
   <form class="nx-qs" @submit.prevent="create">
-    <div class="nx-qs-id" role="status" aria-live="polite">
-      <span class="nx-qs-id-label">Código do atendimento</span>
-      <strong class="nx-qs-id-value">{{ fresh ? fresh.id : sessionId }}</strong>
-      <el-button v-if="!fresh" text type="primary" size="small" :disabled="busy" @click="newId">Gerar outro código</el-button>
+    <div v-if="fresh" class="nx-qs-id" role="status" aria-live="polite">
+      <span class="nx-qs-id-label">Código do atendimento (o mesmo do link)</span>
+      <strong class="nx-qs-id-value">{{ fresh.token }}</strong>
     </div>
 
     <template v-if="!fresh">
-      <p class="nx-qs-lead">O cliente abre o link, baixa o aplicativo de suporte e a máquina aparece na fila identificada por este código.</p>
+      <p class="nx-qs-lead">Gera o link para o cliente baixar o aplicativo de suporte. A máquina aparece na fila identificada pelo código do link, que é o mesmo que ele vê na página.</p>
 
       <el-button v-if="!more" text type="primary" size="small" class="nx-qs-more" @click="more = true">Opções (chamado e validade)</el-button>
       <div v-else class="nx-qs-opts">
@@ -49,12 +48,11 @@
   import { useUserStore } from '@/store/user'
   import { usePublicBase, publicBaseReady, loadPublicBase } from '@/nextec/public-base'
   import { supportLinkUrl } from '@/nextec/public-links.mjs'
-  import { randomSessionId, sessionLabel } from '@/nextec/quick-id.mjs'
+  import { sessionLabel } from '@/nextec/quick-id.mjs'
 
   defineEmits(['done'])
 
   const form = reactive({ label: '', hours: 2 })
-  const sessionId = ref(randomSessionId())
   const busy = ref(false)
   const error = ref('')
   const fresh = ref(null)
@@ -65,10 +63,8 @@
   const supportPath = computed(() => ((useUserStore().route_names || []).includes('*') ? '/user/support' : '/my/support'))
   const base = usePublicBase()
   const link = computed(() => (fresh.value ? supportLinkUrl(base.value, fresh.value.token) : ''))
-  const message = computed(() => `Olá! Para o atendimento remoto (código ${fresh.value ? fresh.value.id : ''}), abra este link, baixe o aplicativo de suporte da Nextec e me avise quando ele estiver aberto: ${link.value}`)
+  const message = computed(() => `Olá! Para o atendimento remoto (código ${fresh.value ? fresh.value.token : ''}), abra este link, baixe o aplicativo de suporte da Nextec e me avise quando ele estiver aberto: ${link.value}`)
   const until = computed(() => (fresh.value ? new Date(fresh.value.expires_at * 1000).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' }) : ''))
-
-  const newId = () => { sessionId.value = randomSessionId() }
 
   // Copia sem avisar quando o endereço dos links ainda não carregou (o link sairia no domínio errado).
   const writeClipboard = async (text) => {
@@ -80,11 +76,10 @@
     error.value = ''
     busy.value = true
     await loadPublicBase()
-    const id = sessionId.value
-    const res = await supportLinkCreate({ label: sessionLabel(form.label, id), ticket: '', hours: form.hours }).catch(() => false)
+    const res = await supportLinkCreate({ label: sessionLabel(form.label), ticket: '', hours: form.hours }).catch(() => false)
     busy.value = false
     if (res && res.code === 0 && res.data) {
-      fresh.value = { ...res.data, id }
+      fresh.value = { ...res.data }
       // já deixa o link na área de transferência: quem atende só precisa colar na conversa
       copied.value = await writeClipboard(supportLinkUrl(base.value, res.data.token))
       if (copied.value) ElMessage.success('Link copiado.')
@@ -92,7 +87,7 @@
       error.value = (res && res.message) || 'Não foi possível gerar o link. Tente de novo.'
     }
   }
-  const reset = () => { fresh.value = null; copied.value = false; form.label = ''; more.value = false; newId() }
+  const reset = () => { fresh.value = null; copied.value = false; form.label = ''; more.value = false }
   const copy = async (text, msg) => {
     if (!publicBaseReady.value) { loadPublicBase(true); ElMessage.warning('Ainda carregando o endereço dos links. Tente copiar de novo em instantes.'); return }
     try { await navigator.clipboard.writeText(text); copied.value = true; ElMessage.success(msg) } catch (e) { ElMessage.error('Não foi possível copiar.') }

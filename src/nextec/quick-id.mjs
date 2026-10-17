@@ -1,22 +1,10 @@
-// Código do atendimento do Suporte rápido: seis dígitos aleatórios no formato "482-913".
-// Propositalmente diferente do ID do RustDesk (nove dígitos em grupos de três), para ninguém confundir os dois.
-// É só um rótulo fácil de ditar por telefone; o segredo do link é o token que o servidor gera.
+// Rótulo do link de Suporte rápido. O código do atendimento é o próprio token do link (o mesmo que vai na URL e que o cliente
+// vê na página), por isso não existe mais um número sorteado à parte.
 
-// random: função que devolve um inteiro de 32 bits sem sinal (injetável para teste).
-export function randomSessionId (random = defaultRandom) {
-  const n = 100000 + (random() % 900000)
-  const s = String(n)
-  return `${s.slice(0, 3)}-${s.slice(3)}`
-}
+export const QUICK_DEFAULT_LABEL = 'Suporte rápido'
 
-function defaultRandom () {
-  const buf = new Uint32Array(1)
-  globalThis.crypto.getRandomValues(buf)
-  return buf[0]
-}
-
-// Rótulo gravado no link: o texto opcional do técnico seguido do código, ou só "Atendimento <código>".
-export function sessionLabel (text, id) {
-  const t = String(text || '').trim().slice(0, 90)
-  return t ? `${t} (${id})` : `Atendimento ${id}`
+// Rótulo gravado no link: o texto opcional do técnico (chamado ou cliente) ou "Suporte rápido".
+export function sessionLabel (text) {
+  const t = String(text || '').trim().slice(0, 100)
+  return t || QUICK_DEFAULT_LABEL
 }
