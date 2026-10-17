@@ -257,7 +257,8 @@ validação do Sentinela, com duas camadas em sequência:
 
 1. **Permissão:** quem é, se a concessão (D3) cobre aquela ação naquele alvo, se está na janela de horário.
 2. **Risco:** mesmo com permissão, o comportamento é suspeito? Ex.: volume fora do padrão, horário ou origem incomuns,
-   sequência de ações rara para aquele perfil, token usado de dois lugares ao mesmo tempo.
+   sequência de ações rara para aquele perfil ou que lembra varredura e reconhecimento de rede, pedido de dados de
+   muitos clientes de uma vez, token usado de dois lugares ao mesmo tempo.
 
 | Resultado do risco | Ação |
 | --- | --- |
