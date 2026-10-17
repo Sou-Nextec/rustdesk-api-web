@@ -135,6 +135,20 @@ continuar assim e migrar para o gRPC quando houver ganho; o coletor, que é novo
 
 **A detalhar na etapa 2.1:** emissão, rotação e revogação dos certificados do coletor e do agente.
 
+### D2. Nenhuma porta de entrada no cliente (17/10/2026)
+
+**Decisão:** RDP, SSH e painéis web dos clientes ficam fechados para a internet. O acesso a eles passa sempre por uma
+conexão de saída: o agente (sessão do RustDesk, inclusive o túnel de RDP e o terminal) ou o coletor (RDP, SSH e web pela
+rede interna).
+
+| Caminho | Quando usar |
+| --- | --- |
+| Agente (RustDesk) | Padrão para servidores e estações com o agente instalado: tela, terminal e túnel de RDP |
+| Coletor | Equipamento sem agente (firewall, switch, hipervisor, câmeras); contingência quando o agente parar; RDP em sessão própria do usuário em vez do console; SSH com usuário individual no Linux |
+
+**Por quê:** fechar as portas de entrada elimina a maior superfície de ataque (RDP e SSH expostos). Manter RDP e SSH
+pela rede interna, via coletor, cobre o que o agente não alcança e dá uma segunda via se o agente cair.
+
 ## Histórico
 
 | Data | Mudança |
@@ -144,3 +158,4 @@ continuar assim e migrar para o gRPC quando houver ganho; o coletor, que é novo
 | 17/10/2026 | Decisões técnicas pendentes |
 | 17/10/2026 | Imagens refeitas na identidade visual, com gerador versionado |
 | 17/10/2026 | D1: gRPC com mTLS entre coletor, agente e Sentinela |
+| 17/10/2026 | D2: nenhuma porta de entrada no cliente |
