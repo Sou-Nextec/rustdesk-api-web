@@ -86,6 +86,8 @@ Ajustes do servidor > Acesso pelo navegador: um interruptor liga e desliga na ho
 Em Segurança > Login externo > Adicionar > OIDC, o botão **Preencher para Microsoft Entra ID** pede a ID do diretório e preenche emissor, escopos e PKCE. Você informa a ID do aplicativo (Client ID) e o segredo. O segredo **nunca volta ao navegador** (patch 0004): ao editar, deixar em branco mantém o atual.
 URI de redirecionamento no Entra: `https://<endereço do painel>/api/oidc/callback`. Com o Cloudflare Access na frente, esse caminho fica fora das rotas protegidas (`/_admin` e `/api/admin`). Para esconder o login por senha, `RUSTDESK_API_APP_DISABLE_PWD_LOGIN=true` no compose.
 
+**Entrada automática (2.12.5):** com um único provedor de login externo, a tela de login abre o fluxo OIDC sozinha. Como o painel fica atrás do Cloudflare Access com o mesmo Entra, a sessão já existe e a pessoa entra sem clicar. O servidor continua validando o login pelo OIDC (nada do cabeçalho do Cloudflare é confiado). Para ver o formulário de usuário e senha, abra `/_admin/#/login?manual=1`; quem usa Sair não é reconectado na hora. A lógica fica em `src/nextec/auto-sso.mjs`.
+
 ## Foto de perfil
 
 No menu do usuário, **Foto de perfil**. A API (patch 0004) envia `display_name` e `avatar` (data URI) no login do app, e o RustDesk 1.4.x/1.5 mostra a foto na janela de permissão da sessão, no lugar da inicial. A foto exibida vem da conta logada na máquina de **quem conecta**.

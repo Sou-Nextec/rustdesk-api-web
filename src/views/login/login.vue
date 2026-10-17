@@ -3,7 +3,14 @@
     <div class="login-card">
       <img src="@/assets/logo.png" alt="logo" class="login-logo"/>
 
-      <el-form v-if="!disablePwd" label-position="top" class="login-form">
+      <!-- entrada automática pelo login externo: o painel já está atrás do Cloudflare Access (Entra) -->
+      <div v-if="autoStarting" class="sso-starting" role="status" aria-live="polite">
+        <span class="sso-spinner" aria-hidden="true"></span>
+        <p>Entrando com a sua conta Microsoft…</p>
+        <el-button link class="sso-manual" @click="stopAuto">Entrar de outro jeito</el-button>
+      </div>
+
+      <el-form v-if="!autoStarting && !disablePwd" label-position="top" class="login-form">
         <el-form-item :label="T('Username')">
           <el-input v-model="form.username" type="username" class="login-input"></el-input>
         </el-form-item>
@@ -25,15 +32,15 @@
         </el-form-item>
       </el-form>
 
-      <div class="divider" v-if="options.length > 0 && !disablePwd">
+      <div class="divider" v-if="!autoStarting && options.length > 0 && !disablePwd">
         <span>{{ T('or login in with') }}</span>
       </div>
 
-      <div class="oidc-options">
+      <div v-if="!autoStarting" class="oidc-options">
         <div v-for="(option, index) in options" :key="index" class="oidc-option">
           <el-button @click="handleOIDCLogin(option.name)" class="oidc-btn">
-            <img :src="getProviderImage(option.name)" alt="provider" class="oidc-icon"/>
-            <span>{{ T(option.name) }}</span>
+            <img :src="getProviderImage(option.name)" alt="" class="oidc-icon"/>
+            <span>{{ providerLabel(option.name, T) }}</span>
           </el-button>
         </div>
       </div>
@@ -49,12 +56,14 @@
   import { useRoute, useRouter } from 'vue-router'
   import { loginOptions, captcha } from '@/api/login'
   import { getCode, removeCode } from '@/utils/auth'
+  import { autoSsoProvider, markAttempt, markLoggedOut, clearLoggedOut, clearSsoFlags, providerLabel } from '@/nextec/auto-sso.mjs'
 
   const oauthInfo = ref({})
   const userStore = useUserStore()
   const route = useRoute()
   const router = useRouter()
   const options = reactive([]) // 存储 OIDC 登录选项
+  const autoStarting = ref(false)
 
   let platform = window.navigator.platform
   if (navigator.platform.indexOf('Mac') === 0) {
@@ -86,6 +95,7 @@
   const login = async () => {
     const res = await userStore.login(form).catch(e => e)
     if (!res.code) {
+      clearSsoFlags(sessionStorage)
       ElMessage.success(T('LoginSuccess'))
       router.push({ path: redirect || '/', replace: true })
       return
@@ -108,8 +118,19 @@
     form.captcha_id = captchaRes.data.captcha.id
   }
 
-  const handleOIDCLogin = (provider) => {
-    userStore.oidc(provider, platform, browser)
+  // fromAuto: aberto sozinho pela tela. Clicar no botão é uma escolha da pessoa: tira a marca de "saí de propósito", mas registra a
+  // tentativa, para que um retorno com erro não dispare a entrada automática logo depois.
+  const handleOIDCLogin = async (provider, fromAuto = false) => {
+    if (!fromAuto) {
+      clearLoggedOut(sessionStorage)
+      markAttempt(sessionStorage)
+    }
+    // entrada automática cancelada enquanto a chamada estava pendente: o resultado é descartado, sem redirecionar
+    return userStore.oidc(provider, platform, browser, () => !fromAuto || autoStarting.value)
+  }
+  const stopAuto = () => {
+    autoStarting.value = false
+    markLoggedOut(sessionStorage)
   }
 
   import googleImage from '@/assets/google.png'
@@ -117,11 +138,13 @@
   import oidcImage from '@/assets/oidc.png'
   import webauthImage from '@/assets/webauth.png'
   import defaultImage from '@/assets/oidc.png'
+  import microsoftImage from '@/assets/microsoft.svg'
 
   const providerImageMap = {
     google: googleImage,
     github: githubImage,
     oidc: oidcImage,
+    microsoft: microsoftImage,
     // WebAuth: webauthImage,
     default: defaultImage,
   }
@@ -139,9 +162,15 @@
       // a API devolve ops = null quando não há provedor (ou a consulta falha): trata como lista vazia
       const ops = res.data.ops || []
       ops.forEach(option => options.push({ name: option }))
-      if (res.data.auto_oidc && ops.length) {
-        // 如果有自动OIDC登录选项，直接调用第一个
-        handleOIDCLogin(ops[0])
+      // um único provedor (a Microsoft): abre o fluxo sozinho, com as travas contra loop e contra reconexão após sair de propósito
+      const auto = autoSsoProvider({ ops, query: route.query, storage: sessionStorage, now: Date.now() })
+      if (auto) {
+        // sem como gravar a trava contra loop, não redireciona sozinho (a pessoa clica)
+        if (markAttempt(sessionStorage)) {
+          autoStarting.value = true
+          const started = await handleOIDCLogin(auto, true)
+          if (!started) autoStarting.value = false
+        }
       }
       disablePwd.value = res.data.disable_pwd
       allowRegister.value = res.data.register
@@ -161,8 +190,15 @@
       if (res) {
         // 删除code，确保跳转之前对code进行清楚
         removeCode()
+        clearSsoFlags(sessionStorage)
         ElMessage.success(T('LoginSuccess'))
         router.push({ path: redirect || '/', replace: true })
+      } else {
+        // a volta do login externo falhou: descarta o código velho e mostra a tela. Registra a hora da volta para a trava contra
+        // loop contar daqui (um login que levou minutos, com senha ou MFA, não pode disparar outro redirecionamento na hora)
+        removeCode()
+        markAttempt(sessionStorage)
+        loadLoginOptions()
       }
     } else {
       // 如果code不存在, 现实登陆页面
@@ -276,6 +312,32 @@ h1 {
   width: 24px;
   height: 24px;
   margin-right: 10px;
+}
+
+.sso-starting {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 18px 0 6px;
+  color: #fff;
+  text-align: center;
+
+  p { margin: 0; font-size: 15px; }
+}
+
+.sso-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid rgba(255, 255, 255, 0.25);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: sso-spin 0.9s linear infinite;
+}
+
+@keyframes sso-spin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .sso-spinner { animation: none; }
 }
 
 .login-logo {

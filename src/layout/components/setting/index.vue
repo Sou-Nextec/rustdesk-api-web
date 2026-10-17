@@ -65,6 +65,7 @@
 <script setup>
   import { useUserStore } from '@/store/user'
   import { useAppStore } from '@/store/app'
+  import { markLoggedOut } from '@/nextec/auto-sso.mjs'
   import changePwdDialog from '@/components/changePwdDialog.vue'
   import ProfilePhoto from '@/nextec/views/ProfilePhoto.vue'
   import WhatsNew from '@/nextec/views/WhatsNew.vue'
@@ -79,6 +80,8 @@
   const appStore = useAppStore()
 
   const logout = () => {
+    // saída de propósito: a tela de login não reconecta sozinha nesta sessão do navegador
+    markLoggedOut(sessionStorage)
     userStore.logout()
     window.location.reload()
   }

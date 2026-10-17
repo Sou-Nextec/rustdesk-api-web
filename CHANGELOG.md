@@ -2,6 +2,15 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.12.5
+
+Login: entra sozinho pela Microsoft, sem clicar de novo.
+
+- **Entrada automática:** quem chega ao painel já passou pelo Cloudflare Access (Entra). Com um único provedor de login externo (Microsoft), a tela de login abre o fluxo OIDC sozinha ("Entrando com a sua conta Microsoft…") e, como a sessão do Entra já existe, a pessoa cai direto no painel. Nenhum cabeçalho do Cloudflare é aceito como prova de identidade: o login continua sendo validado pelo OIDC no servidor, com o mesmo aplicativo do Entra de antes.
+- **Sem loops e sem surpresa:** uma tentativa que volta para a tela de login (erro do Entra) não é repetida por 10 minutos (contados da volta, para cobrir senha e MFA demorados); sem como gravar essa trava (armazenamento bloqueado), a entrada automática fica desligada; quem usa **Sair** no menu não é reconectado na hora (a tela mostra o botão); `?manual=1` na tela de login mostra o formulário de usuário e senha. "Entrar de outro jeito" interrompe a entrada automática. Token expirado volta a entrar sozinho.
+- **Logo da Microsoft:** o botão de login externo mostra a marca da Microsoft e diz "Entrar com a Microsoft", no lugar do ícone genérico com o nome técnico.
+- **Retorno com erro:** se a volta do login externo falhar, o código antigo é descartado e a tela de login aparece, em vez de ficar parada.
+
 ## 2.12.4
 
 Conectar abre o RustDesk direto no celular.
