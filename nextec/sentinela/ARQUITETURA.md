@@ -3,8 +3,10 @@
 Visão inicial da arquitetura, para uma empresa pequena: começa no modo básico e cresce sem refazer o desenho.
 Origem: conversa de 17/10/2026 (`nextec/sentinela/ABERTURA.md`). Documento vivo; mudanças entram no histórico no fim.
 
-Os diagramas abaixo estão em Mermaid (o GitHub desenha sozinho). Versões em imagem: `diagramas/autenticacao.png` e
-`diagramas/infraestrutura.png`; ao mudar um diagrama aqui, gerar a imagem de novo.
+Os diagramas abaixo estão em Mermaid (o GitHub desenha sozinho) e são a fonte de verdade. As versões de apresentação, na
+identidade da Nextec, ficam em `diagramas/autenticacao.png` e `diagramas/infraestrutura.png`, geradas por
+`diagramas/gerar.py` (Python com Playwright e a fonte Open Sans do pacote `@fontsource/open-sans`). Ao mudar um diagrama
+aqui, atualizar também o `gerar.py` e gerar as imagens de novo.
 
 ## 1. Autenticação
 
@@ -116,3 +118,4 @@ Levantadas em 17/10/2026; cada uma vira um registro de decisão quando for fecha
 | 17/10/2026 | Criação |
 | 17/10/2026 | Imagens dos diagramas em `diagramas/` |
 | 17/10/2026 | Decisões técnicas pendentes |
+| 17/10/2026 | Imagens refeitas na identidade visual, com gerador versionado |
