@@ -38,8 +38,8 @@
         <el-table-column label="Lista no app" min-width="130">
           <template #default="{ row }">
             <template v-if="row.collection">
-              <span class="nx-dot" :class="row.missing ? 'is-warn' : 'is-ok'" aria-hidden="true"></span>
-              <span>{{ row.missing ? `${row.missing} fora da lista` : 'Em dia' }}</span>
+              <span class="nx-dot" :class="row.missing || row.extra ? 'is-warn' : 'is-ok'" aria-hidden="true"></span>
+              <span>{{ listStatus(row) }}</span>
             </template>
             <span v-else class="nx-muted">Sem lista</span>
           </template>
@@ -126,7 +126,8 @@
   import { list as userGroupList } from '@/api/group'
   import { list as collectionList, create as collectionCreate } from '@/api/address_book_collection'
   import { list as ruleList, create as ruleCreate, update as ruleUpdate, remove as ruleRemove } from '@/api/address_book_collection_rule'
-  import { list as abList, batchCreateFromPeers } from '@/api/address_book'
+  import { list as abList } from '@/api/address_book'
+  import { clientListsSync } from '@/nextec/api'
   import { loadAllUsers } from '@/global'
   import { useUserStore } from '@/store/user'
 
@@ -186,11 +187,21 @@
     collections.value.find(c => c.name === PREFIX + group.name) ||
     collections.value.find(c => c.name.toLowerCase() === (PREFIX + group.name).toLowerCase())
 
+  const listStatus = (row) => {
+    const parts = []
+    if (row.missing) parts.push(`${row.missing} fora da lista`)
+    if (row.extra) parts.push(`${row.extra} a mais`)
+    return parts.length ? parts.join(', ') : 'Em dia'
+  }
   const syncState = reactive({})
   const toRow = (g, parent) => {
     const collection = collectionFor(g)
-    const groupPeers = peers.value.filter(p => p.group_id === g.id)
-    const inList = new Set((collection && entriesByCollection.value[collection.id] || []).map(e => e.id))
+    // a lista de um cliente inclui as máquinas dos subgrupos dele
+    const ids = new Set([g.id, ...clients.value.filter(c => c.name.startsWith(g.name + SEP)).map(c => c.id)])
+    const groupPeers = peers.value.filter(p => ids.has(p.group_id))
+    const entries = (collection && entriesByCollection.value[collection.id]) || []
+    const inList = new Set(entries.map(e => e.id))
+    const wanted = new Set(groupPeers.map(p => p.id))
     return {
       ...g,
       key: 'g' + g.id,
@@ -201,6 +212,7 @@
       peerCount: groupPeers.length,
       peers: groupPeers,
       missing: collection ? groupPeers.filter(p => !inList.has(p.id)).length : 0,
+      extra: collection ? entries.filter(e => !wanted.has(e.id)).length : 0,
       rules: collection ? (rulesByCollection.value[collection.id] || []) : [],
       syncing: !!syncState[g.id],
     }
@@ -235,11 +247,8 @@
   }
 
   const syncPeers = async (collectionId, row) => {
-    if (!row.peers.length) return true
-    // o servidor ignora os que já estão na lista
-    const res = await batchCreateFromPeers({
-      collection_id: collectionId, user_id: ownerId.value, tags: [], peer_ids: row.peers.map(p => p.row_id),
-    }).catch(() => false)
+    // o servidor deixa a lista igual ao cliente: inclui o que falta e tira o que saiu
+    const res = await clientListsSync([collectionId]).catch(() => false)
     return !!res
   }
 

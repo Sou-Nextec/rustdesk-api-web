@@ -73,6 +73,8 @@ export const supportWaiting = () => request({ url: '/my/support/waiting' })
 
 // patches 0011 a 0013: instalação por cliente, políticas do app, conexões ativas, chamado e relatório
 export const installToken = (group_id) => request({ url: '/nextec/install-token', params: { group_id } })
+// patch 0047: listas "Cliente: X" sempre iguais ao cliente (inclui subgrupos, remove o que saiu)
+export const clientListsSync = (collection_ids) => request({ url: '/nextec/client-lists/sync', method: 'post', data: { collection_ids } })
 export const installRevoke = () => request({ url: '/nextec/install-token/revoke', method: 'post', data: {} })
 export const policiesList = () => request({ url: '/nextec/policies' })
 export const policySave = (data) => request({ url: '/nextec/policies', method: 'post', data })

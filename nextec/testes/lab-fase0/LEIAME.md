@@ -19,4 +19,10 @@ python -I cenario-bug8.py <senha> api/rustdeskapi.db   # chave por subgrupo, pen
 
 O segundo argumento é opcional: com ele o cenário para o contêiner, vence a pendência de uma máquina no SQLite e reinicia. A
 versão do convite é publicada gravando o rollout direto em `api/nextec-settings.json`, porque a publicação real exige manifesto
-assinado pela Nextec. Resultado da última execução: 22 de 22.
+assinado pela Nextec. Resultado da última execução: 22 de 22. Bug 4: 15 de 15.
+
+## Bug 4 (patch 0047)
+
+```bash
+python -I cenario-bug4.py <senha>   # listas "Cliente: X" ao salvar/mover, troca de subgrupo, cliente novo, sem cliente, reconciliação
+```

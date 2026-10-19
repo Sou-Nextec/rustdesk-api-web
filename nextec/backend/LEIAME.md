@@ -382,3 +382,20 @@ Bug 8 do plano. Aplica depois do 0045.
 - Agente (repositório rdgen, `Provisionar-Agente-Nextec.ps1`): 409 e 403 não apagam `convite.json`; o motivo vai para
   `convite-resultado.json` e para o log (`invite_conflict`, `invite_rejected`); repete após 6 h, até 3 dias.
 - Testes: `service/nextec_bug8_test.go`.
+
+## Patch 0047: listas "Cliente: X" sincronizadas ao mover ou salvar dispositivo
+
+Bug 4 do plano. Aplica depois do 0046.
+
+- **Regra:** a lista de um cliente contém as máquinas dele e as de todos os subgrupos; a lista de um subgrupo contém as do subgrupo.
+  Ao mudar o grupo de uma máquina (`NextecSyncClientListsTx`, usa `nextecGroupChain`), ela sai das listas dos grupos que deixou
+  e entra nas dos novos. Trocar de subgrupo no mesmo cliente não mexe na lista do cliente. Só entram listas que já existem
+  (criar lista continua sendo decisão do admin em Acesso por cliente); vale para as listas de qualquer dono com o nome do grupo.
+- **Onde dispara:** `POST /admin/peer/update` (editar, mover e mover em lote, que o painel faz uma máquina por vez), atribuição por
+  chave de instalação, atribuição pendente aplicada no sysinfo e aprovação de dispositivo (`NextecEnrollAssign`). Auditoria `client_lists_sync`.
+- **Reconciliação:** `POST /admin/nextec/client-lists/sync {"collection_ids":[...]}` deixa cada lista igual ao grupo (inclui o que
+  falta, remove o que sobra e duplicatas). Só aceita listas "Cliente: X" cujo cliente existe. Auditoria `client_list_reconcile`.
+  Não há remoção ao apagar uma máquina: a próxima sincronização ou reconciliação limpa a entrada.
+- **Painel (Acesso por cliente):** a contagem e o "fora da lista" passam a incluir os subgrupos, aparece "N a mais" quando a lista
+  tem entradas que não deveriam estar, e Sincronizar chama a reconciliação (antes só incluía).
+- Testes: `service/nextec_client_lists_test.go`.
