@@ -360,3 +360,25 @@ Fase 0 e bugs 10 e 11 do plano "Nextec Connect: melhorias". Aplica depois do 004
 - **Painel:** "Bloquear" virou "Bloquear cadastro de senha desta máquina" (confirmação diz que vale só para o cofre de senhas),
   "Rejeitar solicitação" pede motivo e explica a carência, e a lista "Rejeitadas em carência" permite liberar.
 - Testes: `service/nextec_phase0_test.go` e ajustes em `nextec_enroll_test.go` e `http/controller/api/nextec_enroll_test.go`.
+
+## Patch 0046: chave por cliente com subgrupo, conflito explícito e resultado do convite
+
+Bug 8 do plano. Aplica depois do 0045.
+
+- **Relação entre grupos** (`nextecGroupRelationTx`, usa `nextecGroupChain`): `none` (sem grupo), `same`, `inside` (a máquina já está
+  num subgrupo do pedido), `refine` (a máquina está na raiz do cliente e o pedido é um subgrupo dele) e `other` (outro cliente).
+- **Chave de instalação por cliente** (`NextecAssignApplyInfo`, `POST /nextec/install/assign`): a chave de um subgrupo vale. Sem
+  grupo ou na raiz do cliente, a máquina vai para o grupo da chave; dentro do cliente ou em outro subgrupo, fica onde está; em
+  outro cliente, fica e a resposta traz `current_client`. Tudo auditado (`assign_install_key`, `assign_install_conflict`).
+- **Pendência de atribuição** (`NextecApplyPendingAssign`): o prazo (24 h) é conferido antes de qualquer mudança e a pendência só
+  some junto com a atribuição (mesma transação); vencida é descartada e auditada (`assign_pending_expired`, `assign_pending_applied`).
+- **Convite** (`POST /nextec/agent/invite`): a máquina na raiz do cliente do convite pode descer para o subgrupo; dentro do cliente
+  do convite não há conflito. Conflito real devolve `409 {"error":"client_conflict","current_client":"Cliente B"}`. O erro é
+  `NextecClientConflictError` (continua `errors.Is(err, ErrNextecClientConflict)`) e a tela de Senhas do servidor mostra o cliente atual.
+- **Resultado por máquina:** tabela `NextecInstallInviteTry` (uma linha por convite e máquina: `linked`, `conflict`, `identity`,
+  `invalid`, com detalhe e hora). `GET /nextec/invites` devolve `results` em cada convite. Auditoria: `invite_claim`,
+  `invite_conflict`, `invite_invalid`.
+- Painel: o diálogo de convites mostra "Instalações: 2 vinculadas, 1 com problema" e a lista por máquina.
+- Agente (repositório rdgen, `Provisionar-Agente-Nextec.ps1`): 409 e 403 não apagam `convite.json`; o motivo vai para
+  `convite-resultado.json` e para o log (`invite_conflict`, `invite_rejected`); repete após 6 h, até 3 dias.
+- Testes: `service/nextec_bug8_test.go`.

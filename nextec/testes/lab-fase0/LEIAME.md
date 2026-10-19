@@ -10,3 +10,13 @@ docker logs rdlab-fase0 | grep "Admin Password"      # senha do admin criada no 
 python -I cenario.py <senha>                         # painel em http://127.0.0.1:18114
 docker compose down                                  # e apague api/ e data/
 ```
+
+## Bug 8 (patch 0046)
+
+```bash
+python -I cenario-bug8.py <senha> api/rustdeskapi.db   # chave por subgrupo, pendência com prazo, convite com conflito
+```
+
+O segundo argumento é opcional: com ele o cenário para o contêiner, vence a pendência de uma máquina no SQLite e reinicia. A
+versão do convite é publicada gravando o rollout direto em `api/nextec-settings.json`, porque a publicação real exige manifesto
+assinado pela Nextec. Resultado da última execução: 22 de 22.

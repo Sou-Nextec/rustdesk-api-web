@@ -49,6 +49,10 @@
           <div class="nx-add-main">
             <strong>{{ r.alias || r.label }}</strong>
             <span class="nx-small nx-muted">{{ r.client_name }} · {{ r.kind === 'server' ? 'servidor' : 'estação' }} · {{ r.rule === 'peer' ? 'senha automática' : 'sem senha automática' }} · usos {{ r.uses }}/{{ r.max_uses }} · vale até {{ fmt(r.expires_at) }}</span>
+            <span v-if="r.results && r.results.length" class="nx-small nx-muted">Instalações: {{ resultSummary(r.results) }}</span>
+            <ul v-if="r.results && r.results.length" class="nx-add-results" aria-label="Resultado da instalação por máquina">
+              <li v-for="l in resultLines(r.results)" :key="l.key" :class="'nx-res-' + l.tone"><span class="nx-mono">{{ l.peer }}</span> {{ l.text }}</li>
+            </ul>
           </div>
           <el-tag size="small" :type="tone(r.status)" disable-transitions>{{ statusLabel(r.status) }}</el-tag>
           <div class="nx-add-actions">
@@ -67,6 +71,7 @@
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { invitesList, inviteCreate, inviteRevoke } from '@/nextec/api'
   import { inviteLink, inviteCommand, inviteMessage } from '@/nextec/invite-command.mjs'
+  import { inviteResultLines, inviteResultSummary } from '@/nextec/invite-result.mjs'
   import InviteOptions from '@/nextec/views/InviteOptions.vue'
   import { usePublicBase, publicBaseReady, loadPublicBase } from '@/nextec/public-base'
 
@@ -92,6 +97,8 @@
   const msgOf = (f) => inviteMessage({ origin: origin.value, code: f.code, label: f.label })
   const fmt = (ts) => new Date(ts * 1000).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
   const statusLabel = (s) => ({ active: 'Ativo', used: 'Usado', expired: 'Vencido', revoked: 'Cancelado' }[s] || s)
+  const resultLines = inviteResultLines
+  const resultSummary = inviteResultSummary
   const tone = (s) => ({ active: 'success', used: 'info', expired: 'info', revoked: 'info' }[s] || 'info')
 
   const load = async () => {
@@ -151,6 +158,13 @@
   .nx-add-invites li { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; padding: 10px 12px; border-radius: 12px; background: var(--nx-field); }
   .nx-add-main { flex: 1 1 260px; min-width: 0; display: grid; gap: 2px; strong { color: var(--nx-text); overflow-wrap: anywhere; } }
   .nx-small { font-size: 12px; }
+  .nx-add-results { list-style: none; margin: 4px 0 0; padding: 0; display: grid; gap: 2px; font-size: 12px; }
+  .nx-res-success { color: #1B6E3A; }
+  .nx-res-danger { color: #BA1A1A; }
+  .nx-res-warning { color: #8A5A00; }
+  html.dark .nx-res-success { color: #7FD99B; }
+  html.dark .nx-res-danger { color: #FF9C93; }
+  html.dark .nx-res-warning { color: #F2C26B; }
   .nx-muted { color: var(--nx-text-muted); }
   .nx-add-danger { color: #BA1A1A; }
   html.dark .nx-add-danger { color: #FF9C93; }
