@@ -26,7 +26,7 @@ test('a rota abre a tela dentro da proteção contra falha de renderização', (
 })
 
 test('normalizeOverview troca null, ausente e tipos errados por listas vazias e contadores', () => {
-  const vazio = { devices: [], policies: [], blocked: [], agentKeySet: false, pendingCount: 0, staleCount: 0 }
+  const vazio = { devices: [], policies: [], blocked: [], rejected: [], agentKeySet: false, pendingCount: 0, staleCount: 0 }
   for (const res of [null, undefined, false, {}, { data: null }, { data: {} }, { data: { devices: null, policies: null, blocked: null } },
     { data: { devices: 'x', policies: {}, blocked: 7, pending_count: 'abc', stale_count: -3 } }]) {
     assert.deepEqual(normalizeOverview(res), vazio)
@@ -52,4 +52,19 @@ test('normalizeGroups aceita lista nula ou ausente', () => {
   assert.deepEqual(normalizeGroups(null), [])
   assert.deepEqual(normalizeGroups({ data: { list: null } }), [])
   assert.deepEqual(normalizeGroups({ data: { list: [{ id: 1, name: 'A' }] } }), [{ id: 1, name: 'A' }])
+})
+
+test('normalizeOverview traz as rejeições em carência e ignora tipo errado', () => {
+  assert.deepEqual(normalizeOverview({ data: { rejected: [null, { peer_id: '5', reason: 'teste', until: 10 }] } }).rejected, [{ peer_id: '5', reason: 'teste', until: 10 }])
+  assert.deepEqual(normalizeOverview({ data: { rejected: 'x' } }).rejected, [])
+})
+
+test('Bloquear deixa claro o escopo e a rejeição pede motivo e explica a carência', () => {
+  const src = fs.readFileSync(path.join(views, 'SecretsPanel.vue'), 'utf8')
+  assert.match(src, /Bloquear cadastro de senha desta máquina/)
+  assert.match(src, /Rejeitar solicitação/)
+  assert.match(src, /carência/)
+  assert.match(src, /Nova após rejeição/)
+  assert.doesNotMatch(src, /<span class="nx-danger-text">Bloquear<\/span>/)
+  assert.match(fs.readFileSync(path.join(views, '../api.js'), 'utf8'), /secretsReject = \(id, block, uuid, reason\)/)
 })

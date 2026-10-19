@@ -336,3 +336,27 @@ ter o mesmo nome do app (o gerador pré-preenche os dois iguais); se forem difer
 - Cria `service/nextec_connect_app.go` e `service/nextec_connect_app_test.go`; o 0037 passa a chamar a função.
 - **Limpar o campo volta ao automático:** `NextecConnectSchemeSet("")` (0020) agora apaga a configuração em vez de gravar `rustdesk`;
   `GET/POST /nextec/connect-scheme` devolvem `scheme` (vazio = automático), `effective` e `source` (`manual`, `published` ou `default`).
+
+## Patch 0045: subgrupo por parent_id, Senhas do servidor com Peer e rejeição com carência
+
+Fase 0 e bugs 10 e 11 do plano "Nextec Connect: melhorias". Aplica depois do 0044, sobre `v2.6.29`.
+
+- **`parent_id` em `DeviceGroup`:** coluna nova (0 = cliente/raiz). A migração (`NextecBackfillGroupParents`, chamada na
+  inicialização, idempotente) liga os grupos "Cliente / Sub" ao grupo cujo nome é o prefixo (o maior prefixo existente vence;
+  sem pai com esse nome, continua raiz). O nome continua gravado como antes. `device_group/list` e `detail` devolvem `parent_id`
+  e `path` (raiz primeiro). `create` e `update` aceitam `parent_id` opcional (ausente: não mexe na edição e deriva do nome na
+  criação; recusa pai inexistente, o próprio grupo e ciclo). Apagar um cliente solta os subgrupos (viram raiz).
+- **`nextecGroupChain(groupId) []uint`** (`service/nextec_group.go`, exportada como `NextecGroupChain`): subgrupo primeiro, cliente
+  por último; protegida contra ciclo e profundidade. É a função única para política, visibilidade e senhas (itens 2 a 4 do plano).
+- **Bug 10, Senhas do servidor:** `NextecSecretDevices` sempre junta com `Peer` (apelido, hostname, `group_id`) em blocos de 400
+  ids (não estoura o limite de variáveis do SQLite nem esvazia a lista em silêncio; erro de leitura vai para o log) e acha o Peer
+  de IDs que a tabela guarda com espaço. A mesma fonte da listagem de Dispositivos.
+- **Bug 11, rejeitar não volta:** `NextecEnrollReject` (`peer_id`, `uuid`, `reason`, `rejected_at`, `until`, `count`). Rejeitar sem
+  bloquear grava a carência (168 h; `enroll_reject_grace_hours` em `nextec-settings.json`, 1 a 8760). Dentro dela o self-enroll do mesmo
+  ID+UUID responde `403 {"error":"rejected"}` (o agente trata 403 como bloqueio de 24 h e tenta de novo; o servidor segue recusando).
+  Outro UUID ou carência vencida abre solicitação nova, marcada `after_reject` ("Nova após rejeição"). `POST /nextec/secrets/reject`
+  aceita `reason` (até 255 caracteres, vai para a auditoria). `GET /nextec/secrets` ganhou `rejected` (carências vigentes) e, por
+  máquina, `after_reject`, `reject_reason`, `rejected_at`, `reject_count`. `POST /nextec/secrets/unblock` também encerra a carência.
+- **Painel:** "Bloquear" virou "Bloquear cadastro de senha desta máquina" (confirmação diz que vale só para o cofre de senhas),
+  "Rejeitar solicitação" pede motivo e explica a carência, e a lista "Rejeitadas em carência" permite liberar.
+- Testes: `service/nextec_phase0_test.go` e ajustes em `nextec_enroll_test.go` e `http/controller/api/nextec_enroll_test.go`.

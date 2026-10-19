@@ -96,6 +96,7 @@
           <template #default="{ row }">
             <div>{{ ago(row.enrolled_at) }}</div>
             <div class="nx-muted nx-small">{{ viaText[row.enrolled_via] || 'Inscrição global' }}</div>
+            <div v-if="row.after_reject" class="nx-muted nx-small nx-after-reject">Nova após rejeição{{ row.reject_reason ? ': ' + row.reject_reason : '' }}</div>
             <div class="nx-muted nx-small nx-next-check">{{ nextCheckText(row) }}</div>
           </template>
         </el-table-column>
@@ -105,11 +106,12 @@
             <el-button size="small" type="primary" class="nx-next" @click="onNext(row)">{{ nextStep(row, nowSec).label }}</el-button>
           </template>
         </el-table-column>
-        <el-table-column label="Ações" width="200" fixed="right">
+        <el-table-column label="Ações" width="230" fixed="right">
           <template #default="{ row }">
-            <div class="nx-row-actions">
-              <el-button size="small" @click="rejectRow(row, false)">Rejeitar</el-button>
-              <el-button size="small" @click="rejectRow(row, true)"><span class="nx-danger-text">Bloquear</span></el-button>
+            <div class="nx-row-actions nx-row-actions-stack">
+              <el-button size="small" @click="rejectRow(row, false)">Rejeitar solicitação</el-button>
+              <el-button size="small" @click="rejectRow(row, true)"
+                         title="Impede só o cadastro de senha desta máquina. Ela continua em Dispositivos e o acesso remoto não muda."><span class="nx-danger-text">Bloquear cadastro de senha desta máquina</span></el-button>
             </div>
           </template>
         </el-table-column>
@@ -124,6 +126,7 @@
         Elas continuam aqui até você atribuir, rejeitar ou bloquear. Só as inscrições novas exigem a credencial atual.
       </p>
       <div class="nx-foot">
+        <el-button text :disabled="!rejected.length" @click="rejectedDlg.visible = true">Rejeitadas em carência ({{ rejected.length }})</el-button>
         <el-button text :disabled="!blocked.length" @click="blockedDlg.visible = true">Bloqueadas ({{ blocked.length }})</el-button>
       </div>
     </div>
@@ -277,6 +280,21 @@
         <el-button type="danger" plain :loading="keyDlg.rotating" @click="rotateKey">Girar credencial</el-button>
         <el-button type="primary" @click="keyDlg.visible = false">Fechar</el-button>
       </template>
+    </el-dialog>
+
+    <!-- rejeitadas em carência -->
+    <el-dialog v-model="rejectedDlg.visible" class="nx-dlg" title="Solicitações rejeitadas em carência" width="min(640px, 92vw)">
+      <p class="nx-help nx-small">Enquanto durar a carência, a mesma máquina (mesmo ID e identidade) não abre nova solicitação. Se a identidade mudar, ela volta marcada como “Nova após rejeição”.</p>
+      <el-table :data="rejected" empty-text="Nenhuma solicitação em carência." aria-label="Solicitações rejeitadas em carência">
+        <el-table-column label="Máquina" min-width="130"><template #default="{ row }"><span class="nx-mono">{{ fmtId(row.peer_id) }}</span></template></el-table-column>
+        <el-table-column label="Rejeitada" min-width="120"><template #default="{ row }">{{ ago(row.rejected_at) }}<div v-if="row.count > 1" class="nx-muted nx-small">{{ row.count }} vezes</div></template></el-table-column>
+        <el-table-column label="Motivo" min-width="150"><template #default="{ row }">{{ row.reason || '-' }}</template></el-table-column>
+        <el-table-column label="Carência até" min-width="130"><template #default="{ row }">{{ untilText(row.until) }}</template></el-table-column>
+        <el-table-column label="" width="110">
+          <template #default="{ row }"><el-button size="small" @click="unblock(row)">Liberar</el-button></template>
+        </el-table-column>
+      </el-table>
+      <template #footer><el-button type="primary" @click="rejectedDlg.visible = false">Fechar</el-button></template>
     </el-dialog>
 
     <!-- bloqueadas -->
@@ -460,11 +478,13 @@
   const groups = ref([])
   const agentKeySet = ref(false)
   const blocked = ref([])
+  const rejected = ref([])
   const pendingCount = ref(0)
   const staleCount = ref(0)
   const loadError = ref(false)
   const loaded = ref(false)
   const blockedDlg = reactive({ visible: false })
+  const rejectedDlg = reactive({ visible: false })
   const tab = ref('machines')
   const viaText = { self: 'Inscrição global', bootstrap: 'Autorização individual', legacy: 'Chave do agente' }
 
@@ -502,6 +522,7 @@
       policies.value = n.policies
       agentKeySet.value = n.agentKeySet
       blocked.value = n.blocked
+      rejected.value = n.rejected
       pendingCount.value = n.pendingCount
       staleCount.value = n.staleCount
     }
@@ -777,21 +798,31 @@
       pick.error = friendlyError(e, 'Não foi possível salvar o cliente. Atualize a lista e tente de novo.')
     } finally { pick.loading = false }
   }
+  const untilText = (t) => (t ? new Date(Number(t) * 1000).toLocaleString('pt-BR') : '-')
   const rejectRow = async (row, block) => {
     const name = row.alias || row.hostname || fmtId(row.peer_id)
-    const text = block
-      ? `Bloquear ${name} impede que esta máquina se inscreva de novo (o ID e a identidade dela ficam na lista de bloqueadas). Você pode desbloquear depois.`
-      : `Rejeitar ${name} remove a inscrição. Se o instalador continuar nela, a máquina volta a aparecer aqui. Para impedir de vez, use Bloquear.`
-    const c = await ElMessageBox.confirm(text, block ? 'Bloquear máquina' : 'Rejeitar máquina',
-      { confirmButtonText: block ? 'Bloquear' : 'Rejeitar', cancelButtonText: 'Cancelar', type: 'warning' }).catch(() => false)
-    if (!c) return
-    if (await secretsReject(row.peer_id, block, row.uuid).catch(() => false)) {
-      ElMessage.success(block ? 'Máquina bloqueada.' : 'Inscrição rejeitada.')
+    let reason = ''
+    if (block) {
+      const text = `Bloquear o cadastro de senha de ${name}: o ID e a identidade dela ficam na lista de bloqueadas e a máquina não pede cadastro de novo. `
+        + 'Vale só para o cofre de senhas. A máquina continua em Dispositivos e o acesso remoto não muda. Você pode desbloquear depois.'
+      const c = await ElMessageBox.confirm(text, 'Bloquear cadastro de senha desta máquina',
+        { confirmButtonText: 'Bloquear cadastro', cancelButtonText: 'Cancelar', type: 'warning' }).catch(() => false)
+      if (!c) return
+    } else {
+      const text = `Rejeitar a solicitação de ${name} a remove da fila. O agente pode insistir, mas o servidor recusa a mesma máquina durante a carência `
+        + '(7 dias por padrão). Se a identidade dela mudar, a solicitação volta marcada como “Nova após rejeição”. Para liberar antes, use “Rejeitadas em carência”. Motivo (opcional):'
+      const r = await ElMessageBox.prompt(text, 'Rejeitar solicitação',
+        { confirmButtonText: 'Rejeitar', cancelButtonText: 'Cancelar', type: 'warning', inputPlaceholder: 'Ex.: máquina de teste do técnico', inputValidator: v => (!v || v.length <= 255) || 'No máximo 255 caracteres.' }).catch(() => false)
+      if (!r) return
+      reason = String(r.value || '').trim()
+    }
+    if (await secretsReject(row.peer_id, block, row.uuid, reason).catch(() => false)) {
+      ElMessage.success(block ? 'Cadastro de senha da máquina bloqueado.' : 'Solicitação rejeitada.')
       load()
     }
   }
   const unblock = async (row) => {
-    if (await secretsUnblock(row.peer_id, row.uuid).catch(() => false)) { ElMessage.success('Máquina desbloqueada.'); load() }
+    if (await secretsUnblock(row.peer_id, row.uuid).catch(() => false)) { ElMessage.success('Máquina liberada.'); load() }
   }
 
   // ---------- credencial de inscrição ----------
@@ -936,6 +967,8 @@
     &.is-off { background: #9A97AD; }
     &.is-warn { background: #9A5B00; box-shadow: 0 0 0 3px #FEF3C7; }
   }
+  .nx-row-actions-stack { flex-direction: column; align-items: stretch; .el-button { white-space: normal; height: auto; padding: 6px 8px; text-align: left; line-height: 1.3; } }
+  .nx-after-reject { color: var(--nx-warning, #b45309); }
   .nx-row-actions { display: flex; gap: 6px; flex-wrap: nowrap; justify-content: flex-end; .el-button { margin: 0 !important; } }
   .nx-status { cursor: default; outline-offset: 2px; }
   .nx-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

@@ -1,0 +1,21 @@
+# Cenário local da Fase 0 (derivado de implantacao-remoto/docker-compose.yml). Nunca produção:
+# imagem local, dados em ./api e ./data deste diretório, só a porta do painel em 127.0.0.1:18114, sem túnel.
+name: rdlab-fase0
+services:
+  rustdesk:
+    image: nextec/rustdesk-server-s6:fase0
+    container_name: rdlab-fase0
+    environment:
+      - TZ=America/Sao_Paulo
+      - RELAY=127.0.0.1:21117
+      - ENCRYPTED_ONLY=1
+      - MUST_LOGIN=N
+      - RUSTDESK_API_LANG=pt-BR
+      - RUSTDESK_API_RUSTDESK_ID_SERVER=127.0.0.1:21116
+      - RUSTDESK_API_RUSTDESK_RELAY_SERVER=127.0.0.1:21117
+      - RUSTDESK_API_RUSTDESK_API_SERVER=http://127.0.0.1:18114
+    ports:
+      - "127.0.0.1:18114:21114"
+    volumes:
+      - ./data:/data
+      - ./api:/app/data
