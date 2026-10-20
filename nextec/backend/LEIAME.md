@@ -464,3 +464,10 @@ Duas correções de revisão (P1), aplicam depois do 0051.
 
 - **"Sem senha automática" com regra herdada.** `NextecEnrollAssign` com `Rule: none` só criava a exceção desligada da máquina quando o próprio cliente tinha regra ligada; com regra global ou de cliente-pai a rotação continuava valendo. Agora vale a regra que a máquina herdaria (`nextecSecretEffectiveTx` sem a regra própria): se for ligada, grava a exceção desligada, que vence a herdada (origem `peer`). Também corrigido o GORM devolver o default (`true`) ao `Enabled: false` no `Create`, que desfazia a exceção quando a máquina ainda não tinha regra própria. Teste: `TestAssignNoneCreatesDisabledExceptionOverInheritedRule`.
 - **Mudar o pai de um subgrupo.** `device_group/update` com `parent_id` passa por `NextecGroupUpdateSync`: numa transação, grava o grupo e, para as máquinas da subárvore, tira das listas "Cliente: X" dos ancestrais antigos e coloca nas dos novos (só listas de dono administrador). Grava auditoria `client_lists_sync`. Teste: `TestClientListsFollowSubgroupReparent`.
+
+## Patch 0053: atribuição decide pela regra efetiva do escopo real da máquina
+
+Duas correções de revisão em `NextecEnrollAssign` (aplica depois do 0052).
+
+- **P1, "sem senha automática" em subgrupo.** A máquina que já está num subgrupo do cliente pedido fica onde está; a exceção desligada agora é decidida pela regra efetiva desse subgrupo (cadeia subgrupo > cliente > global, sem a regra própria da máquina), e não só pela do cliente pedido. O "Já tinha essa regra" e o resultado final também usam esse escopo. Testes: `TestAssignNoneUsesEffectiveRuleOfMachineSubgroup` (regra só no subgrupo e regra só no cliente).
+- **P2, aprovação não sobrepõe a herança.** "Seguir a regra do cliente" vale quando existe regra efetiva ligada herdada (cliente, ancestral, subgrupo ou global): nada é criado. Só sem nenhuma regra, e com `enable_group_rule`, a atribuição cria a regra do cliente (180 min por padrão). Teste: `TestAssignGroupFollowsInheritedRuleAndCreatesOnlyWhenNone` (global, cliente-pai, nenhuma).

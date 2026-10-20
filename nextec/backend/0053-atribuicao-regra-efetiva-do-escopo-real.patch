@@ -1,0 +1,148 @@
+diff --git a/service/nextec_enroll.go b/service/nextec_enroll.go
+index d632394..2329366 100644
+--- a/service/nextec_enroll.go
++++ b/service/nextec_enroll.go
+@@ -526,8 +526,16 @@ func NextecEnrollAssign(o NextecAssignOptions) (*NextecAssignResult, error) {
+ 			return &NextecClientConflictError{Current: nextecGroupPathTx(tx, peer.GroupId)}
+ 		}
+ 		clientRef := strconv.FormatUint(uint64(o.ClientID), 10)
+-		var groupRule model.NextecSecretPolicy
+-		groupRuleOn := tx.Where("kind = ? AND ref = ? AND enabled = ?", "group", clientRef, true).First(&groupRule).Error == nil
++		// Escopo real da máquina ao final: quem já está num subgrupo do cliente pedido fica onde está, então a regra que
++		// vale é a da cadeia desse subgrupo (subgrupo > cliente > global), não só a do cliente pedido.
++		scope := o.ClientID
++		if rel == nextecRelInside {
++			scope = peer.GroupId
++		}
++		// "Seguir a regra do cliente" vale quando existe regra efetiva ligada herdada no escopo (cliente, ancestral, subgrupo ou
++		// global, sem a regra própria da máquina). Só sem nenhuma é que a aprovação cria a regra do cliente.
++		inherited := nextecSecretEffectiveTx(tx, "", scope)
++		groupRuleOn := inherited.Origin != NextecOriginNone && inherited.Enabled
+ 		ruleEnabledNow := false
+ 		if o.Rule == "group" && !groupRuleOn {
+ 			if !o.EnableGroupRule {
+@@ -565,9 +573,9 @@ func NextecEnrollAssign(o NextecAssignOptions) (*NextecAssignResult, error) {
+ 		case "peer":
+ 			want = &model.NextecSecretPolicy{Kind: "peer", Ref: o.PeerID, Enabled: true, IntervalMinutes: interval}
+ 		case "none":
+-			// Vale o que a máquina herdaria (regra do cliente, de um cliente-pai ou a global, sem contar a própria): se herdar
+-			// uma regra ligada, "sem senha automática" precisa de uma exceção desligada explícita que vença a herdada.
+-			if inh := nextecSecretEffectiveTx(tx, "", o.ClientID); inh.Origin != NextecOriginNone && inh.Enabled {
++			// Vale o que a máquina herdaria no escopo real (ver scope acima): se herdar uma regra ligada,
++			// "sem senha automática" precisa de uma exceção desligada explícita que vença a herdada.
++			if groupRuleOn {
+ 				want = &model.NextecSecretPolicy{Kind: "peer", Ref: o.PeerID, Enabled: false, IntervalMinutes: NextecSecretDefaultInterval}
+ 			}
+ 		}
+@@ -575,7 +583,7 @@ func NextecEnrollAssign(o NextecAssignOptions) (*NextecAssignResult, error) {
+ 			(!want.Enabled || own.IntervalMinutes == want.IntervalMinutes))
+ 		sameClient := rel == nextecRelSame || rel == nextecRelInside
+ 		if !d.AwaitingApproval && sameClient && sameRule && !ruleEnabledNow {
+-			enabled, iv := effectivePolicyTx(tx, o.PeerID, o.ClientID)
++			enabled, iv := effectivePolicyTx(tx, o.PeerID, scope)
+ 			if !enabled {
+ 				iv = 0
+ 			}
+@@ -616,7 +624,7 @@ func NextecEnrollAssign(o NextecAssignOptions) (*NextecAssignResult, error) {
+ 				}
+ 			}
+ 		}
+-		enabled, iv := effectivePolicyTx(tx, o.PeerID, o.ClientID)
++		enabled, iv := effectivePolicyTx(tx, o.PeerID, scope)
+ 		if !enabled {
+ 			iv = 0
+ 		}
+diff --git a/service/nextec_enroll_review_test.go b/service/nextec_enroll_review_test.go
+index 1466209..3d946cc 100644
+--- a/service/nextec_enroll_review_test.go
++++ b/service/nextec_enroll_review_test.go
+@@ -484,3 +484,89 @@ func TestAssignNoneCreatesDisabledExceptionOverInheritedRule(t *testing.T) {
+ 		})
+ 	}
+ }
++
++func groupRulePolicy(db *gorm.DB, ref string) *model.NextecSecretPolicy {
++	p := &model.NextecSecretPolicy{}
++	if db.Where("kind = ? AND ref = ?", "group", ref).Limit(1).Find(p).Error != nil || p.Id == 0 {
++		return nil
++	}
++	return p
++}
++
++// Revisão (P1): a máquina fica no subgrupo; a exceção "sem senha automática" é decidida pela regra efetiva desse escopo.
++func TestAssignNoneUsesEffectiveRuleOfMachineSubgroup(t *testing.T) {
++	cases := []struct {
++		name  string
++		setup func(t *testing.T)
++	}{
++		{"regra só no subgrupo", func(t *testing.T) { secretRule(t, "group", "9", true, 45, nil) }},
++		{"regra só no cliente", func(t *testing.T) { secretRule(t, "group", "7", true, 60, nil) }},
++	}
++	for i, tc := range cases {
++		t.Run(tc.name, func(t *testing.T) {
++			db, _ := enrollPending(t, "10.30.2."+string(rune('1'+i)))
++			bug8Groups(t, db)
++			setPeerGroup(t, db, 9) // a máquina já está no subgrupo Filial do Cliente A
++			tc.setup(t)
++			if r := NextecSecretEffective(enrollPeer, 9); !r.Enabled {
++				t.Fatalf("pré-condição: regra herdada ligada: %#v", r)
++			}
++			res, err := NextecEnrollAssign(NextecAssignOptions{PeerID: enrollPeer, ClientID: 7, Rule: "none"})
++			if err != nil || res.Managed || res.Interval != 0 {
++				t.Fatalf("assign none: %#v %v", res, err)
++			}
++			if got := peerGroupOf(t, db); got != 9 {
++				t.Fatalf("a máquina deveria ficar no subgrupo: %d", got)
++			}
++			r := NextecSecretEffective(enrollPeer, 9)
++			if r.Enabled || r.Origin != NextecOriginPeer {
++				t.Fatalf("regra efetiva deveria ser desligada, origem exceção: %#v", r)
++			}
++			if p := peerPolicy(db, enrollPeer); p == nil || p.Enabled {
++				t.Fatalf("faltou a exceção desligada: %#v", p)
++			}
++			if d := deviceRow(t, db, enrollPeer); d.ForceRotate {
++				t.Fatal("none não pode armar troca")
++			}
++		})
++	}
++}
++
++// Revisão (P2): ao aprovar seguindo a regra do cliente, regra herdada manda; só sem nenhuma é que se cria a do cliente.
++func TestAssignGroupFollowsInheritedRuleAndCreatesOnlyWhenNone(t *testing.T) {
++	t.Run("global", func(t *testing.T) {
++		db, _ := enrollPending(t, "10.30.3.1")
++		bug8Groups(t, db)
++		secretRule(t, NextecKindGlobal, NextecGlobalRef, true, 120, nil)
++		res, err := NextecEnrollAssign(NextecAssignOptions{PeerID: enrollPeer, ClientID: 7, Rule: "group", EnableGroupRule: true})
++		if err != nil || !res.Managed || res.Interval != 120 || res.GroupRuleEnabled {
++			t.Fatalf("assign group com global: %#v %v", res, err)
++		}
++		if groupRulePolicy(db, "7") != nil || peerPolicy(db, enrollPeer) != nil {
++			t.Fatal("a aprovação criou regra própria por cima da herdada")
++		}
++	})
++	t.Run("cliente-pai", func(t *testing.T) {
++		db, _ := enrollPending(t, "10.30.3.2")
++		bug8Groups(t, db)
++		secretRule(t, "group", "7", true, 60, nil)
++		res, err := NextecEnrollAssign(NextecAssignOptions{PeerID: enrollPeer, ClientID: 9, Rule: "group", EnableGroupRule: true})
++		if err != nil || !res.Managed || res.Interval != 60 || res.GroupRuleEnabled {
++			t.Fatalf("assign group no subgrupo: %#v %v", res, err)
++		}
++		if groupRulePolicy(db, "9") != nil || peerPolicy(db, enrollPeer) != nil {
++			t.Fatal("a aprovação criou regra no subgrupo ou na máquina por cima da do cliente-pai")
++		}
++	})
++	t.Run("nenhuma", func(t *testing.T) {
++		db, _ := enrollPending(t, "10.30.3.3")
++		bug8Groups(t, db)
++		res, err := NextecEnrollAssign(NextecAssignOptions{PeerID: enrollPeer, ClientID: 7, Rule: "group", EnableGroupRule: true})
++		if err != nil || !res.Managed || res.Interval != NextecSecretDefaultInterval || !res.GroupRuleEnabled {
++			t.Fatalf("assign group sem regra: %#v %v", res, err)
++		}
++		if p := groupRulePolicy(db, "7"); p == nil || !p.Enabled {
++			t.Fatalf("sem regra nenhuma, a regra do cliente deveria ser criada: %#v", p)
++		}
++	})
++}
