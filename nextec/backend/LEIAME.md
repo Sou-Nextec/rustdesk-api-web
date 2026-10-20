@@ -453,3 +453,7 @@ Isolamento: as telas são só de admin; uma pessoa só enxerga o que as regras d
 
 Limitação conhecida: a busca `q` do servidor não ignora acentos (o `lower()` do SQLite só entende ASCII). Quem digita "joao" não acha "João"; digite com o acento.
 
+
+## Patch 0051: listas "Cliente: X" sincronizadas só de administrador
+
+Correção de revisão (P1). A sincronização do patch 0047 achava a coleção só pelo nome "Cliente: <grupo>", sem olhar o dono. Um usuário comum que criasse uma coleção pessoal com esse nome recebia e perdia entradas (IDs, hostnames, apelidos, usernames). Agora `nextecClientListsFor` só considera coleções cujo dono é administrador, e `NextecReconcileClientList` recusa lista de dono comum. Teste: `TestClientListsIgnoreNonAdminCollectionWithSameName`. O patch altera `service/nextec_client_lists.go` e os testes; aplica depois do 0050.

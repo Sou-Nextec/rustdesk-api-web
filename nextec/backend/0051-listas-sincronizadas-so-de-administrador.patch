@@ -1,0 +1,149 @@
+diff --git a/service/nextec_client_lists.go b/service/nextec_client_lists.go
+index 711f973..be1c894 100644
+--- a/service/nextec_client_lists.go
++++ b/service/nextec_client_lists.go
+@@ -15,16 +15,28 @@ import (
+ // do admin na tela Acesso por cliente).
+ const NextecClientListPrefix = "Cliente: "
+ 
+-// nextecClientListsFor devolve as listas (de qualquer dono) que acompanham o grupo, comparando o nome sem diferenciar caixa.
++// nextecAdminIDs lista os donos que podem ter listas sincronizadas. Só lista de administrador acompanha o cliente:
++// um usuário comum que crie uma coleção pessoal chamada "Cliente: X" não recebe nem perde entradas.
++func nextecAdminIDs(tx *gorm.DB) []uint {
++	var ids []uint
++	tx.Model(&model.User{}).Where("is_admin = ?", true).Pluck("id", &ids)
++	return ids
++}
++
++// nextecClientListsFor devolve as listas de administrador que acompanham o grupo, comparando o nome sem diferenciar caixa.
+ func nextecClientListsFor(tx *gorm.DB, groupIDs []uint) []uint {
+ 	out := []uint{}
++	admins := nextecAdminIDs(tx)
++	if len(admins) == 0 {
++		return out
++	}
+ 	for _, gid := range groupIDs {
+ 		var g model.DeviceGroup
+ 		if tx.Select("id", "name").Where("id = ?", gid).Limit(1).Find(&g).Error != nil || g.Id == 0 {
+ 			continue
+ 		}
+ 		var cols []model.AddressBookCollection
+-		tx.Select("id").Where("lower(name) = ?", strings.ToLower(NextecClientListPrefix+g.Name)).Find(&cols)
++		tx.Select("id").Where("lower(name) = ? AND user_id IN ?", strings.ToLower(NextecClientListPrefix+g.Name), admins).Find(&cols)
+ 		for _, c := range cols {
+ 			out = append(out, c.Id)
+ 		}
+@@ -165,6 +177,11 @@ func NextecReconcileClientList(u *model.User, ip string, collectionID uint) (*Ne
+ 		if !strings.HasPrefix(strings.ToLower(col.Name), strings.ToLower(NextecClientListPrefix)) {
+ 			return errors.New("a lista não é de um cliente")
+ 		}
++		var owner int64
++		tx.Model(&model.User{}).Where("id = ? AND is_admin = ?", col.UserId, true).Count(&owner)
++		if owner == 0 {
++			return errors.New("a lista não pertence a um administrador")
++		}
+ 		res.Name = col.Name
+ 		want := strings.ToLower(strings.TrimPrefix(col.Name, col.Name[:len(NextecClientListPrefix)]))
+ 		var g model.DeviceGroup
+diff --git a/service/nextec_client_lists_test.go b/service/nextec_client_lists_test.go
+index 0735bce..bad28df 100644
+--- a/service/nextec_client_lists_test.go
++++ b/service/nextec_client_lists_test.go
+@@ -12,9 +12,12 @@ func listsSetup(t *testing.T) (*gorm.DB, map[string]uint) {
+ 	t.Helper()
+ 	db := enrollSetup(t)
+ 	bug8Groups(t, db)
+-	if err := db.AutoMigrate(&model.AddressBook{}, &model.AddressBookCollection{}); err != nil {
++	if err := db.AutoMigrate(&model.AddressBook{}, &model.AddressBookCollection{}, &model.User{}); err != nil {
+ 		t.Fatal(err)
+ 	}
++	yes := true
++	db.Create(&model.User{IdModel: model.IdModel{Id: 1}, Username: "admin", IsAdmin: &yes})
++	db.Create(&model.User{IdModel: model.IdModel{Id: 2}, Username: "comum"})
+ 	cols := map[string]uint{}
+ 	for _, c := range []struct{ key, name string }{
+ 		{"A", "Cliente: Cliente A"}, {"F", "Cliente: Cliente A / Filial"}, {"L", "Cliente: Cliente A / Loja"}, {"B", "Cliente: Cliente B"},
+@@ -77,9 +80,11 @@ func TestClientListsFollowMachineAcrossClientsAndSubgroups(t *testing.T) {
+ 	}
+ }
+ 
+-func TestClientListsKeepOtherMachinesAndOtherOwners(t *testing.T) {
++func TestClientListsKeepOtherMachinesAndOtherAdminOwners(t *testing.T) {
+ 	db, c := listsSetup(t)
+-	other := &model.AddressBookCollection{UserId: 2, Name: "cliente: cliente a"}
++	yes := true
++	db.Create(&model.User{IdModel: model.IdModel{Id: 3}, Username: "admin2", IsAdmin: &yes})
++	other := &model.AddressBookCollection{UserId: 3, Name: "cliente: cliente a"}
+ 	db.Create(other)
+ 	db.Create(&model.Peer{Id: "999000111", Uuid: "u-other", GroupId: 7})
+ 	db.Create(&model.AddressBook{Id: "999000111", UserId: 1, CollectionId: c["A"]})
+@@ -88,7 +93,7 @@ func TestClientListsKeepOtherMachinesAndOtherOwners(t *testing.T) {
+ 		t.Fatal(err)
+ 	}
+ 	if !inList(db, other.Id, enrollPeer) {
+-		t.Fatal("lista de outro dono com o mesmo nome (caixa diferente) também acompanha o cliente")
++		t.Fatal("lista de outro administrador com o mesmo nome (caixa diferente) também acompanha o cliente")
+ 	}
+ 	if !inList(db, c["A"], "999000111") {
+ 		t.Fatal("outra máquina do cliente foi mexida")
+@@ -138,3 +143,35 @@ func TestReconcileClientListAddsMissingAndRemovesStale(t *testing.T) {
+ 		t.Fatalf("auditoria: %d", bug8Audit(db, "client_list_reconcile"))
+ 	}
+ }
++
++// Achado do Codex (P1): usuário comum com coleção pessoal "Cliente: X" não pode receber nem perder entradas, nem ser reconciliada.
++func TestClientListsIgnoreNonAdminCollectionWithSameName(t *testing.T) {
++	db, c := listsSetup(t)
++	mine := &model.AddressBookCollection{UserId: 2, Name: "Cliente: Cliente A"}
++	db.Create(mine)
++	db.Create(&model.AddressBook{Id: "555000111", UserId: 2, CollectionId: mine.Id, Alias: "meu"})
++	setPeerGroup(t, db, 9)
++	if err := NextecSyncClientLists(nil, "", enrollPeer, 0, 9); err != nil {
++		t.Fatal(err)
++	}
++	if inList(db, mine.Id, enrollPeer) {
++		t.Fatal("a máquina vazou para a coleção pessoal de um usuário comum")
++	}
++	if !inList(db, c["A"], enrollPeer) {
++		t.Fatal("a lista do administrador deixou de acompanhar o cliente")
++	}
++	setPeerGroup(t, db, 8)
++	if err := NextecSyncClientLists(nil, "", enrollPeer, 9, 8); err != nil {
++		t.Fatal(err)
++	}
++	if !inList(db, mine.Id, "555000111") {
++		t.Fatal("entrada da coleção pessoal foi apagada pela sincronização")
++	}
++	admin := &model.User{IdModel: model.IdModel{Id: 1}, Username: "admin"}
++	if _, err := NextecReconcileClientList(admin, "x", mine.Id); err == nil {
++		t.Fatal("reconciliar coleção de usuário comum deveria ser recusado")
++	}
++	if !inList(db, mine.Id, "555000111") {
++		t.Fatal("a reconciliação mexeu na coleção pessoal")
++	}
++}
+diff --git a/service/nextec_devices_test.go b/service/nextec_devices_test.go
+index f5ffdb6..5ddde90 100644
+--- a/service/nextec_devices_test.go
++++ b/service/nextec_devices_test.go
+@@ -196,9 +196,9 @@ func TestDevicesMoveBatchKeepsListsAndAudits(t *testing.T) {
+ func TestAccessGrantClientTeamAndMachine(t *testing.T) {
+ 	db, _ := devicesSetup(t)
+ 	db.Where("1 = 1").Delete(&model.Peer{})
+-	admin := &model.User{IdModel: model.IdModel{Id: 1}, Username: "admin"}
++	admin := &model.User{}
++	db.First(admin, 1)
+ 	team := &model.Group{Name: "Suporte N1", Type: 1}
+-	db.Create(admin)
+ 	db.Create(team)
+ 	ana := &model.User{Username: "ana", GroupId: team.Id}
+ 	bia := &model.User{Username: "bia"}
+@@ -303,7 +303,7 @@ func TestAccessGrantClientTeamAndMachine(t *testing.T) {
+ 	}
+ 	// o resumo de todas as pessoas
+ 	users := NextecAccessUsers()
+-	if len(users) != 3 {
++	if len(users) != 4 { // admin, comum (setup das listas), ana e bia
+ 		t.Fatalf("resumo: %d pessoas", len(users))
+ 	}
+ }
