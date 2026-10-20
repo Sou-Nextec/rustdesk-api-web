@@ -395,7 +395,11 @@
       devicesTree().catch(() => false),
     ])
     if (g) groups.value = g.data.list || []
-    if (t) tree.value = t.data
+    if (t) {
+      // o servidor pode devolver vazio ou sem algum campo: a árvore sempre tem a forma esperada
+      const d = t.data || {}
+      tree.value = { nodes: Array.isArray(d.nodes) ? d.nodes : [], no_client: Number(d.no_client) || 0, all: Number(d.all) || 0, online: Number(d.online) || 0 }
+    }
     normalizeClientFilter()
     await fetchPage()
   }
