@@ -269,6 +269,8 @@
   "NxHintLoginLog": { "One": "Histórico de logins no painel e no app RustDesk." },
   "NxHintAuditConn": { "One": "Histórico das conexões remotas entre dispositivos." },
   "NxHintAuditFile": { "One": "Histórico das transferências de arquivos feitas durante os acessos." },
+  "NxAccessUsers": { "One": "Usuários e permissões" },
+  "NxHintNxAccessUsers": { "One": "Veja o que cada pessoa enxerga: clientes, subgrupos e máquinas avulsas, e se o acesso vem direto ou pela equipe." },
   "NxClientAccess": { "One": "Permissões por cliente" },
   "NxHintNxClientAccess": { "One": "Escolha quais equipes e pessoas enxergam os dispositivos de cada cliente no app RustDesk." },
   "NxHelpNxClientAccess": { "One": "Para cada cliente, o painel mantém uma lista de endereços chamada \"Cliente: nome do cliente\" com todos os dispositivos dele, e compartilha essa lista só com as equipes e pessoas escolhidas em Definir acesso. No app RustDesk, cada técnico vê na aba Lista de endereços apenas os clientes liberados para ele.\n\nSubgrupos separam máquinas que pedem acesso mais restrito, como Servidores ou Diretoria. Crie em Mais ações > Novo subgrupo, mova as máquinas em Dispositivos (campo Cliente) e defina quem acessa o subgrupo. Quem acessa o cliente não vê o subgrupo automaticamente.\n\nDispositivo novo entra na lista ao salvar o acesso ou em Sincronizar. A coluna Lista no app avisa quando há dispositivos fora da lista.\n\nIsso controla quem vê os dispositivos. Quem conhece o ID e a senha de uma máquina ainda consegue conectar por fora; por isso use senha permanente forte e guarde a senha só nas listas." },

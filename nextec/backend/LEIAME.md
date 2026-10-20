@@ -435,3 +435,21 @@ Item 6 do plano. Aplica depois do 0047.
 - **Auditoria:** alterações de regra de senha (`policy_set`/`policy_remove`) e de política do app (`app_policy_set`/`app_policy_remove`)
   gravam o texto de antes e depois.
 - Testes: `service/nextec_inherit_test.go` (precedência e origem, validação do `auto_approve`, aprovação automática, lista de senhas e escopos).
+
+## Patch 0050: dispositivos paginados no servidor, árvore de clientes, troca em lote e acesso por equipe e pessoa
+
+Arquivos novos: `service/nextec_devices.go`, `service/nextec_access.go`, `http/controller/admin/nextec_devices.go` (somente admin) e testes em `service/nextec_devices_test.go`. Rotas em `/api/admin/nextec`:
+
+| Rota | O que faz |
+|---|---|
+| `GET /devices` | Uma página filtrada. Parâmetros: `page`, `page_size` (1 a 200, padrão 20), `q`, `client_id` (cliente com todos os subgrupos, ou o subgrupo e os níveis abaixo), `sub_id` (só as máquinas diretas daquele grupo), `no_client=1`, `status=online\|offline` (online = visto há menos de 60 s), `ids` (favoritos, até 500), `sort=online\|recent\|client\|name`. Devolve `list`, `total` e `online` do filtro inteiro. |
+| `GET /devices/tree` | Clientes e subgrupos com total e online, mais `no_client` e `all`, sem trazer máquinas. |
+| `POST /devices/move` | `{row_ids, group_id}` (0 = sem cliente). Uma transação: ou move todas ou nenhuma, até 500 por chamada. Ajusta as listas "Cliente: X" (sai da antiga, entra na nova) e grava auditoria `device_move` com origem, destino e quantidade. |
+| `POST /access/grant` | Concede, altera ou tira acesso de uma equipe (`target_type` 2) ou pessoa (1) a um cliente ou subgrupo (`scope` `client` + `group_id`) ou a uma máquina avulsa (`scope` `machine` + `peer_id`, cria a lista "Máquina: nome (id)" só com ela). `rule` 1 ver, 2 controle total. Idempotente: devolve `changed` falso quando já estava assim. |
+| `GET /access/users`, `GET /access/user?user_id=` | Resumo por pessoa e acesso efetivo com a origem (`direto`, `equipe` ou `direto e equipe`) e a contagem de máquinas. |
+| `GET /access/team?team_id=` | O que uma equipe acessa. |
+
+Isolamento: as telas são só de admin; uma pessoa só enxerga o que as regras das listas dela e da equipe dela liberam, e o acesso efetivo soma as duas origens (a regra de equipe 0 não vale para quem não tem equipe).
+
+Limitação conhecida: a busca `q` do servidor não ignora acentos (o `lower()` do SQLite só entende ASCII). Quem digita "joao" não acha "João"; digite com o acento.
+

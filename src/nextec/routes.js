@@ -9,7 +9,7 @@ const layout = () => import('@/layout/index.vue')
 // nome da rota filha -> grupo do menu
 const GROUPS = [
   { name: 'NxGroupDevices', title: 'NxGroupDevices', icon: 'Monitor', children: ['Peer', 'DeviceGroup', 'NxSupport', 'NxGenerator', 'NxUpdates'] },
-  { name: 'NxGroupPeople', title: 'NxGroupPeople', icon: 'UserFilled', children: ['UserList', 'UserAdd', 'UserEdit', 'UserGroup'] },
+  { name: 'NxGroupPeople', title: 'NxGroupPeople', icon: 'UserFilled', children: ['UserList', 'UserAdd', 'UserEdit', 'UserGroup', 'NxAccessUsers'] },
   // quem acessa o quê: permissões por cliente e as listas que aparecem no app RustDesk
   { name: 'NxGroupAddressBook', title: 'NxGroupAddressBook', icon: 'Key', children: ['NxClientAccess', 'UserAddressBookName', 'UserAddressBook', 'UserTag'] },
   { name: 'NxGroupAccess', title: 'NxGroupAccess', icon: 'Lock', children: ['NxSecrets', 'NxPolicies', 'NxSessions', 'Oauth', 'UserToken', 'ShareRecord'] },
@@ -27,6 +27,13 @@ export function applyNextecRoutes () {
     name: 'NxClientAccess',
     meta: { title: 'NxClientAccess', icon: 'Share' },
     component: () => import('./views/ClientAccess.vue'),
+  })
+  // Usuários e Permissões: acesso efetivo de cada pessoa (clientes e máquinas avulsas) com a origem (só admin; patch 0050)
+  system.children.push({
+    path: '/user/access',
+    name: 'NxAccessUsers',
+    meta: { title: 'NxAccessUsers', icon: 'UserFilled' },
+    component: () => import('./views/AccessUsers.vue'),
   })
   // Senhas dos servidores: cofre com troca automática da senha do RustDesk (só admin; patch 0008 da API)
   system.children.push({

@@ -38,3 +38,11 @@ python -I cenario-item6.py <senha> api/rustdeskapi.db   # nome fixo do MSI, suge
 ```bash
 python -I cenario-item23.py <senha>   # global > cliente > subgrupo > máquina, origem, aprovação automática, isolamento e auditoria
 ```
+
+## Itens 5, 1 e 9 (patch 0050)
+
+```bash
+python -I cenario-item5-1-9.py <senha>   # lista paginada, filtros, árvore, troca em lote atômica, acesso por equipe e pessoa, máquina avulsa, isolamento e auditoria
+```
+
+Rode em laboratório novo (o cenário cria usuários e equipe fixos). Verificação visual no navegador: Dispositivos (árvore, paginação), Equipes (botão Acesso) e Usuários e permissões.

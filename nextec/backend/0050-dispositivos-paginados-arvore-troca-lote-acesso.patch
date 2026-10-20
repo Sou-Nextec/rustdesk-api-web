@@ -1,0 +1,1118 @@
+diff --git a/http/controller/admin/nextec_devices.go b/http/controller/admin/nextec_devices.go
+new file mode 100644
+index 0000000..ee276f3
+--- /dev/null
++++ b/http/controller/admin/nextec_devices.go
+@@ -0,0 +1,126 @@
++package admin
++
++import (
++	"strconv"
++
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/http/response"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++)
++
++// NextecDevices: lista de dispositivos paginada no servidor, árvore de clientes e troca em lote (somente admin).
++type NextecDevices struct{}
++
++func qUint(c *gin.Context, key string) uint {
++	v, _ := strconv.ParseUint(c.Query(key), 10, 32)
++	return uint(v)
++}
++
++// List devolve uma página filtrada: ?page=&page_size=&q=&client_id=&sub_id=&no_client=1&status=online|offline&ids=&sort=online|recent|client|name
++// @Router /admin/nextec/devices [get]
++func (n *NextecDevices) List(c *gin.Context) {
++	q := &service.NextecDeviceQuery{
++		Page: qUint(c, "page"), PageSize: qUint(c, "page_size"), Q: c.Query("q"),
++		ClientID: qUint(c, "client_id"), SubID: qUint(c, "sub_id"), NoClient: c.Query("no_client") == "1",
++		Status: c.Query("status"), Sort: c.Query("sort"), Ids: c.Query("ids"),
++	}
++	if len(q.Q) > 100 {
++		q.Q = q.Q[:100]
++	}
++	res, err := service.NextecDevicesList(q)
++	if err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
++		return
++	}
++	response.Success(c, res)
++}
++
++// Tree devolve clientes e subgrupos com a contagem de máquinas e de online (sem trazer as máquinas)
++// @Router /admin/nextec/devices/tree [get]
++func (n *NextecDevices) Tree(c *gin.Context) {
++	res, err := service.NextecDevicesTree()
++	if err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
++		return
++	}
++	response.Success(c, res)
++}
++
++type nextecMoveForm struct {
++	RowIds  []uint `json:"row_ids" binding:"required"`
++	GroupId uint   `json:"group_id"` // 0 = sem cliente
++}
++
++// Move muda várias máquinas de cliente/subgrupo em uma chamada só
++// @Router /admin/nextec/devices/move [post]
++func (n *NextecDevices) Move(c *gin.Context) {
++	f := &nextecMoveForm{}
++	if err := c.ShouldBindJSON(f); err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError")+err.Error())
++		return
++	}
++	res, err := service.NextecDevicesMove(service.AllService.UserService.CurUser(c), nextecIP(c), f.RowIds, f.GroupId)
++	if err != nil {
++		response.Fail(c, 101, err.Error())
++		return
++	}
++	response.Success(c, res)
++}
++
++// ---------- acesso por equipe e pessoa ----------
++
++type nextecGrantForm struct {
++	TargetType int    `json:"target_type" binding:"required"` // 1 pessoa, 2 equipe
++	TargetId   uint   `json:"target_id" binding:"required"`
++	Scope      string `json:"scope" binding:"required"` // client | machine
++	GroupId    uint   `json:"group_id"`
++	PeerId     string `json:"peer_id"`
++	Rule       int    `json:"rule"`
++	Remove     bool   `json:"remove"`
++}
++
++// AccessGrant concede, altera ou tira o acesso de uma equipe/pessoa a um cliente ou a uma máquina avulsa
++// @Router /admin/nextec/access/grant [post]
++func (n *NextecDevices) AccessGrant(c *gin.Context) {
++	f := &nextecGrantForm{}
++	if err := c.ShouldBindJSON(f); err != nil {
++		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError")+err.Error())
++		return
++	}
++	res, err := service.NextecAccessGrant(service.AllService.UserService.CurUser(c), nextecIP(c), &service.NextecAccessGrantReq{
++		TargetType: f.TargetType, TargetID: f.TargetId, Scope: f.Scope, GroupID: f.GroupId, PeerID: f.PeerId, Rule: f.Rule, Remove: f.Remove,
++	})
++	if err != nil {
++		response.Fail(c, 101, err.Error())
++		return
++	}
++	response.Success(c, res)
++}
++
++// AccessUsers resume o acesso de cada pessoa
++// @Router /admin/nextec/access/users [get]
++func (n *NextecDevices) AccessUsers(c *gin.Context) {
++	response.Success(c, &gin.H{"list": service.NextecAccessUsers()})
++}
++
++// AccessUser devolve o acesso efetivo de uma pessoa, com a origem de cada item
++// @Router /admin/nextec/access/user [get]
++func (n *NextecDevices) AccessUser(c *gin.Context) {
++	res, err := service.NextecAccessOfUser(qUint(c, "user_id"))
++	if err != nil {
++		response.Fail(c, 101, err.Error())
++		return
++	}
++	response.Success(c, res)
++}
++
++// AccessTeam devolve o que uma equipe acessa (clientes e máquinas avulsas)
++// @Router /admin/nextec/access/team [get]
++func (n *NextecDevices) AccessTeam(c *gin.Context) {
++	res, err := service.NextecAccessOfTeam(qUint(c, "team_id"))
++	if err != nil {
++		response.Fail(c, 101, err.Error())
++		return
++	}
++	response.Success(c, res)
++}
+diff --git a/http/router/admin.go b/http/router/admin.go
+index b9c8aa0..c642a22 100644
+--- a/http/router/admin.go
++++ b/http/router/admin.go
+@@ -87,6 +87,15 @@ func NextecBind(adg *gin.RouterGroup) {
+ 	rg.POST("/enroll-key/rotate", enr.Rotate)
+ 	rg.GET("/secrets/audit", sec.Audit)
+ 
++	dev := &admin.NextecDevices{}
++	rg.GET("/devices", dev.List)
++	rg.GET("/devices/tree", dev.Tree)
++	rg.POST("/devices/move", dev.Move)
++	rg.POST("/access/grant", dev.AccessGrant)
++	rg.GET("/access/users", dev.AccessUsers)
++	rg.GET("/access/user", dev.AccessUser)
++	rg.GET("/access/team", dev.AccessTeam)
++
+ 	upd := &admin.NextecUpdate{}
+ 	rg.GET("/updates", upd.Overview)
+ 	rg.POST("/updates/upload", upd.Upload)
+diff --git a/service/nextec_access.go b/service/nextec_access.go
+new file mode 100644
+index 0000000..5fce471
+--- /dev/null
++++ b/service/nextec_access.go
+@@ -0,0 +1,365 @@
++package service
++
++import (
++	"errors"
++	"fmt"
++	"sort"
++	"strings"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"gorm.io/gorm"
++)
++
++// Acesso por equipe ou pessoa a clientes (listas "Cliente: X") e a máquinas avulsas (listas "Máquina: nome (id)").
++// As mesmas regras da tela Acesso dos clientes: a lista pertence ao admin que concede, e a regra liga a lista à equipe
++// (type 2) ou à pessoa (type 1). O acesso de uma pessoa é a soma da regra dela com a da equipe dela.
++
++const (
++	NextecMachineListPrefix = "Máquina: "
++	nextecScopeClient       = "client"
++	nextecScopeMachine      = "machine"
++)
++
++type NextecAccessGrantReq struct {
++	TargetType int    // 1 = pessoa, 2 = equipe
++	TargetID   uint   //
++	Scope      string // client | machine
++	GroupID    uint   // cliente ou subgrupo (scope client)
++	PeerID     string // máquina (scope machine)
++	Rule       int    // 1 = só ver, 2 = ver e editar
++	Remove     bool   // tira o acesso
++}
++
++type NextecAccessGrantResult struct {
++	CollectionID uint   `json:"collection_id"`
++	Name         string `json:"name"`
++	Created      bool   `json:"created"`
++	Changed      bool   `json:"changed"` // false = já estava assim
++}
++
++func nextecTargetName(tx *gorm.DB, typ int, id uint) (string, error) {
++	switch typ {
++	case model.ShareAddressBookRuleTypePersonal:
++		var u model.User
++		if tx.Where("id = ?", id).Limit(1).Find(&u).Error != nil || u.Id == 0 {
++			return "", errors.New("pessoa não encontrada")
++		}
++		return u.Username, nil
++	case model.ShareAddressBookRuleTypeGroup:
++		var g model.Group
++		if tx.Where("id = ?", id).Limit(1).Find(&g).Error != nil || g.Id == 0 {
++			return "", errors.New("equipe não encontrada")
++		}
++		return g.Name, nil
++	}
++	return "", errors.New("tipo de destino inválido")
++}
++
++func nextecMachineLabel(p *model.Peer) string {
++	label := p.Alias
++	if label == "" {
++		label = p.Hostname
++	}
++	if label == "" {
++		label = p.Id
++	}
++	return fmt.Sprintf("%s%s (%s)", NextecMachineListPrefix, label, p.Id)
++}
++
++// nextecFindMachineList acha a lista avulsa da máquina (nome termina com "(id)") do mesmo dono.
++func nextecFindMachineList(tx *gorm.DB, owner uint, peerID string) *model.AddressBookCollection {
++	var cols []model.AddressBookCollection
++	tx.Where("user_id = ? AND name LIKE ?", owner, NextecMachineListPrefix+"%").Find(&cols)
++	suffix := "(" + peerID + ")"
++	for i := range cols {
++		if strings.HasSuffix(cols[i].Name, suffix) {
++			return &cols[i]
++		}
++	}
++	return nil
++}
++
++// NextecAccessGrant concede, altera ou tira o acesso de uma equipe/pessoa a um cliente ou a uma máquina avulsa.
++// owner é o admin que concede (dono das listas).
++func NextecAccessGrant(u *model.User, ip string, r *NextecAccessGrantReq) (*NextecAccessGrantResult, error) {
++	if u == nil || u.Id == 0 {
++		return nil, errors.New("sem usuário")
++	}
++	if !r.Remove && (r.Rule < model.ShareAddressBookRuleRuleRead || r.Rule > model.ShareAddressBookRuleRuleReadWrite) {
++		return nil, errors.New("nível de acesso inválido")
++	}
++	res := &NextecAccessGrantResult{}
++	var targetName, scopeName, auditPeer string
++	err := DB.Transaction(func(tx *gorm.DB) error {
++		var e error
++		if targetName, e = nextecTargetName(tx, r.TargetType, r.TargetID); e != nil {
++			return e
++		}
++		var col *model.AddressBookCollection
++		switch r.Scope {
++		case nextecScopeClient:
++			var g model.DeviceGroup
++			if tx.Where("id = ?", r.GroupID).Limit(1).Find(&g).Error != nil || g.Id == 0 {
++				return errors.New("cliente ou subgrupo não encontrado")
++			}
++			scopeName = g.Name
++			want := NextecClientListPrefix + g.Name
++			var cols []model.AddressBookCollection
++			tx.Where("user_id = ?", u.Id).Find(&cols)
++			for i := range cols {
++				if strings.EqualFold(cols[i].Name, want) {
++					col = &cols[i]
++					break
++				}
++			}
++			if col == nil && !r.Remove {
++				col = &model.AddressBookCollection{UserId: u.Id, Name: want}
++				if e := tx.Create(col).Error; e != nil {
++					return e
++				}
++				res.Created = true
++			}
++		case nextecScopeMachine:
++			var p model.Peer
++			if tx.Where("id = ?", NextecCleanId(r.PeerID)).Limit(1).Find(&p).Error != nil || p.RowId == 0 {
++				return errors.New("máquina não encontrada")
++			}
++			auditPeer = p.Id
++			scopeName = nextecMachineLabel(&p)
++			col = nextecFindMachineList(tx, u.Id, p.Id)
++			if col == nil && !r.Remove {
++				col = &model.AddressBookCollection{UserId: u.Id, Name: scopeName}
++				if e := tx.Create(col).Error; e != nil {
++					return e
++				}
++				res.Created = true
++			}
++			if col != nil && !r.Remove {
++				var n int64
++				tx.Model(&model.AddressBook{}).Where("collection_id = ? AND id = ?", col.Id, p.Id).Count(&n)
++				if n == 0 {
++					if e := tx.Create(nextecEntryFromPeer(&p, u.Id, col.Id)).Error; e != nil {
++						return e
++					}
++				}
++			}
++		default:
++			return errors.New("escopo inválido")
++		}
++		if col == nil { // tirar acesso de uma lista que nunca existiu
++			return nil
++		}
++		res.CollectionID, res.Name = col.Id, col.Name
++		var rule model.AddressBookCollectionRule
++		found := tx.Where("collection_id = ? AND type = ? AND to_id = ?", col.Id, r.TargetType, r.TargetID).Limit(1).Find(&rule).Error == nil && rule.Id != 0
++		switch {
++		case r.Remove && found:
++			res.Changed = true
++			return tx.Delete(&model.AddressBookCollectionRule{}, "id = ?", rule.Id).Error
++		case r.Remove:
++			return nil
++		case found && rule.Rule == r.Rule:
++			return nil
++		case found:
++			res.Changed = true
++			return tx.Model(&model.AddressBookCollectionRule{}).Where("id = ?", rule.Id).Update("rule", r.Rule).Error
++		}
++		res.Changed = true
++		return tx.Create(&model.AddressBookCollectionRule{UserId: u.Id, CollectionId: col.Id, Rule: r.Rule, Type: r.TargetType, ToId: r.TargetID}).Error
++	})
++	if err != nil {
++		return nil, err
++	}
++	// a lista de cliente nova nasce vazia: deixa igual ao cliente (máquinas dos subgrupos incluídas)
++	if res.Created && r.Scope == nextecScopeClient {
++		if _, e := NextecReconcileClientList(u, ip, res.CollectionID); e != nil {
++			return res, fmt.Errorf("acesso concedido, mas a lista não foi preenchida: %w", e)
++		}
++	}
++	if res.Changed || res.Created {
++		who := "equipe"
++		if r.TargetType == model.ShareAddressBookRuleTypePersonal {
++			who = "pessoa"
++		}
++		level := map[int]string{1: "só ver", 2: "ver e editar"}[r.Rule]
++		action, detail := "access_grant", fmt.Sprintf("%s %s ganha %s (%s)", who, targetName, scopeName, level)
++		if r.Remove {
++			action, detail = "access_revoke", fmt.Sprintf("%s %s perde %s", who, targetName, scopeName)
++		}
++		NextecSecretAuditAdd(u, auditPeer, action, ip, detail)
++	}
++	return res, nil
++}
++
++// NextecAccessItem é um acesso que a pessoa tem, com a origem.
++type NextecAccessItem struct {
++	CollectionID uint   `json:"collection_id"`
++	Kind         string `json:"kind"`  // client | machine | other
++	Label        string `json:"label"` // "Cliente / Sub" ou "Servidor (123456789)"
++	PeerID       string `json:"peer_id,omitempty"`
++	GroupID      uint   `json:"group_id,omitempty"`
++	Rule         int    `json:"rule"`   // maior nível entre as origens
++	Origin       string `json:"origin"` // direto | equipe | direto e equipe
++	Team         string `json:"team,omitempty"`
++	Machines     int    `json:"machines"`
++}
++
++type NextecAccessUser struct {
++	UserID   uint                `json:"user_id"`
++	Username string              `json:"username"`
++	Nickname string              `json:"nickname"`
++	IsAdmin  bool                `json:"is_admin"`
++	Status   int                 `json:"status"`
++	TeamID   uint                `json:"team_id"`
++	Team     string              `json:"team"`
++	Clients  int                 `json:"clients"`
++	Machines int                 `json:"machines"` // listas avulsas
++	Items    []*NextecAccessItem `json:"items,omitempty"`
++}
++
++// nextecAccessFor monta o acesso efetivo de uma pessoa: regras dela e da equipe dela, sobre listas de clientes e avulsas.
++func nextecAccessFor(u *model.User, teamName string, withItems bool) *NextecAccessUser {
++	out := &NextecAccessUser{UserID: u.Id, Username: u.Username, Nickname: u.Nickname, IsAdmin: u.IsAdmin != nil && *u.IsAdmin, Status: int(u.Status), TeamID: u.GroupId, Team: teamName}
++	var rules []model.AddressBookCollectionRule
++	DB.Where("rule > 0 AND ((type = ? AND to_id = ?) OR (type = ? AND to_id = ?))",
++		model.ShareAddressBookRuleTypePersonal, u.Id, model.ShareAddressBookRuleTypeGroup, u.GroupId).Find(&rules)
++	if u.GroupId == 0 { // sem equipe: a regra de equipe 0 não existe
++		kept := rules[:0]
++		for _, r := range rules {
++			if r.Type == model.ShareAddressBookRuleTypePersonal {
++				kept = append(kept, r)
++			}
++		}
++		rules = kept
++	}
++	items := nextecAccessItems(rules, teamName)
++	for _, it := range items {
++		switch it.Kind {
++		case "client":
++			out.Clients++
++		case "machine":
++			out.Machines++
++		}
++	}
++	if withItems {
++		out.Items = items
++	}
++	return out
++}
++
++// nextecAccessItems junta as regras em itens (um por lista), com o maior nível e a origem.
++func nextecAccessItems(rules []model.AddressBookCollectionRule, teamName string) []*NextecAccessItem {
++	byCol := map[uint]*NextecAccessItem{}
++	for _, r := range rules {
++		it := byCol[r.CollectionId]
++		if it == nil {
++			var col model.AddressBookCollection
++			if DB.Where("id = ?", r.CollectionId).Limit(1).Find(&col).Error != nil || col.Id == 0 {
++				continue
++			}
++			it = &NextecAccessItem{CollectionID: col.Id, Kind: "other", Label: col.Name}
++			switch {
++			case strings.HasPrefix(col.Name, NextecClientListPrefix):
++				it.Kind, it.Label = "client", strings.TrimPrefix(col.Name, NextecClientListPrefix)
++				var g model.DeviceGroup
++				names := []model.DeviceGroup{}
++				DB.Find(&names)
++				for _, c := range names {
++					if strings.EqualFold(c.Name, it.Label) {
++						g = c
++						break
++					}
++				}
++				it.GroupID = g.Id
++			case strings.HasPrefix(col.Name, NextecMachineListPrefix):
++				it.Kind, it.Label = "machine", strings.TrimPrefix(col.Name, NextecMachineListPrefix)
++				if i := strings.LastIndex(it.Label, "("); i >= 0 && strings.HasSuffix(it.Label, ")") {
++					it.PeerID = it.Label[i+1 : len(it.Label)-1]
++				}
++			}
++			var n int64
++			DB.Model(&model.AddressBook{}).Where("collection_id = ?", col.Id).Count(&n)
++			it.Machines = int(n)
++			byCol[r.CollectionId] = it
++		}
++		if r.Rule > it.Rule {
++			it.Rule = r.Rule
++		}
++		switch {
++		case r.Type == model.ShareAddressBookRuleTypePersonal && it.Origin == "equipe":
++			it.Origin = "direto e equipe"
++		case r.Type == model.ShareAddressBookRuleTypePersonal && it.Origin == "":
++			it.Origin = "direto"
++		case r.Type == model.ShareAddressBookRuleTypeGroup && it.Origin == "direto":
++			it.Origin, it.Team = "direto e equipe", teamName
++		case r.Type == model.ShareAddressBookRuleTypeGroup && it.Origin == "":
++			it.Origin, it.Team = "equipe", teamName
++		}
++		if r.Type == model.ShareAddressBookRuleTypeGroup {
++			it.Team = teamName
++		}
++	}
++	items := make([]*NextecAccessItem, 0, len(byCol))
++	for _, it := range byCol {
++		items = append(items, it)
++	}
++	sort.Slice(items, func(i, j int) bool {
++		if items[i].Kind != items[j].Kind {
++			return items[i].Kind < items[j].Kind
++		}
++		return strings.ToLower(items[i].Label) < strings.ToLower(items[j].Label)
++	})
++	return items
++}
++
++// NextecAccessUsers resume o acesso de todas as pessoas (sem os itens, para a lista).
++func NextecAccessUsers() []*NextecAccessUser {
++	var users []model.User
++	DB.Order("username").Find(&users)
++	var groups []model.Group
++	DB.Find(&groups)
++	team := map[uint]string{}
++	for _, g := range groups {
++		team[g.Id] = g.Name
++	}
++	out := make([]*NextecAccessUser, 0, len(users))
++	for i := range users {
++		out = append(out, nextecAccessFor(&users[i], team[users[i].GroupId], false))
++	}
++	return out
++}
++
++// NextecAccessUser devolve o acesso detalhado de uma pessoa.
++func NextecAccessOfUser(userID uint) (*NextecAccessUser, error) {
++	var u model.User
++	if DB.Where("id = ?", userID).Limit(1).Find(&u).Error != nil || u.Id == 0 {
++		return nil, errors.New("pessoa não encontrada")
++	}
++	team := ""
++	if u.GroupId != 0 {
++		var g model.Group
++		DB.Where("id = ?", u.GroupId).Limit(1).Find(&g)
++		team = g.Name
++	}
++	return nextecAccessFor(&u, team, true), nil
++}
++
++// NextecAccessOfTeam devolve o que a equipe acessa (clientes e máquinas avulsas), para a tela de equipes.
++func NextecAccessOfTeam(teamID uint) (*NextecAccessTeam, error) {
++	var g model.Group
++	if DB.Where("id = ?", teamID).Limit(1).Find(&g).Error != nil || g.Id == 0 {
++		return nil, errors.New("equipe não encontrada")
++	}
++	var rules []model.AddressBookCollectionRule
++	DB.Where("rule > 0 AND type = ? AND to_id = ?", model.ShareAddressBookRuleTypeGroup, teamID).Find(&rules)
++	var members int64
++	DB.Model(&model.User{}).Where("group_id = ?", teamID).Count(&members)
++	return &NextecAccessTeam{TeamID: g.Id, Name: g.Name, Members: int(members), Items: nextecAccessItems(rules, g.Name)}, nil
++}
++
++type NextecAccessTeam struct {
++	TeamID  uint                `json:"team_id"`
++	Name    string              `json:"name"`
++	Members int                 `json:"members"`
++	Items   []*NextecAccessItem `json:"items"`
++}
+diff --git a/service/nextec_devices.go b/service/nextec_devices.go
+new file mode 100644
+index 0000000..b81e4b3
+--- /dev/null
++++ b/service/nextec_devices.go
+@@ -0,0 +1,274 @@
++package service
++
++import (
++	"errors"
++	"fmt"
++	"strings"
++	"time"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"gorm.io/gorm"
++)
++
++// Lista de dispositivos paginada no servidor: a tela não baixa mais todas as máquinas para filtrar no navegador.
++
++const (
++	nextecDevicesMaxPage = 200 // itens por página
++	nextecDevicesMaxMove = 500 // máquinas por troca em lote
++	// uma máquina conta como online se falou com o servidor nos últimos 60 s (mesma regra da tela)
++	nextecOnlineSeconds = 60
++)
++
++type NextecDeviceQuery struct {
++	Page, PageSize uint
++	Q              string // id, apelido, nome, usuário, IP ou nome do cliente
++	Ids            string // ids separados por vírgula (favoritos); no máximo 500
++	ClientID       uint   // cliente: inclui as máquinas dos subgrupos
++	SubID          uint   // subgrupo exato
++	NoClient       bool   // só as sem cliente
++	Status         string // online | offline
++	Sort           string // online | recent | client | name
++}
++
++type NextecDeviceList struct {
++	List     []*model.Peer `json:"list"`
++	Total    int64         `json:"total"`
++	Online   int64         `json:"online"` // quantas do filtro estão online
++	Page     int64         `json:"page"`
++	PageSize int64         `json:"page_size"`
++}
++
++func nextecLike(s string) string {
++	s = strings.ReplaceAll(s, `\`, `\\`)
++	s = strings.ReplaceAll(s, "%", `\%`)
++	s = strings.ReplaceAll(s, "_", `\_`)
++	return "%" + strings.ToLower(s) + "%"
++}
++
++func nextecDevicesFilter(tx *gorm.DB, q *NextecDeviceQuery, now int64) *gorm.DB {
++	switch {
++	case q.NoClient:
++		tx = tx.Where("peers.group_id = 0")
++	case q.SubID > 0:
++		tx = tx.Where("peers.group_id = ?", q.SubID)
++	case q.ClientID > 0:
++		tx = tx.Where("peers.group_id IN ?", nextecSubtree(DB, q.ClientID))
++	}
++	switch q.Status {
++	case "online":
++		tx = tx.Where("peers.last_online_time > ?", now-nextecOnlineSeconds)
++	case "offline":
++		tx = tx.Where("peers.last_online_time <= ?", now-nextecOnlineSeconds)
++	}
++	if q.Ids != "" {
++		list := []string{}
++		for _, id := range strings.Split(q.Ids, ",") {
++			if id = NextecCleanId(strings.TrimSpace(id)); id != "" && len(list) < nextecDevicesMaxMove {
++				list = append(list, id)
++			}
++		}
++		tx = tx.Where("peers.id IN ?", list)
++	}
++	if term := strings.TrimSpace(q.Q); term != "" {
++		like := nextecLike(term)
++		var gids []uint
++		DB.Model(&model.DeviceGroup{}).Where(`lower(name) LIKE ? ESCAPE '\'`, like).Pluck("id", &gids)
++		cond := `lower(peers.id) LIKE ? ESCAPE '\' OR lower(peers.alias) LIKE ? ESCAPE '\' OR lower(peers.hostname) LIKE ? ESCAPE '\' OR lower(peers.username) LIKE ? ESCAPE '\' OR lower(peers.last_online_ip) LIKE ? ESCAPE '\'`
++		args := []interface{}{like, like, like, like, like}
++		if len(gids) > 0 {
++			cond += " OR peers.group_id IN ?"
++			args = append(args, gids)
++		}
++		tx = tx.Where(cond, args...)
++	}
++	return tx
++}
++
++// NextecDevicesList devolve uma página já filtrada e ordenada. O total e o número de online valem para o filtro inteiro.
++func NextecDevicesList(q *NextecDeviceQuery) (*NextecDeviceList, error) {
++	if q.Page == 0 {
++		q.Page = 1
++	}
++	if q.PageSize == 0 {
++		q.PageSize = 20
++	}
++	if q.PageSize > nextecDevicesMaxPage {
++		q.PageSize = nextecDevicesMaxPage
++	}
++	now := time.Now().Unix()
++	res := &NextecDeviceList{Page: int64(q.Page), PageSize: int64(q.PageSize), List: []*model.Peer{}}
++	base := func() *gorm.DB { return nextecDevicesFilter(DB.Model(&model.Peer{}), q, now) }
++	if err := base().Count(&res.Total).Error; err != nil {
++		return nil, err
++	}
++	if err := base().Where("peers.last_online_time > ?", now-nextecOnlineSeconds).Count(&res.Online).Error; err != nil {
++		return nil, err
++	}
++	name := "lower(coalesce(nullif(peers.alias,''), nullif(peers.hostname,''), peers.id))"
++	tx := base().Select("peers.*")
++	switch q.Sort {
++	case "name":
++		tx = tx.Order(name)
++	case "client":
++		tx = tx.Joins("LEFT JOIN device_groups dg ON dg.id = peers.group_id").
++			Order("CASE WHEN dg.id IS NULL THEN 1 ELSE 0 END").Order("lower(dg.name)").Order(name)
++	case "recent":
++		tx = tx.Order("peers.last_online_time DESC").Order(name)
++	default: // online primeiro
++		tx = tx.Order(gorm.Expr("CASE WHEN peers.last_online_time > ? THEN 0 ELSE 1 END", now-nextecOnlineSeconds)).Order("peers.last_online_time DESC").Order(name)
++	}
++	if err := tx.Offset(int((q.Page - 1) * q.PageSize)).Limit(int(q.PageSize)).Find(&res.List).Error; err != nil {
++		return nil, err
++	}
++	return res, nil
++}
++
++// NextecDeviceTreeNode é um cliente ou subgrupo com a contagem de máquinas (diretas e com os subgrupos).
++type NextecDeviceTreeNode struct {
++	GroupID  uint   `json:"group_id"`
++	ParentID uint   `json:"parent_id"`
++	Name     string `json:"name"`
++	Path     string `json:"path"`
++	Devices  int    `json:"devices"` // direto no grupo
++	Total    int    `json:"total"`   // com os subgrupos
++	Online   int    `json:"online"`  // online, com os subgrupos
++}
++
++type NextecDeviceTree struct {
++	Nodes    []*NextecDeviceTreeNode `json:"nodes"`
++	NoClient int                     `json:"no_client"`
++	All      int                     `json:"all"`
++	Online   int                     `json:"online"`
++}
++
++// NextecDevicesTree resume clientes e subgrupos em uma consulta de contagem (sem trazer as máquinas).
++func NextecDevicesTree() (*NextecDeviceTree, error) {
++	now := time.Now().Unix()
++	type cnt struct {
++		GroupID uint
++		N       int
++		Online  int
++	}
++	var counts []cnt
++	if err := DB.Model(&model.Peer{}).
++		Select("group_id AS group_id, count(*) AS n, sum(CASE WHEN last_online_time > ? THEN 1 ELSE 0 END) AS online", now-nextecOnlineSeconds).
++		Group("group_id").Scan(&counts).Error; err != nil {
++		return nil, err
++	}
++	var groups []*model.DeviceGroup
++	if err := DB.Order("id").Find(&groups).Error; err != nil {
++		return nil, err
++	}
++	NextecFillGroupPaths(groups)
++	byID := map[uint]*NextecDeviceTreeNode{}
++	tree := &NextecDeviceTree{Nodes: []*NextecDeviceTreeNode{}}
++	for _, g := range groups {
++		n := &NextecDeviceTreeNode{GroupID: g.Id, ParentID: g.ParentId, Name: g.Name, Path: g.Path}
++		byID[g.Id] = n
++		tree.Nodes = append(tree.Nodes, n)
++	}
++	for _, c := range counts {
++		tree.All += c.N
++		tree.Online += c.Online
++		if c.GroupID == 0 {
++			tree.NoClient += c.N
++			continue
++		}
++		// soma no grupo e em todos os ancestrais
++		seen := map[uint]bool{}
++		for id := c.GroupID; id != 0 && !seen[id] && byID[id] != nil; id = byID[id].ParentID {
++			seen[id] = true
++			byID[id].Total += c.N
++			byID[id].Online += c.Online
++			if id == c.GroupID {
++				byID[id].Devices += c.N
++			}
++		}
++	}
++	return tree, nil
++}
++
++type NextecDevicesMoveResult struct {
++	Moved   int `json:"moved"`
++	Skipped int `json:"skipped"` // já estavam no grupo
++	Removed int `json:"lists_removed"`
++	Added   int `json:"lists_added"`
++}
++
++// NextecDevicesMove muda várias máquinas de cliente/subgrupo em uma transação só (ou todas, ou nenhuma), mantendo as listas
++// "Cliente: X" e gravando uma linha de auditoria por máquina.
++func NextecDevicesMove(u *model.User, ip string, rowIDs []uint, groupID uint) (*NextecDevicesMoveResult, error) {
++	if len(rowIDs) == 0 {
++		return nil, errors.New("nenhuma máquina escolhida")
++	}
++	if len(rowIDs) > nextecDevicesMaxMove {
++		return nil, fmt.Errorf("no máximo %d máquinas por vez", nextecDevicesMaxMove)
++	}
++	if groupID != 0 {
++		var n int64
++		DB.Model(&model.DeviceGroup{}).Where("id = ?", groupID).Count(&n)
++		if n == 0 {
++			return nil, errors.New("o cliente ou subgrupo não existe")
++		}
++	}
++	type audit struct{ peer, detail string }
++	var lines []audit
++	res := &NextecDevicesMoveResult{}
++	err := DB.Transaction(func(tx *gorm.DB) error {
++		var peers []*model.Peer
++		if err := tx.Where("row_id IN ?", rowIDs).Find(&peers).Error; err != nil {
++			return err
++		}
++		if len(peers) != len(uniqueUint(rowIDs)) {
++			return errors.New("alguma máquina escolhida não existe mais; atualize a lista")
++		}
++		for _, p := range peers {
++			if p.GroupId == groupID {
++				res.Skipped++
++				continue
++			}
++			old := p.GroupId
++			if err := tx.Model(&model.Peer{}).Where("row_id = ?", p.RowId).Update("group_id", groupID).Error; err != nil {
++				return err
++			}
++			rm, ad, err := NextecSyncClientListsTx(tx, p.Id, old, groupID)
++			if err != nil {
++				return err
++			}
++			res.Removed += rm
++			res.Added += ad
++			res.Moved++
++			lines = append(lines, audit{p.Id, fmt.Sprintf("de %s para %s (troca em lote)", nextecGroupPathOrRootTx(tx, old), nextecGroupPathOrRootTx(tx, groupID))})
++		}
++		return nil
++	})
++	if err != nil {
++		return nil, err
++	}
++	for _, l := range lines {
++		NextecSecretAuditAdd(u, l.peer, "device_move", ip, l.detail)
++	}
++	return res, nil
++}
++
++func uniqueUint(in []uint) []uint {
++	seen := map[uint]bool{}
++	out := []uint{}
++	for _, v := range in {
++		if !seen[v] {
++			seen[v] = true
++			out = append(out, v)
++		}
++	}
++	return out
++}
++
++func nextecGroupPathOrRootTx(tx *gorm.DB, id uint) string {
++	if id == 0 {
++		return "sem cliente"
++	}
++	if p := nextecGroupPathTx(tx, id); p != "" {
++		return p
++	}
++	return fmt.Sprintf("grupo %d", id)
++}
+diff --git a/service/nextec_devices_test.go b/service/nextec_devices_test.go
+new file mode 100644
+index 0000000..f5ffdb6
+--- /dev/null
++++ b/service/nextec_devices_test.go
+@@ -0,0 +1,309 @@
++package service
++
++import (
++	"fmt"
++	"testing"
++	"time"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"gorm.io/gorm"
++)
++
++// Item 5 (lista paginada, árvore e troca em lote), item 1 e item 9 (acesso por equipe e pessoa).
++// Árvore de listsSetup: Cliente A (7) > Filial (9), Loja (10); Cliente B (8).
++
++func devicesSetup(t *testing.T) (*gorm.DB, map[string]uint) {
++	t.Helper()
++	db, cols := listsSetup(t)
++	if err := db.AutoMigrate(&model.User{}, &model.Group{}, &model.AddressBookCollectionRule{}); err != nil {
++		t.Fatal(err)
++	}
++	return db, cols
++}
++
++func addPeer(t *testing.T, db *gorm.DB, id, alias string, group uint, online bool) *model.Peer {
++	t.Helper()
++	p := &model.Peer{Id: id, Alias: alias, Hostname: "host-" + id, Username: "ana", GroupId: group, LastOnlineIp: "10.0.0.9"}
++	if online {
++		p.LastOnlineTime = time.Now().Unix()
++	} else {
++		p.LastOnlineTime = time.Now().Unix() - 3600
++	}
++	if err := db.Create(p).Error; err != nil {
++		t.Fatal(err)
++	}
++	return p
++}
++
++func ids(l *NextecDeviceList) []string {
++	out := []string{}
++	for _, p := range l.List {
++		out = append(out, p.Id)
++	}
++	return out
++}
++
++func TestDevicesListFiltersSortAndPaging(t *testing.T) {
++	db, _ := devicesSetup(t)
++	db.Where("1 = 1").Delete(&model.Peer{})
++	addPeer(t, db, "1001", "Zeta caixa", 9, true)
++	addPeer(t, db, "1002", "Alfa matriz", 7, false)
++	addPeer(t, db, "1003", "Beta loja", 10, true)
++	addPeer(t, db, "1004", "Gama b", 8, false)
++	addPeer(t, db, "1005", "Sem cliente", 0, false)
++
++	all, err := NextecDevicesList(&NextecDeviceQuery{Page: 1, PageSize: 50})
++	if err != nil || all.Total != 5 || all.Online != 2 {
++		t.Fatalf("total/online: %+v %v", all, err)
++	}
++	// online primeiro
++	if got := ids(all); got[0] != "1001" && got[0] != "1003" || got[len(got)-1] == "1001" {
++		t.Fatalf("ordem online primeiro: %v", got)
++	}
++	// cliente A inclui os subgrupos
++	a, _ := NextecDevicesList(&NextecDeviceQuery{ClientID: 7, Sort: "name"})
++	if fmt.Sprint(ids(a)) != "[1002 1003 1001]" && fmt.Sprint(ids(a)) != "[1002 1001 1003]" {
++		t.Fatalf("cliente A: %v", ids(a))
++	}
++	if a.Total != 3 {
++		t.Fatalf("total do cliente A = %d", a.Total)
++	}
++	// subgrupo exato
++	f, _ := NextecDevicesList(&NextecDeviceQuery{SubID: 9})
++	if fmt.Sprint(ids(f)) != "[1001]" {
++		t.Fatalf("subgrupo: %v", ids(f))
++	}
++	// sem cliente
++	n, _ := NextecDevicesList(&NextecDeviceQuery{NoClient: true})
++	if fmt.Sprint(ids(n)) != "[1005]" {
++		t.Fatalf("sem cliente: %v", ids(n))
++	}
++	// status
++	off, _ := NextecDevicesList(&NextecDeviceQuery{Status: "offline", Sort: "name"})
++	if off.Total != 3 || off.Online != 0 {
++		t.Fatalf("offline: %+v", off)
++	}
++	// busca por apelido, por id e pelo nome do cliente
++	for q, want := range map[string]string{"zeta": "[1001]", "1004": "[1004]", "cliente b": "[1004]", "host-1003": "[1003]"} {
++		r, _ := NextecDevicesList(&NextecDeviceQuery{Q: q})
++		if fmt.Sprint(ids(r)) != want {
++			t.Fatalf("busca %q: %v (esperado %s)", q, ids(r), want)
++		}
++	}
++	// favoritos (ids) e lista vazia de favoritos
++	if r, _ := NextecDevicesList(&NextecDeviceQuery{Ids: "1004, 1005"}); r.Total != 2 {
++		t.Fatalf("ids: %d", r.Total)
++	}
++	if r, _ := NextecDevicesList(&NextecDeviceQuery{Ids: "-"}); r.Total != 0 {
++		t.Fatalf("ids sem favoritos: %d", r.Total)
++	}
++	// curinga do LIKE não vaza
++	if r, _ := NextecDevicesList(&NextecDeviceQuery{Q: "%"}); r.Total != 0 {
++		t.Fatalf("o %% deveria ser literal: %d", r.Total)
++	}
++	// ordenar por cliente: sem cliente por último
++	c, _ := NextecDevicesList(&NextecDeviceQuery{Sort: "client", PageSize: 50})
++	if got := ids(c); got[len(got)-1] != "1005" {
++		t.Fatalf("sem cliente deveria ser o último: %v", got)
++	}
++	// paginação
++	p1, _ := NextecDevicesList(&NextecDeviceQuery{Page: 1, PageSize: 2, Sort: "name"})
++	p3, _ := NextecDevicesList(&NextecDeviceQuery{Page: 3, PageSize: 2, Sort: "name"})
++	if len(p1.List) != 2 || len(p3.List) != 1 || p1.Total != 5 || p3.Page != 3 {
++		t.Fatalf("paginação: %d %d %+v", len(p1.List), len(p3.List), p3)
++	}
++}
++
++func TestDevicesTreeCounts(t *testing.T) {
++	db, _ := devicesSetup(t)
++	db.Where("1 = 1").Delete(&model.Peer{})
++	addPeer(t, db, "2001", "a", 9, true)
++	addPeer(t, db, "2002", "b", 9, false)
++	addPeer(t, db, "2003", "c", 7, true)
++	addPeer(t, db, "2004", "d", 0, false)
++	tr, err := NextecDevicesTree()
++	if err != nil {
++		t.Fatal(err)
++	}
++	by := map[uint]*NextecDeviceTreeNode{}
++	for _, n := range tr.Nodes {
++		by[n.GroupID] = n
++	}
++	if by[9].Devices != 2 || by[9].Total != 2 || by[9].Online != 1 {
++		t.Fatalf("Filial: %+v", by[9])
++	}
++	if by[7].Devices != 1 || by[7].Total != 3 || by[7].Online != 2 {
++		t.Fatalf("Cliente A soma os subgrupos: %+v", by[7])
++	}
++	if by[8].Total != 0 || tr.NoClient != 1 || tr.All != 4 || tr.Online != 2 {
++		t.Fatalf("B/sem cliente/total: %+v %d %d %d", by[8], tr.NoClient, tr.All, tr.Online)
++	}
++}
++
++func TestDevicesMoveBatchKeepsListsAndAudits(t *testing.T) {
++	db, c := devicesSetup(t)
++	db.Where("1 = 1").Delete(&model.Peer{})
++	p1 := addPeer(t, db, "3001", "um", 0, true)
++	p2 := addPeer(t, db, "3002", "dois", 7, true)
++	p3 := addPeer(t, db, "3003", "tres", 10, true)
++	// listas como estariam em produção: quem já está num cliente já consta nas listas dele
++	for _, e := range []struct {
++		col  uint
++		peer *model.Peer
++	}{{c["A"], p2}, {c["A"], p3}, {c["L"], p3}} {
++		db.Create(nextecEntryFromPeer(e.peer, 1, e.col))
++	}
++	res, err := NextecDevicesMove(nil, "10.0.0.1", []uint{p1.RowId, p2.RowId, p3.RowId}, 9)
++	if err != nil || res.Moved != 3 {
++		t.Fatalf("mover: %+v %v", res, err)
++	}
++	for _, id := range []string{"3001", "3002", "3003"} {
++		if !inList(db, c["F"], id) || !inList(db, c["A"], id) || inList(db, c["L"], id) || inList(db, c["B"], id) {
++			t.Fatalf("%s deveria estar na Filial e no cliente A, e só aí", id)
++		}
++	}
++	var n int64
++	db.Model(&model.NextecSecretAudit{}).Where("action = ?", "device_move").Count(&n)
++	if n != 3 {
++		t.Fatalf("uma linha de auditoria por máquina, achei %d", n)
++	}
++	// mesma troca de novo: nada muda
++	again, err := NextecDevicesMove(nil, "10.0.0.1", []uint{p1.RowId}, 9)
++	if err != nil || again.Moved != 0 || again.Skipped != 1 {
++		t.Fatalf("repetir: %+v %v", again, err)
++	}
++	// tudo ou nada: máquina inexistente na lista cancela a troca inteira
++	if _, err := NextecDevicesMove(nil, "10.0.0.1", []uint{p1.RowId, 99999}, 8); err == nil {
++		t.Fatal("máquina inexistente deveria cancelar")
++	}
++	var got model.Peer
++	db.Where("row_id = ?", p1.RowId).First(&got)
++	if got.GroupId != 9 {
++		t.Fatalf("a falha não pode mover ninguém, grupo = %d", got.GroupId)
++	}
++	// grupo inexistente e sem cliente
++	if _, err := NextecDevicesMove(nil, "x", []uint{p1.RowId}, 777); err == nil {
++		t.Fatal("grupo inexistente deveria falhar")
++	}
++	if r, err := NextecDevicesMove(nil, "x", []uint{p1.RowId}, 0); err != nil || r.Moved != 1 || inList(db, c["F"], "3001") || inList(db, c["A"], "3001") {
++		t.Fatalf("sem cliente: %+v %v", r, err)
++	}
++	if _, err := NextecDevicesMove(nil, "x", nil, 9); err == nil {
++		t.Fatal("lista vazia deveria falhar")
++	}
++}
++
++func TestAccessGrantClientTeamAndMachine(t *testing.T) {
++	db, _ := devicesSetup(t)
++	db.Where("1 = 1").Delete(&model.Peer{})
++	admin := &model.User{IdModel: model.IdModel{Id: 1}, Username: "admin"}
++	team := &model.Group{Name: "Suporte N1", Type: 1}
++	db.Create(admin)
++	db.Create(team)
++	ana := &model.User{Username: "ana", GroupId: team.Id}
++	bia := &model.User{Username: "bia"}
++	db.Create(ana)
++	db.Create(bia)
++	addPeer(t, db, "4001", "Servidor suporte", 7, true)
++	addPeer(t, db, "4002", "Caixa", 9, true)
++	addPeer(t, db, "4003", "Outro cliente", 8, true)
++
++	// equipe ganha o cliente A (a lista já existe; ganha as máquinas do cliente e dos subgrupos)
++	r, err := NextecAccessGrant(admin, "10.0.0.1", &NextecAccessGrantReq{TargetType: 2, TargetID: team.Id, Scope: "client", GroupID: 7, Rule: 1})
++	if err != nil || !r.Changed {
++		t.Fatalf("conceder cliente: %+v %v", r, err)
++	}
++	if _, err := NextecReconcileClientList(admin, "x", r.CollectionID); err != nil {
++		t.Fatal(err)
++	}
++	ua, _ := NextecAccessOfUser(ana.Id)
++	if ua.Clients != 1 || ua.Items[0].Origin != "equipe" || ua.Items[0].Label != "Cliente A" || ua.Items[0].Machines != 2 || ua.Items[0].Rule != 1 {
++		t.Fatalf("acesso da Ana: %+v %+v", ua, ua.Items[0])
++	}
++	ub, _ := NextecAccessOfUser(bia.Id)
++	if ub.Clients != 0 || len(ub.Items) != 0 {
++		t.Fatalf("a Bia (sem equipe) não herda o cliente A: %+v", ub)
++	}
++
++	tm, err := NextecAccessOfTeam(team.Id)
++	if err != nil || tm.Members != 1 || len(tm.Items) != 1 || tm.Items[0].Label != "Cliente A" {
++		t.Fatalf("acesso da equipe: %+v %v", tm, err)
++	}
++	if _, err := NextecAccessOfTeam(9999); err == nil {
++		t.Fatal("equipe inexistente deveria falhar")
++	}
++
++	// repetir não muda nada
++	r2, _ := NextecAccessGrant(admin, "x", &NextecAccessGrantReq{TargetType: 2, TargetID: team.Id, Scope: "client", GroupID: 7, Rule: 1})
++	if r2.Changed {
++		t.Fatal("repetir a concessão não deveria alterar")
++	}
++	// subir o nível altera a regra existente
++	r3, _ := NextecAccessGrant(admin, "x", &NextecAccessGrantReq{TargetType: 2, TargetID: team.Id, Scope: "client", GroupID: 7, Rule: 2})
++	if !r3.Changed {
++		t.Fatal("mudar o nível deveria alterar")
++	}
++
++	// máquina avulsa para a Bia (caso cbq-srv-suporte): lista própria, só com aquela máquina
++	m, err := NextecAccessGrant(admin, "10.0.0.1", &NextecAccessGrantReq{TargetType: 1, TargetID: bia.Id, Scope: "machine", PeerID: "4001", Rule: 2})
++	if err != nil || !m.Created {
++		t.Fatalf("máquina avulsa: %+v %v", m, err)
++	}
++	ub, _ = NextecAccessOfUser(bia.Id)
++	if ub.Machines != 1 || ub.Items[0].Kind != "machine" || ub.Items[0].PeerID != "4001" || ub.Items[0].Origin != "direto" || ub.Items[0].Machines != 1 || ub.Items[0].Rule != 2 {
++		t.Fatalf("acesso da Bia: %+v", ub.Items)
++	}
++	if !inList(db, m.CollectionID, "4001") || inList(db, m.CollectionID, "4002") {
++		t.Fatal("a lista avulsa deve ter só a máquina escolhida")
++	}
++	// Ana (equipe) também ganha a mesma máquina direto: origem passa a ser "direto e equipe" se ela já tinha por equipe
++	NextecAccessGrant(admin, "x", &NextecAccessGrantReq{TargetType: 2, TargetID: team.Id, Scope: "machine", PeerID: "4001", Rule: 1})
++	NextecAccessGrant(admin, "x", &NextecAccessGrantReq{TargetType: 1, TargetID: ana.Id, Scope: "machine", PeerID: "4001", Rule: 2})
++	ua, _ = NextecAccessOfUser(ana.Id)
++	var machine *NextecAccessItem
++	for _, it := range ua.Items {
++		if it.Kind == "machine" {
++			machine = it
++		}
++	}
++	if machine == nil || machine.Origin != "direto e equipe" || machine.Rule != 2 || machine.Team != "Suporte N1" {
++		t.Fatalf("origem combinada: %+v", machine)
++	}
++	if ua.Machines != 1 {
++		t.Fatalf("a mesma lista conta uma vez: %d", ua.Machines)
++	}
++
++	// tirar o acesso
++	rm, err := NextecAccessGrant(admin, "x", &NextecAccessGrantReq{TargetType: 1, TargetID: bia.Id, Scope: "machine", PeerID: "4001", Remove: true})
++	if err != nil || !rm.Changed {
++		t.Fatalf("tirar: %+v %v", rm, err)
++	}
++	ub, _ = NextecAccessOfUser(bia.Id)
++	if len(ub.Items) != 0 {
++		t.Fatalf("a Bia não deveria ter mais nada: %+v", ub.Items)
++	}
++	// validações
++	for name, req := range map[string]*NextecAccessGrantReq{
++		"pessoa inexistente":  {TargetType: 1, TargetID: 999, Scope: "client", GroupID: 7, Rule: 1},
++		"equipe inexistente":  {TargetType: 2, TargetID: 999, Scope: "client", GroupID: 7, Rule: 1},
++		"cliente inexistente": {TargetType: 2, TargetID: team.Id, Scope: "client", GroupID: 999, Rule: 1},
++		"máquina inexistente": {TargetType: 1, TargetID: ana.Id, Scope: "machine", PeerID: "000", Rule: 1},
++		"nível inválido":      {TargetType: 1, TargetID: ana.Id, Scope: "client", GroupID: 7, Rule: 3},
++		"escopo inválido":     {TargetType: 1, TargetID: ana.Id, Scope: "tudo", Rule: 1},
++	} {
++		if _, err := NextecAccessGrant(admin, "x", req); err == nil {
++			t.Fatalf("%s deveria falhar", name)
++		}
++	}
++	// auditoria
++	var n int64
++	db.Model(&model.NextecSecretAudit{}).Where("action IN ?", []string{"access_grant", "access_revoke"}).Count(&n)
++	if n < 5 {
++		t.Fatalf("auditoria de acesso incompleta: %d", n)
++	}
++	// o resumo de todas as pessoas
++	users := NextecAccessUsers()
++	if len(users) != 3 {
++		t.Fatalf("resumo: %d pessoas", len(users))
++	}
++}

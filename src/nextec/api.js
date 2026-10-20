@@ -81,6 +81,14 @@ export const policySave = (data) => request({ url: '/nextec/policies', method: '
 // patch 0049: herança global > cliente > subgrupo > dispositivo
 export const policyScopes = () => request({ url: '/nextec/policies/scopes' })
 export const policyEffective = (peer_id) => request({ url: '/nextec/policies/effective', params: { peer_id } })
+// item 5: lista paginada no servidor, árvore e troca em lote; itens 1 e 9: acesso por equipe e pessoa
+export const devicesList = (params) => request({ url: '/nextec/devices', params })
+export const devicesTree = () => request({ url: '/nextec/devices/tree' })
+export const devicesMove = (data) => request({ url: '/nextec/devices/move', method: 'post', data })
+export const accessGrant = (data) => request({ url: '/nextec/access/grant', method: 'post', data })
+export const accessUsers = () => request({ url: '/nextec/access/users' })
+export const accessUser = (user_id) => request({ url: '/nextec/access/user', params: { user_id } })
+export const accessTeam = (team_id) => request({ url: '/nextec/access/team', params: { team_id } })
 export const sessionsList = () => request({ url: '/nextec/sessions' })
 export const sessionDisconnect = (peer_id, conn_id) => request({ url: '/nextec/sessions/disconnect', method: 'post', data: { peer_id, conn_id } })
 export const ticketSettings = () => request({ url: '/nextec/ticket-settings' })

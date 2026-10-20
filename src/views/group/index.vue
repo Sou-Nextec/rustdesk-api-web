@@ -25,6 +25,7 @@
         <el-table-column prop="updated_at" :label="T('UpdatedAt')" align="center"/>
         <el-table-column :label="T('Actions')" align="center">
           <template #default="{row}">
+            <el-button type="primary" plain @click="openAccess(row)">Acesso</el-button>
             <el-button @click="toEdit(row)">{{ T('Edit') }}</el-button>
             <el-button type="danger" @click="del(row)">{{ T('Delete') }}</el-button>
           </template>
@@ -40,6 +41,7 @@
                      :total="listRes.total">
       </el-pagination>
     </el-card>
+    <AccessDialog v-model="access.visible" :target-type="2" :target-id="access.id" :name="access.name"/>
     <el-dialog v-model="formVisible" :title="!formData.id?T('Create'):T('Update')" width="800">
       <el-form class="dialog-form" ref="form" :model="formData" label-width="120px">
         <el-form-item :label="T('Name')" prop="name" required>
@@ -67,6 +69,11 @@
   import { list, create, update, detail, remove } from '@/api/group'
   import { ElMessage, ElMessageBox } from 'element-plus'
   import { T } from '@/utils/i18n'
+  import AccessDialog from '@/nextec/views/AccessDialog.vue'
+
+  // Nextec: adicionar cliente, subgrupo ou máquina avulsa à equipe sem sair desta tela
+  const access = reactive({ visible: false, id: 0, name: '' })
+  const openAccess = (row) => { access.id = row.id; access.name = row.name; access.visible = true }
 
   const listRes = reactive({
     list: [], total: 0, loading: false,
