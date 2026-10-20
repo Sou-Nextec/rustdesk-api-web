@@ -182,12 +182,7 @@
           <el-form-item label="Apelido">
             <el-input v-model="form.data.alias" placeholder="Como a equipe reconhece (ex.: Recepção)"/>
           </el-form-item>
-          <el-form-item label="Cliente">
-            <el-select v-model="form.data.group_id" filterable>
-              <el-option label="Sem cliente" :value="0"/>
-              <el-option v-for="g in groups" :key="g.id" :label="g.name" :value="g.id"/>
-            </el-select>
-          </el-form-item>
+          <GroupPicker v-model="form.data.group_id" :groups="groups"/>
           <el-form-item label="Usuário">
             <el-input v-model="form.data.username"/>
           </el-form-item>
@@ -226,24 +221,38 @@
             <dd>{{ f.value || '-' }}</dd>
           </template>
         </dl>
+        <h4 class="nx-rules-title">Regras que valem aqui</h4>
+        <p v-if="effLoading" class="nx-muted nx-small">Conferindo as regras...</p>
+        <ul v-else-if="effLines.length" class="nx-rules-list" aria-label="Regras efetivas">
+          <li v-for="l in effLines" :key="l.label"><strong>{{ l.label }}</strong><span>{{ l.text }}</span></li>
+        </ul>
+        <p v-else class="nx-muted nx-small">Não foi possível conferir as regras agora.</p>
       </template>
       <template #footer>
         <el-button @click="details.visible = false">Fechar</el-button>
+        <el-button @click="openClientDlg(details.row)">Adicionar ou alterar cliente</el-button>
         <el-button @click="openForm(details.row); details.visible = false">Editar</el-button>
         <el-button type="primary" @click="connectByClient(details.row.id)">Conectar</el-button>
       </template>
     </el-drawer>
 
+    <!-- adicionar ou alterar o cliente de uma máquina -->
+    <el-dialog v-model="clientDlg.visible" title="Adicionar ou alterar cliente" width="480px">
+      <el-form label-position="top" class="nx-form" @submit.prevent>
+        <p class="nx-muted">{{ clientDlg.name }}: escolha o cliente e, se precisar, o subgrupo. "Raiz do cliente" deixa a máquina direto no cliente.</p>
+        <GroupPicker v-model="clientDlg.group_id" :groups="groups"/>
+      </el-form>
+      <template #footer>
+        <el-button @click="clientDlg.visible = false">Cancelar</el-button>
+        <el-button type="primary" :loading="clientDlg.saving" @click="saveClientDlg">Salvar</el-button>
+      </template>
+    </el-dialog>
+
     <!-- mover para um cliente (vários) -->
     <el-dialog v-model="batchMove.visible" title="Mover para um cliente" width="480px">
       <el-form label-position="top" class="nx-form" @submit.prevent>
         <p class="nx-muted">{{ selected.length }} dispositivo(s) passam para o cliente escolhido.</p>
-        <el-form-item label="Cliente" required class="is-required">
-          <el-select v-model="batchMove.group_id" filterable placeholder="Escolha o cliente">
-            <el-option label="Sem cliente" :value="0"/>
-            <el-option v-for="g in groups" :key="g.id" :label="g.name" :value="g.id"/>
-          </el-select>
-        </el-form-item>
+        <GroupPicker v-model="batchMove.group_id" :groups="groups" required placeholder="Escolha o cliente"/>
       </el-form>
       <template #footer>
         <el-button @click="batchMove.visible = false">Cancelar</el-button>
@@ -319,6 +328,9 @@
   import { batchRemove, create, list, remove, update } from '@/api/peer'
   import { list as groupList } from '@/api/device_group'
   import InviteDialog from '@/nextec/views/InviteDialog.vue'
+  import GroupPicker from '@/nextec/views/GroupPicker.vue'
+  import { policyEffective } from '@/nextec/api'
+  import { everyText, originText } from '@/nextec/secret-rule.mjs'
   import { clientColorIndex, clientChipStyle } from '@/nextec/client-color.mjs'
   import { clientOptions, subOptions, matchesClient, matchesSub, deviceClientParts } from '@/nextec/client-groups.mjs'
   import SupportQuickDialog from '@/nextec/views/SupportQuickDialog.vue'
@@ -549,15 +561,55 @@
     ]
   })
 
+  // regras que valem para a máquina aberta na ficha (senha e política do app), com a origem de cada uma
+  const eff = reactive({ loading: false, data: null })
+  const effLoading = computed(() => eff.loading)
+  watch(() => [details.visible, details.row && details.row.id], async ([vis, id]) => {
+    eff.data = null
+    if (!vis || !id) return
+    eff.loading = true
+    const r = await policyEffective(id).catch(() => false)
+    eff.loading = false
+    if (r && details.row && details.row.id === id) eff.data = r.data
+  })
+  const effLines = computed(() => {
+    const d = eff.data
+    if (!d) return []
+    const s = d.secret || {}
+    const a = d.app || {}
+    const secretText = s.origin === 'none' ? 'Sem regra: a senha não troca sozinha.'
+      : `${s.enabled ? 'Troca a cada ' + everyText(s.interval_minutes) : 'Troca desligada'} (${originText(s.origin, s.origin_name, s.origin_group_id, d.group_id)})${s.auto_approve ? ', aprova sozinho' : ''}.`
+    const n = Object.values(a.options || {}).filter(Boolean).length
+    const appText = a.enabled ? `${n} ${n === 1 ? 'ajuste' : 'ajustes'} (${originText(a.origin && a.origin.origin, a.origin && a.origin.origin_name, a.origin && a.origin.origin_group_id, d.group_id)}).`
+      : 'Sem regra: o app fica como está.'
+    return [{ label: 'Senha', text: secretText }, { label: 'App', text: appText }]
+  })
+
+  const payloadOf = (r, group_id) => ({ ...Object.fromEntries(Object.keys(empty()).map(k => [k, r[k] ?? empty()[k]])), row_id: r.row_id, group_id })
+
+  // adicionar ou alterar o cliente de uma máquina (e o subgrupo) sem abrir a edição inteira
+  const clientDlg = reactive({ visible: false, saving: false, row: null, name: '', group_id: 0 })
+  const openClientDlg = (row) => {
+    Object.assign(clientDlg, { visible: true, saving: false, row, name: row.alias || row.hostname || row.id, group_id: row.group_id || 0 })
+  }
+  const saveClientDlg = async () => {
+    clientDlg.saving = true
+    const res = await update(payloadOf(clientDlg.row, clientDlg.group_id)).catch(() => false)
+    clientDlg.saving = false
+    if (!res) return
+    ok('Cliente atualizado.')
+    clientDlg.visible = false
+    if (details.row && details.row.row_id === clientDlg.row.row_id) details.visible = false
+    load()
+  }
+
   // mover vários para um cliente
   const batchMove = reactive({ visible: false, saving: false, group_id: null })
   const openBatchMove = () => { batchMove.group_id = null; batchMove.visible = true }
   const saveBatchMove = async () => {
     if (batchMove.group_id === null) return ElMessage.warning('Escolha o cliente.')
     batchMove.saving = true
-    const results = await Promise.all(selected.value.map(r => update({
-      ...Object.fromEntries(Object.keys(empty()).map(k => [k, r[k] ?? empty()[k]])), row_id: r.row_id, group_id: batchMove.group_id,
-    }).catch(() => false)))
+    const results = await Promise.all(selected.value.map(r => update(payloadOf(r, batchMove.group_id)).catch(() => false)))
     batchMove.saving = false
     const done = results.filter(Boolean).length
     ElMessage[done === results.length ? 'success' : 'warning'](`${done} de ${results.length} dispositivo(s) movido(s).`)
@@ -683,6 +735,9 @@
   .nx-danger { color: #BA1A1A; }
   .nx-pager { padding: 12px 18px; border-top: 1px solid var(--nx-divider); display: flex; justify-content: flex-end; }
 
+  .nx-rules-title { margin: 18px 0 6px; font-size: 14px; color: var(--nx-text); }
+  .nx-rules-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px;
+    li { display: flex; gap: 10px; font-size: 13px; strong { flex: 0 0 56px; color: var(--nx-text-muted); } span { min-width: 0; overflow-wrap: anywhere; } } }
   .nx-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 16px; }
   .nx-form :deep(.el-select) { width: 100%; }
   .nx-tech { margin-top: 4px; border-top: 1px solid var(--nx-divider); border-bottom: none;

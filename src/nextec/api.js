@@ -78,6 +78,9 @@ export const clientListsSync = (collection_ids) => request({ url: '/nextec/clien
 export const installRevoke = () => request({ url: '/nextec/install-token/revoke', method: 'post', data: {} })
 export const policiesList = () => request({ url: '/nextec/policies' })
 export const policySave = (data) => request({ url: '/nextec/policies', method: 'post', data })
+// patch 0049: herança global > cliente > subgrupo > dispositivo
+export const policyScopes = () => request({ url: '/nextec/policies/scopes' })
+export const policyEffective = (peer_id) => request({ url: '/nextec/policies/effective', params: { peer_id } })
 export const sessionsList = () => request({ url: '/nextec/sessions' })
 export const sessionDisconnect = (peer_id, conn_id) => request({ url: '/nextec/sessions/disconnect', method: 'post', data: { peer_id, conn_id } })
 export const ticketSettings = () => request({ url: '/nextec/ticket-settings' })

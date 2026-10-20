@@ -154,10 +154,10 @@
         </el-table-column>
         <el-table-column label="Regra da senha" min-width="170">
           <template #default="{ row }">
-            <button type="button" class="nx-rule" :class="'is-' + ruleBadge(ruleOf(row, policies)).tone"
-                    :aria-label="'Alterar a regra da senha de ' + (row.alias || row.hostname || fmtId(row.peer_id)) + '. Hoje: ' + ruleBadge(ruleOf(row, policies)).title" @click="openRule(row)">
-              <span class="nx-rule-title">{{ ruleBadge(ruleOf(row, policies)).title }}</span>
-              <span class="nx-rule-detail">{{ ruleBadge(ruleOf(row, policies)).detail }}</span>
+            <button type="button" class="nx-rule" :class="'is-' + ruleBadge(ruleOf(row, policies, groups)).tone"
+                    :aria-label="'Alterar a regra da senha de ' + (row.alias || row.hostname || fmtId(row.peer_id)) + '. Hoje: ' + ruleBadge(ruleOf(row, policies, groups)).title" @click="openRule(row)">
+              <span class="nx-rule-title">{{ ruleBadge(ruleOf(row, policies, groups)).title }}</span>
+              <span class="nx-rule-detail">{{ ruleBadge(ruleOf(row, policies, groups)).detail }}</span>
               <span class="nx-rule-edit">Alterar</span>
             </button>
           </template>
@@ -343,7 +343,17 @@
 
     <!-- regras por grupo -->
     <el-dialog v-model="rules.visible" class="nx-dlg" title="Regras de senha automática" width="720px">
-      <p class="nx-help nx-help-top">Máquinas dos grupos ligados abaixo passam a trocar a senha sozinhas, no intervalo escolhido. Uma regra na própria máquina vale mais que a do grupo. A regra vale só para as máquinas que estão direto no grupo: um subgrupo (ex.: "Cliente / Servidores") não herda a do cliente e precisa da própria regra.</p>
+      <p class="nx-help nx-help-top">Máquinas dos grupos ligados abaixo passam a trocar a senha sozinhas, no intervalo escolhido. Vale a regra mais próxima da máquina: a da própria máquina, depois a do subgrupo, a do cliente e por fim a global. Um subgrupo (ex.: "Cliente / Servidores") herda a regra do cliente, a menos que tenha a própria. "Aprovar sozinho" libera a primeira senha das máquinas novas desse grupo sem fila de aprovação.</p>
+      <div class="nx-global-rule" role="group" aria-label="Regra global">
+        <strong>Regra global</strong>
+        <span class="nx-small nx-muted">Vale para toda máquina que não tem regra própria, do subgrupo ou do cliente.</span>
+        <el-switch :model-value="!!globalPolicy.enabled" aria-label="Regra global ligada" @change="v => saveGlobal({ enabled: v })"/>
+        <el-select :model-value="globalPolicy.interval_minutes || 180" aria-label="Intervalo global" style="width: 150px" @change="v => saveGlobal({ interval_minutes: v })">
+          <el-option v-for="o in intervals" :key="o.value" :label="o.label" :value="o.value"/>
+        </el-select>
+        <el-checkbox :model-value="!!globalPolicy.auto_approve" @change="v => saveGlobal({ auto_approve: v })">Aprovar sozinho</el-checkbox>
+        <el-button v-if="globalPolicy.ref" size="small" text type="danger" @click="removePolicy(globalPolicy)">Remover</el-button>
+      </div>
       <el-table :data="groupPolicies" empty-text="Nenhum grupo ligado ainda." aria-label="Regras por grupo">
         <el-table-column label="Grupo" min-width="200">
           <template #default="{ row }">{{ groupName(Number(row.ref)) || 'grupo ' + row.ref }}</template>
@@ -356,6 +366,11 @@
         <el-table-column label="Máquinas" min-width="150">
           <template #default="{ row }">
             <span class="nx-small">{{ usageText(row) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="Aprovar sozinho" width="130">
+          <template #default="{ row }">
+            <el-switch v-model="row.auto_approve" aria-label="Aprovar sozinho" @change="savePolicy(row)"/>
           </template>
         </el-table-column>
         <el-table-column label="Trocar a cada" width="150">
@@ -676,8 +691,15 @@
   // ---------- regras ----------
   const rules = reactive({ visible: false, group: null, interval: 180 })
   const savePolicy = async (p) => {
-    const r = await secretsPolicy({ kind: p.kind, ref: p.ref, enabled: p.enabled, interval_minutes: p.interval_minutes }).catch(() => false)
+    const r = await secretsPolicy({ kind: p.kind, ref: p.ref, enabled: p.enabled, interval_minutes: p.interval_minutes, auto_approve: !!p.auto_approve }).catch(() => false)
     if (r) { ElMessage.success('Regra salva.'); load() }
+  }
+  // regra global: uma linha só (kind global), criada na primeira alteração
+  const globalPolicy = computed(() => policies.value.find(p => p.kind === 'global') || { kind: 'global', ref: '', enabled: false, interval_minutes: 180, auto_approve: false })
+  const saveGlobal = async (patch) => {
+    const g = { ...globalPolicy.value, ...patch }
+    const r = await secretsPolicy({ kind: 'global', ref: 'global', enabled: !!g.enabled, interval_minutes: g.interval_minutes || 180, auto_approve: !!g.auto_approve }).catch(() => false)
+    if (r) { ElMessage.success('Regra global salva.'); load() }
   }
   const addGroupRule = async () => {
     const r = await secretsPolicy({ kind: 'group', ref: String(rules.group), enabled: true, interval_minutes: rules.interval }).catch(() => false)
@@ -690,7 +712,7 @@
   // ---------- regra de uma máquina ----------
   const ruleDlg = reactive({ visible: false, peer: '', name: '', client: '', choice: 'client', interval: 180, nowTitle: '', nowDetail: '', followText: '', saving: false })
   const openRule = (row) => {
-    const rule = ruleOf(row, policies.value)
+    const rule = ruleOf(row, policies.value, groups.value)
     const badge = ruleBadge(rule)
     const client = groupName(row.group_id)
     Object.assign(ruleDlg, {
@@ -982,6 +1004,7 @@
     .nx-rule-detail { font-size: 12px; color: var(--nx-text-muted); }
     .nx-rule-edit { font-size: 12px; color: var(--nx-accent); font-weight: 600; }
     &.is-client { border-left: 4px solid #613CB3; }
+    &.is-global { border-left: 4px solid #0B6E8A; }
     &.is-machine { border-left: 4px solid #B26A00; }
     &.is-off { border-left: 4px solid #9A97AD; }
     &.is-none { border-style: dashed; }
@@ -995,6 +1018,7 @@
   .nx-help-top { margin: 0 0 14px; font-size: 13px; }
   .nx-pw { display: flex; gap: 10px; align-items: center; padding: 12px 14px; border-radius: 12px; background: var(--nx-field);
     code { flex: 1; font-size: 16px; letter-spacing: .04em; word-break: break-all; color: var(--nx-text); } }
+  .nx-global-rule { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 14px; margin-bottom: 14px; border-radius: 14px; background: var(--nx-bg); .nx-small { flex: 1 1 220px; } }
   .nx-add-group { display: flex; gap: 8px; margin-top: 14px; .el-select:first-child { flex: 1; min-width: 0; } .el-button { margin: 0; } }
   .nx-cmd { margin-top: 14px; padding: 12px 14px; border-radius: 12px; background: var(--nx-field); display: flex; flex-direction: column; gap: 8px; align-items: flex-start;
     code { font-size: 12px; line-height: 1.5; word-break: break-all; color: var(--nx-text); } }

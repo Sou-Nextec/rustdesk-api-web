@@ -32,3 +32,9 @@ python -I cenario-bug4.py <senha>   # listas "Cliente: X" ao salvar/mover, troca
 ```bash
 python -I cenario-item6.py <senha> api/rustdeskapi.db   # nome fixo do MSI, sugestão por download, ambiguidade, convite recusado
 ```
+
+## Itens 2, 3 e 11a (patch 0049)
+
+```bash
+python -I cenario-item23.py <senha>   # global > cliente > subgrupo > máquina, origem, aprovação automática, isolamento e auditoria
+```

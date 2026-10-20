@@ -416,3 +416,22 @@ Item 6 do plano. Aplica depois do 0047.
 - **Suporte avulso (Quick Support):** o link `/s/<token>` já associa a máquina pelo IP e hora do download e entrega `Suporte-Nextec.exe`
   com nome fixo; não há MSI nem código no nome, então nada muda ali.
 - Testes: `service/nextec_invite_suggest_test.go`.
+
+## Patch 0049: herança global > cliente > subgrupo > máquina e aprovação automática
+
+- **Ordem de resolução (uma só, para senha e política do app):** máquina, depois o subgrupo, o cliente (subindo pela hierarquia
+  `parent_id`, no máximo 8 níveis) e por fim a regra **global**. Vale a regra mais próxima, inteira (sem mesclar chave a chave).
+  Regra de senha desligada em um grupo também vale e encerra a busca; política do app desligada é ignorada e a busca continua.
+- **Regra global:** `kind = global`, `ref = global`, aceita em `POST /admin/nextec/secrets/policy` e `POST /admin/nextec/policies`.
+- **`auto_approve` (item 11a):** novo campo da regra de senha (`NextecSecretPolicy.AutoApprove`, padrão desligado), aceito só em regra
+  de grupo ou global (regra de máquina é recusada). `NextecSelfEnroll` não deixa pendente a máquina que entra com cliente quando a regra
+  efetiva do GRUPO (sem contar a regra da própria máquina) tem `auto_approve`: aprova na hora, força a troca da primeira senha e grava
+  `enroll_auto_approved` na auditoria com a origem da regra e o caminho do cliente. Máquina sem cliente é sempre pendente.
+  A aprovação automática não consome o limite de pendentes.
+- **Origem em cada máquina:** `GET /nextec/secrets` devolve `rule_origin` (peer|group|global|none), `rule_origin_group`,
+  `rule_origin_name` e `auto_approve`; a lista inclui as máquinas dos subgrupos que herdam a regra do cliente e todas, com a global ligada.
+- **Novos endpoints:** `GET /admin/nextec/policies/effective?peer_id=` (regra de senha e política do app que valem, com origem e caminho do
+  cliente) e `GET /admin/nextec/policies/scopes` (por cliente e subgrupo: máquinas, regra própria ou herdada e origem).
+- **Auditoria:** alterações de regra de senha (`policy_set`/`policy_remove`) e de política do app (`app_policy_set`/`app_policy_remove`)
+  gravam o texto de antes e depois.
+- Testes: `service/nextec_inherit_test.go` (precedência e origem, validação do `auto_approve`, aprovação automática, lista de senhas e escopos).
