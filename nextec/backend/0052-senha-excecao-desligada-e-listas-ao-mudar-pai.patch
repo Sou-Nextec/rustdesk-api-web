@@ -1,0 +1,193 @@
+diff --git a/http/controller/admin/deviceGroup.go b/http/controller/admin/deviceGroup.go
+index cf3929b..8f2889e 100644
+--- a/http/controller/admin/deviceGroup.go
++++ b/http/controller/admin/deviceGroup.go
+@@ -134,7 +134,7 @@ func (ct *DeviceGroup) Update(c *gin.Context) {
+ 			fields = append(fields, "parent_id")
+ 		}
+ 	}
+-	err := service.UpdateFields(u, fields...)
++	_, _, err := service.NextecGroupUpdateSync(service.AllService.UserService.CurUser(c), nextecIP(c), u, fields...)
+ 	if err != nil {
+ 		response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
+ 		return
+diff --git a/service/nextec_client_lists.go b/service/nextec_client_lists.go
+index be1c894..96dcfa7 100644
+--- a/service/nextec_client_lists.go
++++ b/service/nextec_client_lists.go
+@@ -73,7 +73,12 @@ func NextecSyncClientListsTx(tx *gorm.DB, peerID string, oldGroup, newGroup uint
+ 	if oldGroup == newGroup {
+ 		return 0, 0, nil
+ 	}
+-	oldChain, newChain := nextecGroupChainTx(tx, oldGroup), nextecGroupChainTx(tx, newGroup)
++	return nextecSyncChainsTx(tx, peerID, nextecGroupChainTx(tx, oldGroup), nextecGroupChainTx(tx, newGroup))
++}
++
++// nextecSyncChainsTx faz a troca de listas a partir das cadeias (grupo e ancestrais) de antes e de depois. Serve também para
++// quando é o grupo que muda de pai: a máquina fica onde está, mas a cadeia dela mudou.
++func nextecSyncChainsTx(tx *gorm.DB, peerID string, oldChain, newChain []uint) (removed, added int, err error) {
+ 	leave := nextecClientListsFor(tx, nextecDiffIDs(oldChain, newChain))
+ 	join := nextecClientListsFor(tx, nextecDiffIDs(newChain, oldChain))
+ 	if len(leave) > 0 {
+@@ -237,3 +242,40 @@ func NextecReconcileClientList(u *model.User, ip string, collectionID uint) (*Ne
+ 	NextecSecretAuditAdd(u, "", "client_list_reconcile", ip, fmt.Sprintf("%s: %d incluída(s), %d removida(s)", res.Name, res.Added, res.Removed))
+ 	return res, nil
+ }
++
++// NextecGroupUpdateSync grava os campos do grupo e, se o pai mudou, ressincroniza as listas "Cliente: X" de todas as
++// máquinas da subárvore: saem das listas dos ancestrais antigos e entram nas dos novos (só listas de administrador).
++// Tudo em uma transação. Devolve quantas entradas saíram e entraram.
++func NextecGroupUpdateSync(u *model.User, ip string, g *model.DeviceGroup, fields ...string) (removed, added int, err error) {
++	err = DB.Transaction(func(tx *gorm.DB) error {
++		subtree := nextecSubtree(tx, g.Id)
++		before := map[uint][]uint{}
++		for _, id := range subtree {
++			before[id] = nextecGroupChainTx(tx, id)
++		}
++		if e := tx.Model(g).Select(fields).Updates(g).Error; e != nil {
++			return e
++		}
++		var peers []model.Peer
++		if e := tx.Select("id", "group_id").Where("group_id IN ?", subtree).Find(&peers).Error; e != nil {
++			return e
++		}
++		after := map[uint][]uint{}
++		for _, p := range peers {
++			if _, ok := after[p.GroupId]; !ok {
++				after[p.GroupId] = nextecGroupChainTx(tx, p.GroupId)
++			}
++			r, a, e := nextecSyncChainsTx(tx, p.Id, before[p.GroupId], after[p.GroupId])
++			if e != nil {
++				return e
++			}
++			removed, added = removed+r, added+a
++		}
++		return nil
++	})
++	if err == nil && removed+added > 0 {
++		NextecSecretAuditAdd(u, "", "client_lists_sync", ip,
++			fmt.Sprintf("grupo %s mudou de pai: %d entrada(s) removida(s), %d incluída(s)", nextecGroupPathOrRoot(g.Id), removed, added))
++	}
++	return removed, added, err
++}
+diff --git a/service/nextec_client_lists_test.go b/service/nextec_client_lists_test.go
+index bad28df..1265260 100644
+--- a/service/nextec_client_lists_test.go
++++ b/service/nextec_client_lists_test.go
+@@ -175,3 +175,43 @@ func TestClientListsIgnoreNonAdminCollectionWithSameName(t *testing.T) {
+ 		t.Fatal("a reconciliação mexeu na coleção pessoal")
+ 	}
+ }
++
++// Achado de revisão (P1): mudar o pai de um subgrupo precisa mover as máquinas entre as listas dos clientes.
++func TestClientListsFollowSubgroupReparent(t *testing.T) {
++	db, c := listsSetup(t)
++	mine := &model.AddressBookCollection{UserId: 2, Name: "Cliente: Cliente B"} // pessoal de usuário comum: não entra
++	db.Create(mine)
++	db.Create(&model.Peer{Id: "777000111", Uuid: "u-stay", GroupId: 7})
++	setPeerGroup(t, db, 9)
++	for _, col := range []uint{c["A"], c["F"]} {
++		db.Create(&model.AddressBook{Id: enrollPeer, UserId: 1, CollectionId: col})
++	}
++	db.Create(&model.AddressBook{Id: "777000111", UserId: 1, CollectionId: c["A"]})
++
++	removed, added, err := NextecGroupUpdateSync(nil, "x", &model.DeviceGroup{IdModel: model.IdModel{Id: 9}, ParentId: 8}, "parent_id")
++	if err != nil || removed != 1 || added != 1 {
++		t.Fatalf("reparent: removed=%d added=%d err=%v", removed, added, err)
++	}
++	if inList(db, c["A"], enrollPeer) {
++		t.Fatal("o cliente antigo continuou vendo a máquina do subgrupo que saiu")
++	}
++	if !inList(db, c["B"], enrollPeer) {
++		t.Fatal("o cliente novo não recebeu a máquina do subgrupo")
++	}
++	if !inList(db, c["F"], enrollPeer) {
++		t.Fatal("a lista do próprio subgrupo perdeu a máquina")
++	}
++	if !inList(db, c["A"], "777000111") {
++		t.Fatal("máquina que não é do subgrupo foi mexida")
++	}
++	if inList(db, mine.Id, enrollPeer) {
++		t.Fatal("a máquina vazou para a coleção pessoal de usuário comum")
++	}
++	if auditCount(db, "client_lists_sync") == 0 {
++		t.Fatal("faltou auditoria da ressincronização")
++	}
++	// repetir não muda nada
++	if r, a, err := NextecGroupUpdateSync(nil, "x", &model.DeviceGroup{IdModel: model.IdModel{Id: 9}, ParentId: 8}, "parent_id"); err != nil || r+a != 0 {
++		t.Fatalf("repetição mexeu nas listas: %d %d %v", r, a, err)
++	}
++}
+diff --git a/service/nextec_enroll.go b/service/nextec_enroll.go
+index c90fe81..d632394 100644
+--- a/service/nextec_enroll.go
++++ b/service/nextec_enroll.go
+@@ -565,7 +565,9 @@ func NextecEnrollAssign(o NextecAssignOptions) (*NextecAssignResult, error) {
+ 		case "peer":
+ 			want = &model.NextecSecretPolicy{Kind: "peer", Ref: o.PeerID, Enabled: true, IntervalMinutes: interval}
+ 		case "none":
+-			if groupRuleOn {
++			// Vale o que a máquina herdaria (regra do cliente, de um cliente-pai ou a global, sem contar a própria): se herdar
++			// uma regra ligada, "sem senha automática" precisa de uma exceção desligada explícita que vença a herdada.
++			if inh := nextecSecretEffectiveTx(tx, "", o.ClientID); inh.Origin != NextecOriginNone && inh.Enabled {
+ 				want = &model.NextecSecretPolicy{Kind: "peer", Ref: o.PeerID, Enabled: false, IntervalMinutes: NextecSecretDefaultInterval}
+ 			}
+ 		}
+@@ -602,11 +604,12 @@ func NextecEnrollAssign(o NextecAssignOptions) (*NextecAssignResult, error) {
+ 					return err
+ 				}
+ 			default:
++				wantOn := want.Enabled // o Create devolve o default (true) no campo; guardar antes
+ 				if err := tx.Create(want).Error; err != nil {
+ 					return err
+ 				}
+ 				// O GORM aplica o default (true) ao false do Create; grava o desligado de forma explícita.
+-				if !want.Enabled {
++				if !wantOn {
+ 					if err := tx.Model(want).Update("enabled", false).Error; err != nil {
+ 						return err
+ 					}
+diff --git a/service/nextec_enroll_review_test.go b/service/nextec_enroll_review_test.go
+index 37e4f10..1466209 100644
+--- a/service/nextec_enroll_review_test.go
++++ b/service/nextec_enroll_review_test.go
+@@ -448,3 +448,39 @@ func TestStalePendingsStillCountTowardCap(t *testing.T) {
+ 		t.Fatalf("teto: %v", err)
+ 	}
+ }
++
++// Achado de revisão (P1): "sem senha automática" com regra herdada (global ou de cliente-pai) precisa de exceção desligada explícita.
++func TestAssignNoneCreatesDisabledExceptionOverInheritedRule(t *testing.T) {
++	cases := []struct {
++		name   string
++		setup  func(t *testing.T)
++		client uint
++	}{
++		{"global", func(t *testing.T) { secretRule(t, NextecKindGlobal, NextecGlobalRef, true, 120, nil) }, 7},
++		{"cliente-pai", func(t *testing.T) { secretRule(t, "group", "7", true, 60, nil) }, 9},
++	}
++	for i, tc := range cases {
++		t.Run(tc.name, func(t *testing.T) {
++			db, _ := enrollPending(t, "10.30.1."+string(rune('1'+i)))
++			bug8Groups(t, db)
++			tc.setup(t)
++			if r := NextecSecretEffective(enrollPeer, tc.client); !r.Enabled {
++				t.Fatalf("pré-condição: a regra herdada deveria estar ligada: %#v", r)
++			}
++			res, err := NextecEnrollAssign(NextecAssignOptions{PeerID: enrollPeer, ClientID: tc.client, Rule: "none"})
++			if err != nil || res.Managed || res.Interval != 0 {
++				t.Fatalf("assign none: %#v %v", res, err)
++			}
++			r := NextecSecretEffective(enrollPeer, tc.client)
++			if r.Enabled || r.Origin != NextecOriginPeer {
++				t.Fatalf("regra efetiva deveria ser desligada com origem exceção da máquina: %#v", r)
++			}
++			if p := peerPolicy(db, enrollPeer); p == nil || p.Enabled {
++				t.Fatalf("faltou a exceção desligada explícita na máquina: %#v", p)
++			}
++			if d := deviceRow(t, db, enrollPeer); d.ForceRotate {
++				t.Fatal("none não pode armar troca de senha")
++			}
++		})
++	}
++}

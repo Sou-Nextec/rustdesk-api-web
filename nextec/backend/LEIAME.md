@@ -457,3 +457,10 @@ Limitação conhecida: a busca `q` do servidor não ignora acentos (o `lower()` 
 ## Patch 0051: listas "Cliente: X" sincronizadas só de administrador
 
 Correção de revisão (P1). A sincronização do patch 0047 achava a coleção só pelo nome "Cliente: <grupo>", sem olhar o dono. Um usuário comum que criasse uma coleção pessoal com esse nome recebia e perdia entradas (IDs, hostnames, apelidos, usernames). Agora `nextecClientListsFor` só considera coleções cujo dono é administrador, e `NextecReconcileClientList` recusa lista de dono comum. Teste: `TestClientListsIgnoreNonAdminCollectionWithSameName`. O patch altera `service/nextec_client_lists.go` e os testes; aplica depois do 0050.
+
+## Patch 0052: exceção desligada na atribuição e listas ao mudar o pai do subgrupo
+
+Duas correções de revisão (P1), aplicam depois do 0051.
+
+- **"Sem senha automática" com regra herdada.** `NextecEnrollAssign` com `Rule: none` só criava a exceção desligada da máquina quando o próprio cliente tinha regra ligada; com regra global ou de cliente-pai a rotação continuava valendo. Agora vale a regra que a máquina herdaria (`nextecSecretEffectiveTx` sem a regra própria): se for ligada, grava a exceção desligada, que vence a herdada (origem `peer`). Também corrigido o GORM devolver o default (`true`) ao `Enabled: false` no `Create`, que desfazia a exceção quando a máquina ainda não tinha regra própria. Teste: `TestAssignNoneCreatesDisabledExceptionOverInheritedRule`.
+- **Mudar o pai de um subgrupo.** `device_group/update` com `parent_id` passa por `NextecGroupUpdateSync`: numa transação, grava o grupo e, para as máquinas da subárvore, tira das listas "Cliente: X" dos ancestrais antigos e coloca nas dos novos (só listas de dono administrador). Grava auditoria `client_lists_sync`. Teste: `TestClientListsFollowSubgroupReparent`.
