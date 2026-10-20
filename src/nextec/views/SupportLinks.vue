@@ -43,7 +43,11 @@
       <li v-for="row in rows" :key="row.id">
         <div class="nx-sl-main">
           <strong>{{ row.label }}</strong>
-          <span class="nx-small nx-muted">{{ meta(row) }}</span>
+          <span class="nx-sl-sub">
+            <button v-if="codeOf(row).full" type="button" class="nx-sl-code" :title="'Código do atendimento ' + codeOf(row).full + '. Clique para copiar.'"
+                    :aria-label="'Copiar o código do atendimento ' + codeOf(row).full" @click="copyCode(row)">{{ codeOf(row).text }}</button>
+            <span class="nx-small nx-muted">{{ meta(row) }}</span>
+          </span>
         </div>
         <el-tag :type="tone(row.status)" size="small" disable-transitions>{{ statusLabel(row) }}</el-tag>
         <div class="nx-sl-actions">
@@ -67,6 +71,7 @@
   import { fmtId } from '@/nextec/id'
   import { usePublicBase, publicBaseReady, loadPublicBase } from '@/nextec/public-base'
   import { supportLinkUrl } from '@/nextec/public-links.mjs'
+  import { attendanceCode } from '@/nextec/quick-id.mjs'
 
   const rows = ref([])
   const loaded = ref(false)
@@ -123,6 +128,11 @@
     if (!publicBaseReady.value) { loadPublicBase(true); ElMessage.warning('Ainda carregando o endereço dos links. Tente copiar de novo em instantes.'); return }
     try { await navigator.clipboard.writeText(text); ElMessage.success(msg) } catch (e) { ElMessage.error('Não foi possível copiar.') }
   }
+  const codeOf = (row) => attendanceCode(row.token)
+  // o código é curto e não depende do endereço público dos links, então copia sem esperar a base
+  const copyCode = async (row) => {
+    try { await navigator.clipboard.writeText(codeOf(row).full); ElMessage.success('Código ' + codeOf(row).full + ' copiado.') } catch (e) { ElMessage.error('Não foi possível copiar.') }
+  }
   const revoke = async (row) => {
     const c = await ElMessageBox.confirm(`Cancelar o link de ${row.label}? Quem abrir depois verá que o link venceu.`, 'Cancelar link',
       { confirmButtonText: 'Cancelar link', cancelButtonText: 'Voltar', type: 'warning' }).catch(() => false)
@@ -159,6 +169,10 @@
   .nx-sl-list { list-style: none; margin: 0; padding: 0 22px 14px; display: grid; gap: 8px; }
   .nx-sl-list li { display: flex; align-items: center; gap: 10px 14px; flex-wrap: wrap; padding: 10px 12px; border-radius: 12px; background: var(--nx-field); }
   .nx-sl-main { flex: 1 1 220px; min-width: 0; display: grid; gap: 2px; strong { color: var(--nx-text); overflow-wrap: anywhere; } }
+  .nx-sl-sub { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; }
+  .nx-sl-code { font: 600 12px/1 var(--nx-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); letter-spacing: 0.06em; color: var(--nx-text);
+    background: var(--nx-surface); border: 1px solid var(--nx-divider); border-radius: 6px; padding: 3px 7px; cursor: pointer;
+    &:hover { border-color: var(--el-color-primary); } &:focus-visible { outline: 2px solid var(--el-color-primary); outline-offset: 1px; } }
   .nx-danger-text { color: #BA1A1A; }
   html.dark .nx-danger-text { color: #FF9C93; }
   @media (max-width: 560px) { .nx-sl-hours { flex: 1 1 100%; } }
