@@ -1,5 +1,7 @@
 // Saídas de um convite de instalação: o link para o cliente e o comando PowerShell silencioso.
-// O MSI sai com o código no nome (<app>-<código>.msi): é por esse nome que o instalador sabe de qual convite veio.
+// Baixado pelo navegador (/i/<código>/baixar), o MSI tem nome fixo (nextec-acesso-<versão>.msi) e o instalador lê o código da marca de
+// origem do arquivo (Zone.Identifier). O comando abaixo baixa com o PowerShell, que não grava essa marca: por isso o arquivo dele
+// leva o código no nome (<app>-<código>.msi), que o instalador também entende.
 // O comando confere o SHA-256 que já vai escrito nele (um painel adulterado não consegue trocar o arquivo) e só então instala.
 
 import { installerLinkUrl } from './public-links.mjs'

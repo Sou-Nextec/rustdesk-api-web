@@ -97,6 +97,7 @@
             <div>{{ ago(row.enrolled_at) }}</div>
             <div class="nx-muted nx-small">{{ viaText[row.enrolled_via] || 'Inscrição global' }}</div>
             <div v-if="row.after_reject" class="nx-muted nx-small nx-after-reject">Nova após rejeição{{ row.reject_reason ? ': ' + row.reject_reason : '' }}</div>
+            <div v-if="row.suggested" class="nx-small nx-suggested" :title="row.suggested.reason">Sugestão: {{ row.suggested.client }}</div>
             <div class="nx-muted nx-small nx-next-check">{{ nextCheckText(row) }}</div>
           </template>
         </el-table-column>
@@ -216,6 +217,7 @@
     <!-- escolher cliente -->
     <el-dialog v-model="pick.visible" class="nx-dlg" title="Escolher cliente" width="min(520px, 92vw)">
       <p class="nx-help nx-help-top">{{ pick.name }} ({{ fmtId(pick.peer) }}). Só depois do cliente o cofre gera e libera a senha desta máquina.</p>
+      <p v-if="pick.suggested && pick.client === pick.suggested.client_id" class="nx-help nx-suggested">Cliente sugerido: {{ pick.suggested.client }}, porque {{ pick.suggested.reason }}. Confirme antes de atribuir.</p>
       <el-form label-position="top" class="nx-form" @submit.prevent>
         <el-form-item label="Cliente" required class="is-required">
           <el-select v-model="pick.client" filterable :filter-method="onClientFilter" placeholder="Busque o cliente" no-data-text="Nenhum cliente com esse nome." @visible-change="onClientOpen">
@@ -729,13 +731,13 @@
 
   // ---------- escolher cliente (pendentes e máquinas sem cliente) ----------
   const pick = reactive({
-    visible: false, loading: false, error: '', peer: '', name: '', pending: false, uuid: '', client: null, term: '',
+    visible: false, loading: false, error: '', peer: '', name: '', pending: false, uuid: '', client: null, suggested: null, term: '',
     rule: 'none', interval: 180, move: false, currentGroup: 0, creating: false, newName: '', createError: '', createBusy: false,
   })
   const openChoose = (row) => {
     Object.assign(pick, {
       visible: true, loading: false, error: '', peer: row.peer_id, name: row.alias || row.hostname || 'Máquina',
-      pending: row.state === 'pending', uuid: row.uuid || '', client: row.group_id || null, term: '', rule: 'none', interval: 180,
+      pending: row.state === 'pending', uuid: row.uuid || '', client: row.group_id || row.suggested?.client_id || null, suggested: row.suggested || null, term: '', rule: 'none', interval: 180,
       move: false, currentGroup: row.group_id || 0, creating: false, newName: '', createError: '', createBusy: false,
     })
   }
@@ -969,6 +971,7 @@
   }
   .nx-row-actions-stack { flex-direction: column; align-items: stretch; .el-button { white-space: normal; height: auto; padding: 6px 8px; text-align: left; line-height: 1.3; } }
   .nx-after-reject { color: var(--nx-warning, #b45309); }
+  .nx-suggested { color: var(--nx-primary, #1d4ed8); }
   .nx-row-actions { display: flex; gap: 6px; flex-wrap: nowrap; justify-content: flex-end; .el-button { margin: 0 !important; } }
   .nx-status { cursor: default; outline-offset: 2px; }
   .nx-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }

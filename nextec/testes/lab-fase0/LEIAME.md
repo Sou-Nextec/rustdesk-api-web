@@ -26,3 +26,9 @@ assinado pela Nextec. Resultado da última execução: 22 de 22. Bug 4: 15 de 15
 ```bash
 python -I cenario-bug4.py <senha>   # listas "Cliente: X" ao salvar/mover, troca de subgrupo, cliente novo, sem cliente, reconciliação
 ```
+
+## Item 6 (patch 0048)
+
+```bash
+python -I cenario-item6.py <senha> api/rustdeskapi.db   # nome fixo do MSI, sugestão por download, ambiguidade, convite recusado
+```

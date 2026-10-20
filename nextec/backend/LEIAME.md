@@ -399,3 +399,20 @@ Bug 4 do plano. Aplica depois do 0046.
 - **Painel (Acesso por cliente):** a contagem e o "fora da lista" passam a incluir os subgrupos, aparece "N a mais" quando a lista
   tem entradas que não deveriam estar, e Sincronizar chama a reconciliação (antes só incluía).
 - Testes: `service/nextec_client_lists_test.go`.
+
+## Patch 0048: download do convite com nome fixo e sugestão de cliente
+
+Item 6 do plano. Aplica depois do 0047.
+
+- **Nome do arquivo:** `GET /i/<código>/baixar` entrega `nextec-acesso-<versão>.msi`, sem o código. O instalador (agente, repositório rdgen)
+  lê o código da marca de origem do arquivo (Zone.Identifier: `HostUrl` e `ReferrerUrl` com `/i/<código>/baixar` e `/i/<código>`) e, para
+  MSI baixado antes, ainda entende o código no nome. O comando PowerShell do painel continua gravando o código no nome do arquivo
+  (o PowerShell não grava a marca de origem).
+- **Download registrado:** tabela `NextecInviteDownload` (convite, IP, hora; guardada por 7 dias, no máximo 5000 linhas).
+- **Sugestão de cliente (`NextecSuggestClient`):** máquina pendente e sem cliente recebe `suggested` em `GET /nextec/secrets` quando (1) o
+  agente apresentou um código que o servidor recusou (convite cancelado, vencido ou esgotado): sugere o cliente do convite; ou (2) o IP
+  de origem é o de um download de convite nas últimas 72 h e todos esses downloads são do mesmo cliente. Dois clientes no mesmo IP não geram
+  sugestão. É só sugestão: a máquina continua pendente até o admin atribuir, e o painel pré-seleciona o cliente no diálogo.
+- **Suporte avulso (Quick Support):** o link `/s/<token>` já associa a máquina pelo IP e hora do download e entrega `Suporte-Nextec.exe`
+  com nome fixo; não há MSI nem código no nome, então nada muda ali.
+- Testes: `service/nextec_invite_suggest_test.go`.
