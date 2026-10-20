@@ -338,7 +338,7 @@
   import GroupPicker from '@/nextec/views/GroupPicker.vue'
   import { policyEffective, devicesList, devicesTree, devicesMove } from '@/nextec/api'
   import DeviceTree from '@/nextec/views/DeviceTree.vue'
-  import { deviceQueryParams, PAGE_MAX } from '@/nextec/device-query.mjs'
+  import { deviceQueryParams, collectAllPages, PAGE_MAX, EXPORT_MAX } from '@/nextec/device-query.mjs'
   import { everyText, originText } from '@/nextec/secret-rule.mjs'
   import { clientColorIndex, clientChipStyle } from '@/nextec/client-color.mjs'
   import { clientOptions, subOptions, matchesClient, matchesSub, deviceClientParts } from '@/nextec/client-groups.mjs'
@@ -675,16 +675,14 @@
 
   // exportar / importar
   const exportCsv = async () => {
-    // baixa todas as páginas do filtro atual (200 por vez, até 10 mil máquinas)
-    const found = []
-    for (let pg = 1; pg <= 50; pg++) {
-      const r = await devicesList(deviceQueryParams({ page: pg, pageSize: PAGE_MAX, q: q.value, client: clientFilter.value, sub: subFilter.value,
-        status: statusFilter.value, sort: effSort.value, favorites: qa.state.favorites })).catch(() => false)
-      if (!r) return ElMessage.error('Não foi possível exportar.')
-      found.push(...(r.data.list || []))
-      if (found.length >= (r.data.total || 0)) break
+    // baixa todas as páginas do filtro atual (200 por vez); acima de EXPORT_MAX recusa e pede para filtrar, sem cortar em silêncio
+    const got = await collectAllPages(pg => devicesList(deviceQueryParams({ page: pg, pageSize: PAGE_MAX, q: q.value, client: clientFilter.value,
+      sub: subFilter.value, status: statusFilter.value, sort: effSort.value, favorites: qa.state.favorites })))
+    if (!got.ok) {
+      if (got.reason === 'too_many') return ElMessage.warning(`São ${got.total} dispositivos no filtro atual e o limite da exportação é ${EXPORT_MAX}. Filtre por cliente e exporte de novo.`)
+      return ElMessage.error(got.reason === 'incomplete' ? 'A lista veio incompleta; nada foi exportado. Tente de novo.' : 'Não foi possível exportar.')
     }
-    const rows = found.map(r => ({
+    const rows = got.rows.map(r => ({
       id: r.id, alias: r.alias, hostname: r.hostname, username: r.username, group_id: r.group_id,
       cliente: groupName(r.group_id), os: r.os, version: r.version, cpu: r.cpu, memory: r.memory, uuid: r.uuid,
       last_online_ip: r.last_online_ip,

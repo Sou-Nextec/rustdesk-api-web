@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { deviceQueryParams, treeRows, treeSelection, treeActive, PAGE_MAX } from '../../src/nextec/device-query.mjs'
+import { deviceQueryParams, treeRows, treeSelection, treeActive, PAGE_MAX, EXPORT_MAX, collectAllPages } from '../../src/nextec/device-query.mjs'
 
 test('sem filtro: só página, tamanho e ordem', () => {
   assert.deepEqual(deviceQueryParams({}), { page: 1, page_size: 20, sort: 'online' })
@@ -59,4 +59,33 @@ test('clique na árvore vira filtro e a linha marcada acompanha', () => {
   assert.equal(treeActive(rows[1], 1, 3), true)
   assert.equal(treeActive({ kind: 'all' }, null, null), true)
   assert.equal(treeActive({ kind: 'none' }, 0, null), true)
+})
+
+// Achado do Codex (P2): a exportação não pode cortar em silêncio.
+const fakeServer = (total) => async (page) => {
+  const from = (page - 1) * PAGE_MAX
+  const n = Math.max(0, Math.min(PAGE_MAX, total - from))
+  return { data: { total, list: Array.from({ length: n }, (_, i) => ({ id: String(from + i) })) } }
+}
+
+test('exportação: pagina até o total, sem teto de páginas', async () => {
+  const total = 12345 // mais que as 50 páginas de 200 (10 mil) do código antigo
+  const r = await collectAllPages(fakeServer(total))
+  assert.equal(r.ok, true)
+  assert.equal(r.rows.length, total)
+  assert.equal(new Set(r.rows.map(x => x.id)).size, total)
+})
+
+test('exportação: acima do limite recusa de forma explícita e não devolve linhas', async () => {
+  const r = await collectAllPages(fakeServer(EXPORT_MAX + 1))
+  assert.deepEqual({ ok: r.ok, reason: r.reason, total: r.total, n: r.rows.length }, { ok: false, reason: 'too_many', total: EXPORT_MAX + 1, n: 0 })
+})
+
+test('exportação: página vazia antes do total é incompleta, e erro de rede é erro', async () => {
+  const short = async (page) => ({ data: { total: 500, list: page === 1 ? Array.from({ length: PAGE_MAX }, (_, i) => ({ id: String(i) })) : [] } })
+  assert.equal((await collectAllPages(short)).reason, 'incomplete')
+  assert.equal((await collectAllPages(async () => { throw new Error('x') })).reason, 'error')
+  assert.equal((await collectAllPages(async () => false)).reason, 'error')
+  const empty = await collectAllPages(fakeServer(0))
+  assert.deepEqual({ ok: empty.ok, n: empty.rows.length }, { ok: true, n: 0 })
 })

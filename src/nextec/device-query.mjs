@@ -62,3 +62,22 @@ export function treeActive(row, client, sub) {
   if (row.depth === 0) return client === row.group_id && (sub === null || sub === undefined)
   return sub === row.group_id
 }
+
+// Exportação: baixa todas as páginas do filtro até o total que o servidor informa. Acima de EXPORT_MAX recusa de forma explícita
+// (reason 'too_many') em vez de cortar em silêncio; se o servidor parar de devolver linhas antes do total, é 'incomplete'.
+export const EXPORT_MAX = 20000
+
+export async function collectAllPages(fetchPage, { max = EXPORT_MAX } = {}) {
+  const rows = []
+  let total = 0
+  for (let page = 1; ; page++) {
+    const r = await fetchPage(page).catch(() => false)
+    if (!r || !r.data) return { ok: false, reason: 'error', rows: [], total }
+    total = Number(r.data.total) || 0
+    if (total > max) return { ok: false, reason: 'too_many', rows: [], total }
+    const list = Array.isArray(r.data.list) ? r.data.list : []
+    rows.push(...list)
+    if (rows.length >= total) return { ok: true, rows, total }
+    if (!list.length) return { ok: false, reason: 'incomplete', rows, total }
+  }
+}
