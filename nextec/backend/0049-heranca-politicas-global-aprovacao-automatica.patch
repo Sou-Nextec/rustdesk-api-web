@@ -1,0 +1,1097 @@
+diff --git a/http/controller/admin/nextec_control.go b/http/controller/admin/nextec_control.go
+index 46d6e75..0f0508d 100644
+--- a/http/controller/admin/nextec_control.go
++++ b/http/controller/admin/nextec_control.go
+@@ -1,10 +1,12 @@
+ package admin
+ 
+ import (
++	"encoding/json"
+ 	"errors"
+ 
+ 	"github.com/gin-gonic/gin"
+ 	"github.com/lejianwen/rustdesk-api/v2/http/response"
++	"github.com/lejianwen/rustdesk-api/v2/model"
+ 	"github.com/lejianwen/rustdesk-api/v2/service"
+ )
+ 
+@@ -43,12 +45,13 @@ func (n *NextecControl) PolicySave(c *gin.Context) {
+ 		return
+ 	}
+ 	u := service.AllService.UserService.CurUser(c)
++	before := service.NextecPolicyGet(f.Kind, f.Ref)
+ 	if f.Remove {
+ 		if err := service.NextecPolicyDelete(f.Kind, f.Ref); err != nil {
+ 			response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
+ 			return
+ 		}
+-		service.NextecSecretAuditAdd(u, f.Kind+":"+f.Ref, "app_policy_remove", nextecIP(c), "")
++		service.NextecSecretAuditAdd(u, f.Kind+":"+f.Ref, "app_policy_remove", nextecIP(c), "antes "+service.NextecAppPolicyText(before)+"; depois sem regra")
+ 		response.Success(c, nil)
+ 		return
+ 	}
+@@ -57,10 +60,42 @@ func (n *NextecControl) PolicySave(c *gin.Context) {
+ 		response.Fail(c, 101, "Política inválida. Confira o alvo e os valores.")
+ 		return
+ 	}
+-	service.NextecSecretAuditAdd(u, f.Kind+":"+f.Ref, "app_policy_set", nextecIP(c), p.Options)
++	service.NextecSecretAuditAdd(u, f.Kind+":"+f.Ref, "app_policy_set", nextecIP(c), "antes "+service.NextecAppPolicyText(before)+"; depois "+service.NextecAppPolicyText(p))
+ 	response.Success(c, p)
+ }
+ 
++// PolicyScopes devolve, por cliente e subgrupo, a regra efetiva (própria ou herdada) e a origem
++// @Router /admin/nextec/policies/scopes [get]
++func (n *NextecControl) PolicyScopes(c *gin.Context) {
++	response.Success(c, &gin.H{"list": service.NextecPolicyScopes()})
++}
++
++// PolicyEffective devolve a regra de senha e a política do app que valem para uma máquina, com a origem de cada uma
++// @Router /admin/nextec/policies/effective [get]
++func (n *NextecControl) PolicyEffective(c *gin.Context) {
++	peerID := c.Query("peer_id")
++	if peerID == "" || len(peerID) > 64 {
++		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError"))
++		return
++	}
++	pr := &model.Peer{}
++	if service.DB.Where("id = ?", peerID).Limit(1).Find(pr).Error != nil || pr.Id == "" {
++		response.Fail(c, 101, response.TranslateMsg(c, "ItemNotFound"))
++		return
++	}
++	secret := service.NextecSecretEffective(peerID, pr.GroupId)
++	app := service.NextecAppEffective(peerID, pr.GroupId)
++	opts := map[string]string{}
++	if app.Policy != nil {
++		_ = json.Unmarshal([]byte(app.Policy.Options), &opts)
++	}
++	response.Success(c, &gin.H{
++		"peer_id": peerID, "group_id": pr.GroupId, "group_path": service.NextecGroupPath(pr.GroupId),
++		"secret": secret,
++		"app":    gin.H{"enabled": app.Policy != nil, "options": opts, "origin": app.NextecRuleOrigin},
++	})
++}
++
+ // Sessions lista as conexões abertas agora
+ // @Router /admin/nextec/sessions [get]
+ func (n *NextecControl) Sessions(c *gin.Context) {
+diff --git a/http/controller/admin/nextec_secret.go b/http/controller/admin/nextec_secret.go
+index 7708722..7ec34ab 100644
+--- a/http/controller/admin/nextec_secret.go
++++ b/http/controller/admin/nextec_secret.go
+@@ -15,6 +15,8 @@ type nextecPolicyForm struct {
+ 	Enabled  bool   `json:"enabled"`
+ 	Interval int    `json:"interval_minutes"`
+ 	Remove   bool   `json:"remove"`
++	// AutoApprove (opcional): máquina com cliente que se inscreve sob esta regra entra aprovada, sem pendência.
++	AutoApprove *bool `json:"auto_approve"`
+ }
+ 
+ type nextecPeerForm struct {
+@@ -51,21 +53,26 @@ func (n *NextecSecret) Policy(c *gin.Context) {
+ 		return
+ 	}
+ 	u := service.AllService.UserService.CurUser(c)
++	before := service.NextecSecretPolicyGet(f.Kind, f.Ref)
++	target := f.Kind + ":" + f.Ref
++	if f.Kind == "peer" {
++		target = f.Ref
++	}
+ 	if f.Remove {
+ 		if err := service.NextecSecretDeletePolicy(f.Kind, f.Ref); err != nil {
+ 			response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
+ 			return
+ 		}
+-		service.NextecSecretAuditAdd(u, f.Ref, "policy_remove", nextecIP(c), f.Kind)
++		service.NextecSecretAuditAdd(u, target, "policy_remove", nextecIP(c), f.Kind+": antes "+service.NextecSecretPolicyText(before)+"; depois sem regra")
+ 		response.Success(c, nil)
+ 		return
+ 	}
+-	p, err := service.NextecSecretUpsertPolicy(f.Kind, f.Ref, f.Enabled, f.Interval)
++	p, err := service.NextecSecretUpsertPolicyOpts(f.Kind, f.Ref, f.Enabled, f.Interval, f.AutoApprove)
+ 	if err != nil {
+ 		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError")+err.Error())
+ 		return
+ 	}
+-	service.NextecSecretAuditAdd(u, f.Ref, "policy_set", nextecIP(c), f.Kind)
++	service.NextecSecretAuditAdd(u, target, "policy_set", nextecIP(c), f.Kind+": antes "+service.NextecSecretPolicyText(before)+"; depois "+service.NextecSecretPolicyText(p))
+ 	response.Success(c, p)
+ }
+ 
+diff --git a/http/router/admin.go b/http/router/admin.go
+index 7babd78..b9c8aa0 100644
+--- a/http/router/admin.go
++++ b/http/router/admin.go
+@@ -121,6 +121,8 @@ func NextecBind(adg *gin.RouterGroup) {
+ 	ctl := &admin.NextecControl{}
+ 	rg.GET("/policies", ctl.Policies)
+ 	rg.POST("/policies", ctl.PolicySave)
++	rg.GET("/policies/scopes", ctl.PolicyScopes)
++	rg.GET("/policies/effective", ctl.PolicyEffective)
+ 	rg.GET("/sessions", ctl.Sessions)
+ 	rg.POST("/sessions/disconnect", ctl.Disconnect)
+ 
+diff --git a/model/nextec_policy.go b/model/nextec_policy.go
+index caedbe2..9feb64b 100644
+--- a/model/nextec_policy.go
++++ b/model/nextec_policy.go
+@@ -4,7 +4,7 @@ package model
+ // O app a recebe pelo heartbeat (mesmo canal da versão Pro) e aplica sozinho.
+ type NextecAppPolicy struct {
+ 	Id         uint   `json:"id" gorm:"primaryKey"`
+-	Kind       string `json:"kind" gorm:"size:8;not null;uniqueIndex:idx_nextec_app_policy"` // group | peer
++	Kind       string `json:"kind" gorm:"size:8;not null;uniqueIndex:idx_nextec_app_policy"` // group | peer | global
+ 	Ref        string `json:"ref" gorm:"size:64;not null;uniqueIndex:idx_nextec_app_policy"` // id do grupo ou ID da máquina
+ 	Enabled    bool   `json:"enabled"`
+ 	Options    string `json:"options" gorm:"type:text"` // JSON {"enable-file-transfer":"N", ...}
+diff --git a/model/nextec_secret.go b/model/nextec_secret.go
+index 974e4ac..d7bb77c 100644
+--- a/model/nextec_secret.go
++++ b/model/nextec_secret.go
+@@ -8,6 +8,8 @@ type NextecSecretPolicy struct {
+ 	Ref             string `gorm:"not null;index:idx_nx_policy,unique" json:"ref"`
+ 	Enabled         bool   `gorm:"not null;default:true" json:"enabled"`
+ 	IntervalMinutes int    `gorm:"not null;default:180" json:"interval_minutes"`
++	// AutoApprove: máquina que já tem cliente e se inscreve sob esta regra entra aprovada, sem pendência (padrão: desligado).
++	AutoApprove bool `gorm:"not null;default:false" json:"auto_approve"`
+ 	TimeModel
+ }
+ 
+diff --git a/service/nextec_enroll.go b/service/nextec_enroll.go
+index cf47cd6..c90fe81 100644
+--- a/service/nextec_enroll.go
++++ b/service/nextec_enroll.go
+@@ -298,11 +298,18 @@ func NextecSelfEnroll(ip, enrollKey, peerID, uuid, proposedToken string) (*Nexte
+ 			if now-peer.LastOnlineTime > int64(nextecEnrollSeenWindow.Seconds()) {
+ 				return ErrNextecPeerNotRegistered
+ 			}
++			// Item 11a: máquina que já tem cliente e cai sob uma regra (cliente, subgrupo ou global) com "aprovar sozinho"
++			// entra aprovada, sem pendência. A regra própria da máquina não conta aqui; sem cliente, sempre pendente.
++			auto, autoRule := false, NextecSecretRule{}
++			if peer.GroupId != 0 {
++				autoRule = nextecSecretEffectiveTx(tx, "", peer.GroupId)
++				auto = autoRule.AutoApprove && autoRule.Origin != NextecOriginNone
++			}
+ 			var n int64
+ 			if err := tx.Model(&model.NextecDeviceSecret{}).Where("awaiting_approval = ?", true).Count(&n).Error; err != nil {
+ 				return err
+ 			}
+-			if n >= nextecEnrollPendingMax {
++			if !auto && n >= nextecEnrollPendingMax {
+ 				return ErrNextecPendingLimit
+ 			}
+ 			since := now - nextecEnrollHourSecs
+@@ -322,9 +329,14 @@ func NextecSelfEnroll(ip, enrollKey, peerID, uuid, proposedToken string) (*Nexte
+ 			}
+ 			afterReject := nextecEnrollRejectedBefore(tx, peerID)
+ 			row := &model.NextecDeviceSecret{
+-				PeerId: peerID, TokenHash: proposedHash, LastSeenAt: now, AwaitingApproval: true,
++				PeerId: peerID, TokenHash: proposedHash, LastSeenAt: now, AwaitingApproval: !auto,
+ 				EnrolledVia: "self", EnrolledAt: now, EnrolledIp: ip, EnrollEpoch: epoch, Uuid: uuid, AfterReject: afterReject,
+ 			}
++			var approvedAt int64
++			if auto {
++				approvedAt = now
++				row.ApprovedAt, row.ForceRotate = now, autoRule.Enabled
++			}
+ 			if found {
+ 				// Linha sem agente (token vazio): reaproveita preservando o histórico e zerando o estado da senha.
+ 				res := tx.Model(&model.NextecDeviceSecret{}).
+@@ -332,9 +344,9 @@ func NextecSelfEnroll(ip, enrollKey, peerID, uuid, proposedToken string) (*Nexte
+ 					Updates(map[string]interface{}{
+ 						"token_hash": proposedHash, "active_enc": "", "pending_enc": "", "version": 0,
+ 						"protocol_version": 0, "pending_operation": "", "pending_version": 0, "last_operation_id": "",
+-						"active_at": 0, "next_rotation_at": 0, "force_rotate": false, "last_seen_at": now,
+-						"awaiting_approval": true, "enrolled_via": "self", "enrolled_at": now, "enrolled_ip": ip,
+-						"enroll_epoch": epoch, "approved_at": 0, "approved_by": 0, "uuid": uuid, "after_reject": afterReject,
++						"active_at": 0, "next_rotation_at": 0, "force_rotate": auto && autoRule.Enabled, "last_seen_at": now,
++						"awaiting_approval": !auto, "enrolled_via": "self", "enrolled_at": now, "enrolled_ip": ip,
++						"enroll_epoch": epoch, "approved_at": approvedAt, "approved_by": 0, "uuid": uuid, "after_reject": afterReject,
+ 					})
+ 				if res.Error != nil {
+ 					return res.Error
+@@ -349,6 +361,18 @@ func NextecSelfEnroll(ip, enrollKey, peerID, uuid, proposedToken string) (*Nexte
+ 			if err := tx.Create(&model.NextecSecretAudit{At: now, PeerId: peerID, Action: "self_enroll", Ip: ip}).Error; err != nil {
+ 				return err
+ 			}
++			if auto {
++				from := "global"
++				if autoRule.Origin == NextecOriginGroup {
++					from = autoRule.OriginName
++				}
++				if err := tx.Create(&model.NextecSecretAudit{At: now, PeerId: peerID, Action: "enroll_auto_approved", Ip: ip,
++					Detail: "regra herdada de " + from + ", cliente " + nextecGroupPathTx(tx, peer.GroupId)}).Error; err != nil {
++					return err
++				}
++				result = &NextecSelfEnrollResult{Token: proposedToken, State: NextecStateAssigned}
++				return nil
++			}
+ 			result = &NextecSelfEnrollResult{Token: proposedToken, State: NextecStatePending}
+ 			return nil
+ 		})
+@@ -636,14 +660,11 @@ func NextecEnrollAssign(o NextecAssignOptions) (*NextecAssignResult, error) {
+ }
+ 
+ func effectivePolicyTx(tx *gorm.DB, peerID string, groupID uint) (bool, int) {
+-	p := &model.NextecSecretPolicy{}
+-	if tx.Where("kind = ? and ref = ?", "peer", peerID).First(p).Error == nil {
+-		return p.Enabled, p.IntervalMinutes
+-	}
+-	if groupID != 0 && tx.Where("kind = ? and ref = ?", "group", strconv.FormatUint(uint64(groupID), 10)).First(p).Error == nil {
+-		return p.Enabled, p.IntervalMinutes
++	r := nextecSecretEffectiveTx(tx, peerID, groupID)
++	if r.Origin == NextecOriginNone {
++		return false, 0
+ 	}
+-	return false, 0
++	return r.Enabled, r.Interval
+ }
+ 
+ // NextecEnrollReject remove uma inscrição pendente; com block, o par id+uuid não consegue voltar.
+diff --git a/service/nextec_inherit_test.go b/service/nextec_inherit_test.go
+new file mode 100644
+index 0000000..f230e23
+--- /dev/null
++++ b/service/nextec_inherit_test.go
+@@ -0,0 +1,299 @@
++package service
++
++import (
++	"strings"
++	"testing"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"gorm.io/gorm"
++)
++
++// Itens 3 e 11a: herança global > cliente > subgrupo > dispositivo, origem da regra e aprovação automática.
++// Árvore: Cliente A (7) > Filial (9) > Caixa (11); Cliente A > Loja (10); Cliente B (8) sem filhos.
++
++func inheritSetup(t *testing.T) *gorm.DB {
++	t.Helper()
++	db := enrollSetup(t)
++	if err := db.AutoMigrate(&model.NextecAppPolicy{}); err != nil {
++		t.Fatal(err)
++	}
++	for _, g := range []model.DeviceGroup{
++		{IdModel: model.IdModel{Id: 9}, Name: "Cliente A / Filial", ParentId: 7},
++		{IdModel: model.IdModel{Id: 10}, Name: "Cliente A / Loja", ParentId: 7},
++		{IdModel: model.IdModel{Id: 11}, Name: "Cliente A / Filial / Caixa", ParentId: 9},
++	} {
++		g := g
++		if err := db.Create(&g).Error; err != nil {
++			t.Fatal(err)
++		}
++	}
++	return db
++}
++
++func secretRule(t *testing.T, kind, ref string, enabled bool, interval int, auto *bool) {
++	t.Helper()
++	if _, err := NextecSecretUpsertPolicyOpts(kind, ref, enabled, interval, auto); err != nil {
++		t.Fatalf("regra %s/%s: %v", kind, ref, err)
++	}
++}
++
++func boolp(b bool) *bool { return &b }
++
++func TestSecretRuleInheritanceOrderAndOrigin(t *testing.T) {
++	inheritSetup(t)
++	check := func(label, peer string, group uint, wantOrigin string, wantEnabled bool, wantInterval int, wantGroup uint) {
++		t.Helper()
++		r := NextecSecretEffective(peer, group)
++		if r.Origin != wantOrigin || r.Enabled != wantEnabled || r.Interval != wantInterval || r.OriginGroupID != wantGroup {
++			t.Fatalf("%s: %+v (esperado %s enabled=%v %d grupo %d)", label, r, wantOrigin, wantEnabled, wantInterval, wantGroup)
++		}
++		en, iv := effectivePolicy(peer, group)
++		if wantOrigin == NextecOriginNone {
++			en, iv = false, 0
++		}
++		if en != wantEnabled && wantOrigin != NextecOriginNone {
++			t.Fatalf("%s: effectivePolicy diverge: %v %d", label, en, iv)
++		}
++	}
++	check("sem nenhuma regra", enrollPeer, 11, NextecOriginNone, false, 0, 0)
++
++	secretRule(t, NextecKindGlobal, "qualquer", true, 240, nil)
++	check("global vale para quem tem cliente", enrollPeer, 11, NextecOriginGlobal, true, 240, 0)
++	check("global vale para quem não tem cliente", enrollPeer, 0, NextecOriginGlobal, true, 240, 0)
++
++	secretRule(t, "group", "7", true, 60, nil)
++	check("cliente vence a global", enrollPeer, 8, NextecOriginGlobal, true, 240, 0) // outro cliente: segue a global
++	check("subgrupo herda do cliente", enrollPeer, 10, NextecOriginGroup, true, 60, 7)
++	check("sub-subgrupo herda do cliente", enrollPeer, 11, NextecOriginGroup, true, 60, 7)
++
++	secretRule(t, "group", "9", true, 30, nil)
++	check("subgrupo vence o cliente", enrollPeer, 9, NextecOriginGroup, true, 30, 9)
++	check("sub-subgrupo herda do subgrupo, não do cliente", enrollPeer, 11, NextecOriginGroup, true, 30, 9)
++	check("irmão do subgrupo continua com o cliente", enrollPeer, 10, NextecOriginGroup, true, 60, 7)
++
++	secretRule(t, "group", "9", false, 30, nil)
++	check("subgrupo desligado vence o cliente ligado", enrollPeer, 11, NextecOriginGroup, false, 30, 9)
++
++	secretRule(t, "peer", enrollPeer, true, 15, nil)
++	check("dispositivo vence tudo", enrollPeer, 11, NextecOriginPeer, true, 15, 0)
++	secretRule(t, "peer", enrollPeer, false, 15, nil)
++	check("dispositivo desligado vence tudo", enrollPeer, 10, NextecOriginPeer, false, 15, 0)
++
++	if r := NextecSecretEffective(enrollPeer, 10); r.OriginName != "" {
++		t.Fatalf("nome de origem só vale para grupo: %+v", r)
++	}
++	if r := NextecSecretEffective("999", 11); r.OriginName != "Cliente A / Filial" || r.Origin != NextecOriginGroup {
++		t.Fatalf("nome da origem: %+v", r)
++	}
++}
++
++func TestSecretPolicyUpsertGlobalAndAutoApproveValidation(t *testing.T) {
++	db := inheritSetup(t)
++	if _, err := NextecSecretUpsertPolicyOpts("tudo", "x", true, 60, nil); err == nil {
++		t.Fatal("kind desconhecido aceito")
++	}
++	if _, err := NextecSecretUpsertPolicyOpts("peer", enrollPeer, true, 60, boolp(true)); err == nil {
++		t.Fatal("aprovar sozinho em máquina deveria ser recusado")
++	}
++	p, err := NextecSecretUpsertPolicyOpts(NextecKindGlobal, "lixo", true, 60, boolp(true))
++	if err != nil || p.Ref != NextecGlobalRef || !p.AutoApprove {
++		t.Fatalf("global: %+v %v", p, err)
++	}
++	// uma só regra global, mesmo chamando com refs diferentes; nil mantém o valor
++	if _, err := NextecSecretUpsertPolicyOpts(NextecKindGlobal, "outro", true, 90, nil); err != nil {
++		t.Fatal(err)
++	}
++	var n int64
++	db.Model(&model.NextecSecretPolicy{}).Where("kind = ?", NextecKindGlobal).Count(&n)
++	g := NextecSecretPolicyGet(NextecKindGlobal, "x")
++	if n != 1 || g == nil || g.IntervalMinutes != 90 || !g.AutoApprove {
++		t.Fatalf("global duplicada ou perdeu auto_approve: n=%d %+v", n, g)
++	}
++	if _, err := NextecSecretUpsertPolicyOpts(NextecKindGlobal, "x", true, 90, boolp(false)); err != nil {
++		t.Fatal(err)
++	}
++	if g := NextecSecretPolicyGet(NextecKindGlobal, "x"); g.AutoApprove {
++		t.Fatal("auto_approve não desligou")
++	}
++	if err := NextecSecretDeletePolicy(NextecKindGlobal, "y"); err != nil || NextecSecretPolicyGet(NextecKindGlobal, "z") != nil {
++		t.Fatalf("remover global: %v", err)
++	}
++	if !strings.Contains(NextecSecretPolicyText(&model.NextecSecretPolicy{Enabled: true, IntervalMinutes: 30, AutoApprove: true}), "aprova sozinho") ||
++		NextecSecretPolicyText(nil) != "sem regra" {
++		t.Fatal("texto de auditoria")
++	}
++}
++
++func TestAppPolicyInheritanceOrderAndOrigin(t *testing.T) {
++	db := inheritSetup(t)
++	mk := func(kind, ref string, enabled bool, opts string) {
++		t.Helper()
++		p := &model.NextecAppPolicy{Kind: kind, Ref: ref, Options: opts, ModifiedAt: 1}
++		if err := db.Create(p).Error; err != nil {
++			t.Fatal(err)
++		}
++		if enabled {
++			db.Model(p).Update("enabled", true)
++		}
++	}
++	if _, err := NextecPolicyUpsert(NextecKindGlobal, "x", true, map[string]string{"enable-clipboard": "N"}); err != nil {
++		t.Fatal(err)
++	}
++	r := NextecAppEffective(enrollPeer, 11)
++	if r.Policy == nil || r.Origin != NextecOriginGlobal || nextecEffectivePolicy(enrollPeer, 11) == nil {
++		t.Fatalf("global: %+v", r)
++	}
++	mk("group", "7", true, `{"enable-file-transfer":"N"}`)
++	r = NextecAppEffective(enrollPeer, 11)
++	if r.Origin != NextecOriginGroup || r.OriginGroupID != 7 || !strings.Contains(r.Policy.Options, "file-transfer") {
++		t.Fatalf("cliente: %+v", r)
++	}
++	mk("group", "9", false, `{"enable-audio":"N"}`) // desligada na política do app: ignorada, a busca continua
++	if r = NextecAppEffective(enrollPeer, 11); r.OriginGroupID != 7 {
++		t.Fatalf("subgrupo desligado deveria ser ignorado: %+v", r)
++	}
++	db.Model(&model.NextecAppPolicy{}).Where("kind = ? AND ref = ?", "group", "9").Update("enabled", true)
++	if r = NextecAppEffective(enrollPeer, 11); r.OriginGroupID != 9 || r.OriginName != "Cliente A / Filial" {
++		t.Fatalf("subgrupo: %+v", r)
++	}
++	mk("peer", enrollPeer, true, `{"enable-tunnel":"N"}`)
++	if r = NextecAppEffective(enrollPeer, 11); r.Origin != NextecOriginPeer {
++		t.Fatalf("máquina: %+v", r)
++	}
++	if r = NextecAppEffective("999", 8); r.Origin != NextecOriginGlobal {
++		t.Fatalf("outro cliente cai na global: %+v", r)
++	}
++	if _, err := NextecPolicyUpsert("tudo", "x", true, nil); err == nil {
++		t.Fatal("kind desconhecido aceito")
++	}
++	if g := NextecPolicyGet(NextecKindGlobal, "x"); g == nil || NextecAppPolicyText(g) == "" {
++		t.Fatal("NextecPolicyGet global")
++	}
++}
++
++func TestSelfEnrollAutoApprovesOnlyUnderInheritedAutoRule(t *testing.T) {
++	db := inheritSetup(t)
++	enroll := func() *NextecSelfEnrollResult {
++		t.Helper()
++		res, err := NextecSelfEnroll("10.9.0.1", enrollKey(t), enrollPeer, enrollUUID, enrollToken())
++		if err != nil {
++			t.Fatal(err)
++		}
++		return res
++	}
++	reset := func(group uint) {
++		t.Helper()
++		db.Where("peer_id = ?", enrollPeer).Delete(&model.NextecDeviceSecret{})
++		db.Model(&model.Peer{}).Where("id = ?", enrollPeer).Update("group_id", group)
++	}
++	// regra do cliente sem "aprovar sozinho": continua pendente
++	secretRule(t, "group", "7", true, 60, nil)
++	reset(9)
++	if res := enroll(); res.State != NextecStatePending || !deviceRow(t, db, enrollPeer).AwaitingApproval {
++		t.Fatalf("sem auto_approve deveria ficar pendente: %+v", res)
++	}
++	// com "aprovar sozinho" no cliente, a máquina do subgrupo entra aprovada, sem pendência
++	secretRule(t, "group", "7", true, 60, boolp(true))
++	reset(9)
++	res := enroll()
++	d := deviceRow(t, db, enrollPeer)
++	if res.State != NextecStateAssigned || d.AwaitingApproval || d.ApprovedAt == 0 || d.ApprovedBy != 0 || !d.ForceRotate || NextecEnrollPendingCount() != 0 {
++		t.Fatalf("aprovação automática: %+v %+v pendentes=%d", res, d, NextecEnrollPendingCount())
++	}
++	if auditCount(db, "enroll_auto_approved") != 1 {
++		t.Fatal("aprovação automática sem auditoria")
++	}
++	var a model.NextecSecretAudit
++	db.Where("action = ?", "enroll_auto_approved").First(&a)
++	if !strings.Contains(a.Detail, "Cliente A") || !strings.Contains(a.Detail, "Cliente A / Filial") {
++		t.Fatalf("auditoria deveria dizer de onde herdou e o cliente: %q", a.Detail)
++	}
++	// sem cliente a máquina nunca entra sozinha, mesmo com regra global que aprova
++	secretRule(t, NextecKindGlobal, "g", true, 60, boolp(true))
++	reset(0)
++	if res := enroll(); res.State != NextecStatePending {
++		t.Fatalf("máquina sem cliente não pode entrar sozinha: %+v", res)
++	}
++	// com cliente e só a regra global que aprova, entra
++	reset(8)
++	if res := enroll(); res.State != NextecStateAssigned {
++		t.Fatalf("global com auto_approve e máquina com cliente: %+v", res)
++	}
++	// regra do subgrupo SEM auto_approve vence a do cliente que aprova
++	secretRule(t, "group", "9", true, 30, boolp(false))
++	reset(11)
++	if res := enroll(); res.State != NextecStatePending {
++		t.Fatalf("a regra mais próxima (subgrupo, sem auto) deveria valer: %+v", res)
++	}
++	// linha sem agente (token vazio) é reaproveitada pela mesma regra
++	secretRule(t, "group", "9", true, 30, boolp(true))
++	reset(9)
++	db.Create(&model.NextecDeviceSecret{PeerId: enrollPeer, TokenHash: ""})
++	if res := enroll(); res.State != NextecStateAssigned || deviceRow(t, db, enrollPeer).AwaitingApproval {
++		t.Fatalf("linha sem agente reaproveitada: %+v", res)
++	}
++}
++
++func TestSecretDevicesListIncludesSubgroupsAndGlobalWithOrigin(t *testing.T) {
++	db := inheritSetup(t)
++	mk := func(id string, group uint) {
++		db.Create(&model.Peer{Id: id, Uuid: "u-" + id, Hostname: "H" + id, GroupId: group})
++	}
++	mk("200000001", 9)  // subgrupo Filial
++	mk("200000002", 11) // sub-subgrupo
++	mk("200000003", 8)  // outro cliente
++	secretRule(t, "group", "7", true, 60, nil)
++	find := func(list []*NextecSecretDevice, id string) *NextecSecretDevice {
++		for _, d := range list {
++			if d.PeerId == id {
++				return d
++			}
++		}
++		return nil
++	}
++	list := NextecSecretDevices()
++	a, b := find(list, "200000001"), find(list, "200000002")
++	if a == nil || b == nil || !a.Managed || !b.Managed || a.RuleOrigin != "group" || a.RuleOriginName != "Cliente A" || a.IntervalMin != 60 {
++		t.Fatalf("subgrupos deveriam herdar a regra do cliente: %+v %+v", a, b)
++	}
++	if find(list, "200000003") != nil {
++		t.Fatal("máquina de outro cliente apareceu sem regra aplicável")
++	}
++	secretRule(t, NextecKindGlobal, "g", true, 240, nil)
++	list = NextecSecretDevices()
++	c := find(list, "200000003")
++	if c == nil || !c.Managed || c.RuleOrigin != "global" || c.IntervalMin != 240 {
++		t.Fatalf("a regra global deveria alcançar todas as máquinas: %+v", c)
++	}
++	if a2 := find(list, "200000001"); a2.RuleOrigin != "group" || a2.IntervalMin != 60 {
++		t.Fatalf("a regra do cliente continua valendo sobre a global: %+v", a2)
++	}
++	_ = db
++}
++
++func TestPolicyScopesShowEffectiveRuleAndOriginPerGroup(t *testing.T) {
++	db := inheritSetup(t)
++	db.Create(&model.Peer{Id: "300000001", Uuid: "u1", GroupId: 9})
++	secretRule(t, "group", "7", true, 60, nil)
++	secretRule(t, "group", "11", true, 20, nil)
++	db.Create(&model.NextecAppPolicy{Kind: "group", Ref: "7", Enabled: true, Options: `{"enable-audio":"N"}`})
++	rows := map[uint]*NextecPolicyScopeRow{}
++	for _, r := range NextecPolicyScopes() {
++		rows[r.GroupID] = r
++	}
++	if len(rows) != 5 {
++		t.Fatalf("grupos: %d", len(rows))
++	}
++	if r := rows[7]; !r.OwnSecret || r.Secret.Origin != "group" || r.Secret.OriginGroupID != 7 || !r.OwnApp || !r.AppEnabled {
++		t.Fatalf("cliente: %+v", r)
++	}
++	if r := rows[9]; r.OwnSecret || r.Secret.OriginGroupID != 7 || r.Secret.OriginName != "Cliente A" || r.Devices != 1 || r.AppOrigin.OriginName != "Cliente A" || r.AppOptions["enable-audio"] != "N" {
++		t.Fatalf("subgrupo herdando: %+v", r)
++	}
++	if r := rows[11]; !r.OwnSecret || r.Secret.Interval != 20 || r.Path != "Cliente A / Filial / Caixa" {
++		t.Fatalf("sub-subgrupo com regra própria: %+v", r)
++	}
++	if r := rows[8]; r.Secret.Origin != "none" || r.AppEnabled || r.AppOrigin.Origin != "none" {
++		t.Fatalf("outro cliente isolado: %+v", r)
++	}
++}
+diff --git a/service/nextec_policy.go b/service/nextec_policy.go
+index e63cf2d..b10a84c 100644
+--- a/service/nextec_policy.go
++++ b/service/nextec_policy.go
+@@ -54,7 +54,10 @@ func NextecPolicyList() (res []*model.NextecAppPolicy) {
+ // NextecPolicyUpsert cria ou altera a política de um cliente ou de uma máquina. Valor vazio = padrão do app.
+ func NextecPolicyUpsert(kind, ref string, enabled bool, opts map[string]string) (*model.NextecAppPolicy, error) {
+ 	ref = strings.TrimSpace(ref)
++	ref = nextecNormalizePolicyRef(kind, ref)
+ 	switch kind {
++	case NextecKindGlobal:
++		// uma só regra global; o ref é fixo
+ 	case "group":
+ 		g, err := strconv.Atoi(ref)
+ 		if err != nil || g <= 0 || AllService.GroupService.DeviceGroupInfoById(uint(g)).Id == 0 {
+@@ -101,31 +104,21 @@ func NextecPolicyUpsert(kind, ref string, enabled bool, opts map[string]string)
+ }
+ 
+ func NextecPolicyDelete(kind, ref string) error {
+-	return DB.Where("kind = ? AND ref = ?", kind, ref).Delete(&model.NextecAppPolicy{}).Error
++	return DB.Where("kind = ? AND ref = ?", kind, nextecNormalizePolicyRef(kind, ref)).Delete(&model.NextecAppPolicy{}).Error
+ }
+ 
+-// nextecEffectivePolicy: regra da máquina; senão a do cliente; senão a do cliente "pai" (nomes "Cliente / Subgrupo").
+-func nextecEffectivePolicy(peerID string, groupID uint) *model.NextecAppPolicy {
++// NextecPolicyGet devolve a política própria de um alvo (nulo se não existe), para a auditoria "antes".
++func NextecPolicyGet(kind, ref string) *model.NextecAppPolicy {
+ 	p := &model.NextecAppPolicy{}
+-	if DB.Where("kind = ? AND ref = ? AND enabled = ?", "peer", peerID, true).First(p).Error == nil {
+-		return p
+-	}
+-	for i := 0; groupID != 0 && i < 5; i++ {
+-		if DB.Where("kind = ? AND ref = ? AND enabled = ?", "group", strconv.Itoa(int(groupID)), true).First(p).Error == nil {
+-			return p
+-		}
+-		g := AllService.GroupService.DeviceGroupInfoById(groupID)
+-		idx := strings.LastIndex(g.Name, " / ")
+-		if g.Id == 0 || idx < 0 {
+-			break
+-		}
+-		parent := &model.DeviceGroup{}
+-		if DB.Where("name = ?", g.Name[:idx]).First(parent).Error != nil {
+-			break
+-		}
+-		groupID = parent.Id
++	if DB.Where("kind = ? AND ref = ?", kind, nextecNormalizePolicyRef(kind, ref)).Limit(1).Find(p).Error != nil || p.Id == 0 {
++		return nil
+ 	}
+-	return nil
++	return p
++}
++
++// nextecEffectivePolicy: a regra ligada mais próxima (máquina > subgrupo > cliente > global); ver nextec_policy_inherit.go.
++func nextecEffectivePolicy(peerID string, groupID uint) *model.NextecAppPolicy {
++	return NextecAppEffective(peerID, groupID).Policy
+ }
+ 
+ // nextecStrategyFor monta a "strategy" do heartbeat. É declarativa: toda opção gerenciada vai, as que a política não define
+diff --git a/service/nextec_policy_inherit.go b/service/nextec_policy_inherit.go
+new file mode 100644
+index 0000000..83e2584
+--- /dev/null
++++ b/service/nextec_policy_inherit.go
+@@ -0,0 +1,299 @@
++package service
++
++import (
++	"encoding/json"
++	"sort"
++	"strconv"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"gorm.io/gorm"
++)
++
++// Herança de regras: global, cliente, subgrupo e dispositivo. Vale a regra MAIS PRÓXIMA da máquina, inteira
++// (dispositivo > subgrupo > cliente > global). Na regra de senha, uma regra de grupo desligada também vale e encerra a
++// busca (exceção deliberada); na política do app, uma regra desligada é ignorada e a busca continua.
++
++const (
++	NextecKindGlobal = "global"
++	NextecGlobalRef  = "global"
++
++	NextecOriginPeer   = "peer"
++	NextecOriginGroup  = "group"
++	NextecOriginGlobal = "global"
++	NextecOriginNone   = "none"
++)
++
++// NextecRuleOrigin diz de onde vem a regra efetiva de uma máquina (ou de um grupo).
++type NextecRuleOrigin struct {
++	Origin        string `json:"origin"`                    // peer | group | global | none
++	OriginGroupID uint   `json:"origin_group_id,omitempty"` // grupo da regra quando Origin == group
++	OriginName    string `json:"origin_name,omitempty"`     // "Cliente / Sub" quando Origin == group
++}
++
++// NextecSecretRule é a regra efetiva de troca de senha.
++type NextecSecretRule struct {
++	Enabled     bool `json:"enabled"`
++	Interval    int  `json:"interval_minutes"`
++	AutoApprove bool `json:"auto_approve"`
++	NextecRuleOrigin
++}
++
++func nextecNormalizePolicyRef(kind, ref string) string {
++	if kind == NextecKindGlobal {
++		return NextecGlobalRef
++	}
++	return ref
++}
++
++// nextecResolveSecret é a regra pura: recebe as regras já lidas.
++func nextecResolveSecret(own *model.NextecSecretPolicy, chain []uint, byGroup map[uint]*model.NextecSecretPolicy, global *model.NextecSecretPolicy) NextecSecretRule {
++	if own != nil {
++		return NextecSecretRule{Enabled: own.Enabled, Interval: own.IntervalMinutes, NextecRuleOrigin: NextecRuleOrigin{Origin: NextecOriginPeer}}
++	}
++	for _, id := range chain {
++		if p := byGroup[id]; p != nil {
++			return NextecSecretRule{Enabled: p.Enabled, Interval: p.IntervalMinutes, AutoApprove: p.AutoApprove,
++				NextecRuleOrigin: NextecRuleOrigin{Origin: NextecOriginGroup, OriginGroupID: id}}
++		}
++	}
++	if global != nil {
++		return NextecSecretRule{Enabled: global.Enabled, Interval: global.IntervalMinutes, AutoApprove: global.AutoApprove,
++			NextecRuleOrigin: NextecRuleOrigin{Origin: NextecOriginGlobal}}
++	}
++	return NextecSecretRule{NextecRuleOrigin: NextecRuleOrigin{Origin: NextecOriginNone}}
++}
++
++func nextecSecretEffectiveTx(tx *gorm.DB, peerID string, groupID uint) NextecSecretRule {
++	var own *model.NextecSecretPolicy
++	if peerID != "" {
++		p := &model.NextecSecretPolicy{}
++		if tx.Where("kind = ? and ref = ?", "peer", peerID).Limit(1).Find(p).Error == nil && p.Id != 0 {
++			own = p
++		}
++	}
++	chain := nextecGroupChainTx(tx, groupID)
++	byGroup := map[uint]*model.NextecSecretPolicy{}
++	if len(chain) > 0 {
++		refs := make([]string, len(chain))
++		for i, id := range chain {
++			refs[i] = strconv.FormatUint(uint64(id), 10)
++		}
++		var rows []*model.NextecSecretPolicy
++		tx.Where("kind = ? and ref in ?", "group", refs).Find(&rows)
++		for _, r := range rows {
++			if id, err := strconv.ParseUint(r.Ref, 10, 64); err == nil {
++				byGroup[uint(id)] = r
++			}
++		}
++	}
++	var global *model.NextecSecretPolicy
++	g := &model.NextecSecretPolicy{}
++	if tx.Where("kind = ? and ref = ?", NextecKindGlobal, NextecGlobalRef).Limit(1).Find(g).Error == nil && g.Id != 0 {
++		global = g
++	}
++	rule := nextecResolveSecret(own, chain, byGroup, global)
++	if rule.Origin == NextecOriginGroup {
++		rule.OriginName = nextecGroupPathTx(tx, rule.OriginGroupID)
++	}
++	return rule
++}
++
++// NextecSecretEffective é a regra de senha efetiva de uma máquina, com a origem.
++func NextecSecretEffective(peerID string, groupID uint) NextecSecretRule {
++	return nextecSecretEffectiveTx(DB, peerID, groupID)
++}
++
++// NextecAppRule é a política efetiva do app (opções) com a origem. Policy nulo: nenhuma regra ligada vale.
++type NextecAppRule struct {
++	Policy *model.NextecAppPolicy
++	NextecRuleOrigin
++}
++
++func nextecResolveApp(own *model.NextecAppPolicy, chain []uint, byGroup map[uint]*model.NextecAppPolicy, global *model.NextecAppPolicy) NextecAppRule {
++	if own != nil && own.Enabled {
++		return NextecAppRule{Policy: own, NextecRuleOrigin: NextecRuleOrigin{Origin: NextecOriginPeer}}
++	}
++	for _, id := range chain {
++		if p := byGroup[id]; p != nil && p.Enabled {
++			return NextecAppRule{Policy: p, NextecRuleOrigin: NextecRuleOrigin{Origin: NextecOriginGroup, OriginGroupID: id}}
++		}
++	}
++	if global != nil && global.Enabled {
++		return NextecAppRule{Policy: global, NextecRuleOrigin: NextecRuleOrigin{Origin: NextecOriginGlobal}}
++	}
++	return NextecAppRule{NextecRuleOrigin: NextecRuleOrigin{Origin: NextecOriginNone}}
++}
++
++func nextecAppEffectiveTx(tx *gorm.DB, peerID string, groupID uint) NextecAppRule {
++	var own *model.NextecAppPolicy
++	if peerID != "" {
++		p := &model.NextecAppPolicy{}
++		if tx.Where("kind = ? AND ref = ?", "peer", peerID).Limit(1).Find(p).Error == nil && p.Id != 0 {
++			own = p
++		}
++	}
++	chain := nextecGroupChainTx(tx, groupID)
++	byGroup := map[uint]*model.NextecAppPolicy{}
++	if len(chain) > 0 {
++		refs := make([]string, len(chain))
++		for i, id := range chain {
++			refs[i] = strconv.FormatUint(uint64(id), 10)
++		}
++		var rows []*model.NextecAppPolicy
++		tx.Where("kind = ? AND ref IN ?", "group", refs).Find(&rows)
++		for _, r := range rows {
++			if id, err := strconv.ParseUint(r.Ref, 10, 64); err == nil {
++				byGroup[uint(id)] = r
++			}
++		}
++	}
++	var global *model.NextecAppPolicy
++	g := &model.NextecAppPolicy{}
++	if tx.Where("kind = ? AND ref = ?", NextecKindGlobal, NextecGlobalRef).Limit(1).Find(g).Error == nil && g.Id != 0 {
++		global = g
++	}
++	rule := nextecResolveApp(own, chain, byGroup, global)
++	if rule.Origin == NextecOriginGroup {
++		rule.OriginName = nextecGroupPathTx(tx, rule.OriginGroupID)
++	}
++	return rule
++}
++
++// NextecAppEffective é a política do app efetiva de uma máquina, com a origem.
++func NextecAppEffective(peerID string, groupID uint) NextecAppRule {
++	return nextecAppEffectiveTx(DB, peerID, groupID)
++}
++
++// ---------- visão por cliente e subgrupo (tela Políticas) ----------
++
++type NextecPolicyScopeRow struct {
++	GroupID    uint              `json:"group_id"`
++	Name       string            `json:"name"`
++	Path       string            `json:"path"`
++	ParentID   uint              `json:"parent_id"`
++	Devices    int               `json:"devices"`
++	OwnSecret  bool              `json:"own_secret"`
++	OwnApp     bool              `json:"own_app"`
++	Secret     NextecSecretRule  `json:"secret"`
++	AppEnabled bool              `json:"app_enabled"`
++	AppOptions map[string]string `json:"app_options,omitempty"`
++	AppOrigin  NextecRuleOrigin  `json:"app_origin"`
++}
++
++// NextecPolicyScopes devolve, para cada cliente e subgrupo, a regra efetiva (própria ou herdada) e a origem.
++// Lê grupos e regras uma vez só; sem consulta por grupo.
++func NextecPolicyScopes() []*NextecPolicyScopeRow {
++	var groups []*model.DeviceGroup
++	DB.Order("id").Find(&groups)
++	NextecFillGroupPaths(groups)
++	byID := map[uint]*model.DeviceGroup{}
++	for _, g := range groups {
++		byID[g.Id] = g
++	}
++	chainOf := func(id uint) []uint {
++		chain := []uint{}
++		seen := map[uint]bool{}
++		for cur := id; cur != 0 && !seen[cur] && len(chain) < nextecGroupMaxDepth; {
++			g := byID[cur]
++			if g == nil {
++				break
++			}
++			seen[cur] = true
++			chain = append(chain, cur)
++			cur = g.ParentId
++		}
++		return chain
++	}
++	var secrets []*model.NextecSecretPolicy
++	DB.Find(&secrets)
++	secByGroup := map[uint]*model.NextecSecretPolicy{}
++	var secGlobal *model.NextecSecretPolicy
++	for _, p := range secrets {
++		switch p.Kind {
++		case "group":
++			if id, err := strconv.ParseUint(p.Ref, 10, 64); err == nil {
++				secByGroup[uint(id)] = p
++			}
++		case NextecKindGlobal:
++			secGlobal = p
++		}
++	}
++	var apps []*model.NextecAppPolicy
++	DB.Find(&apps)
++	appByGroup := map[uint]*model.NextecAppPolicy{}
++	var appGlobal *model.NextecAppPolicy
++	for _, p := range apps {
++		switch p.Kind {
++		case "group":
++			if id, err := strconv.ParseUint(p.Ref, 10, 64); err == nil {
++				appByGroup[uint(id)] = p
++			}
++		case NextecKindGlobal:
++			appGlobal = p
++		}
++	}
++	counts := map[uint]int{}
++	var cs []struct {
++		GroupId uint
++		N       int
++	}
++	DB.Model(&model.Peer{}).Select("group_id, count(*) as n").Group("group_id").Scan(&cs)
++	for _, c := range cs {
++		counts[c.GroupId] = c.N
++	}
++	out := make([]*NextecPolicyScopeRow, 0, len(groups))
++	for _, g := range groups {
++		chain := chainOf(g.Id)
++		row := &NextecPolicyScopeRow{GroupID: g.Id, Name: g.Name, Path: g.Path, ParentID: g.ParentId, Devices: counts[g.Id],
++			OwnSecret: secByGroup[g.Id] != nil, OwnApp: appByGroup[g.Id] != nil && appByGroup[g.Id].Enabled}
++		row.Secret = nextecResolveSecret(nil, chain, secByGroup, secGlobal)
++		if row.Secret.Origin == NextecOriginGroup {
++			if og := byID[row.Secret.OriginGroupID]; og != nil {
++				row.Secret.OriginName = og.Path
++			}
++		}
++		app := nextecResolveApp(nil, chain, appByGroup, appGlobal)
++		row.AppOrigin = app.NextecRuleOrigin
++		if app.Origin == NextecOriginGroup {
++			if og := byID[app.OriginGroupID]; og != nil {
++				row.AppOrigin.OriginName = og.Path
++			}
++		}
++		if app.Policy != nil {
++			row.AppEnabled = true
++			opts := map[string]string{}
++			_ = json.Unmarshal([]byte(app.Policy.Options), &opts)
++			row.AppOptions = opts
++		}
++		out = append(out, row)
++	}
++	sort.SliceStable(out, func(i, j int) bool { return out[i].Path < out[j].Path })
++	return out
++}
++
++// NextecSecretPolicyText descreve uma regra de senha para a auditoria ("sem regra" quando nula).
++func NextecSecretPolicyText(p *model.NextecSecretPolicy) string {
++	if p == nil {
++		return "sem regra"
++	}
++	if !p.Enabled {
++		return "desligada"
++	}
++	t := "ligada, troca a cada " + strconv.Itoa(p.IntervalMinutes) + " min"
++	if p.AutoApprove {
++		t += ", aprova sozinho"
++	}
++	return t
++}
++
++// NextecAppPolicyText descreve uma política do app para a auditoria ("sem regra" quando nula).
++func NextecAppPolicyText(p *model.NextecAppPolicy) string {
++	if p == nil {
++		return "sem regra"
++	}
++	state := "desligada"
++	if p.Enabled {
++		state = "ligada"
++	}
++	return state + " " + p.Options
++}
+diff --git a/service/nextec_secret.go b/service/nextec_secret.go
+index 52b16b0..0080fb3 100644
+--- a/service/nextec_secret.go
++++ b/service/nextec_secret.go
+@@ -207,9 +207,28 @@ func nextecFailAdd(ip string) {
+ 
+ // NextecSecretUpsertPolicy cria ou altera a regra de um grupo ou de uma máquina.
+ func NextecSecretUpsertPolicy(kind, ref string, enabled bool, interval int) (*model.NextecSecretPolicy, error) {
+-	if kind != "group" && kind != "peer" {
++	return NextecSecretUpsertPolicyOpts(kind, ref, enabled, interval, nil)
++}
++
++// NextecSecretPolicyGet devolve a regra própria de um alvo (nulo se não existe), para a auditoria "antes".
++func NextecSecretPolicyGet(kind, ref string) *model.NextecSecretPolicy {
++	p := &model.NextecSecretPolicy{}
++	if DB.Where("kind = ? and ref = ?", kind, nextecNormalizePolicyRef(kind, ref)).Limit(1).Find(p).Error != nil || p.Id == 0 {
++		return nil
++	}
++	return p
++}
++
++// NextecSecretUpsertPolicyOpts é o Upsert com a opção "aprovar sozinho" (nil mantém o valor atual). Kind global vale
++// para todas as máquinas sem regra mais próxima; só kind group/global aceitam AutoApprove.
++func NextecSecretUpsertPolicyOpts(kind, ref string, enabled bool, interval int, autoApprove *bool) (*model.NextecSecretPolicy, error) {
++	if kind != "group" && kind != "peer" && kind != NextecKindGlobal {
+ 		return nil, errors.New("kind inválido")
+ 	}
++	ref = nextecNormalizePolicyRef(kind, ref)
++	if autoApprove != nil && *autoApprove && kind == "peer" {
++		return nil, errors.New("aprovar sozinho vale para cliente, subgrupo ou global")
++	}
+ 	if ref == "" {
+ 		return nil, errors.New("ref inválido")
+ 	}
+@@ -222,9 +241,18 @@ func NextecSecretUpsertPolicy(kind, ref string, enabled bool, interval int) (*mo
+ 	p := &model.NextecSecretPolicy{}
+ 	DB.Where("kind = ? and ref = ?", kind, ref).First(p)
+ 	p.Kind, p.Ref, p.Enabled, p.IntervalMinutes = kind, ref, enabled, interval
++	if autoApprove != nil {
++		p.AutoApprove = *autoApprove
++	}
+ 	if err := DB.Save(p).Error; err != nil {
+ 		return nil, err
+ 	}
++	// O GORM aplica o default da coluna ao zero value no Create: grava o desligado de forma explícita.
++	if !p.AutoApprove {
++		if err := DB.Model(p).Update("auto_approve", false).Error; err != nil {
++			return nil, err
++		}
++	}
+ 	// Regra nova desligada: o GORM aplica o default da coluna (true) ao zero value no Create.
+ 	if !enabled {
+ 		if err := DB.Model(p).Update("enabled", false).Error; err != nil {
+@@ -236,7 +264,7 @@ func NextecSecretUpsertPolicy(kind, ref string, enabled bool, interval int) (*mo
+ }
+ 
+ func NextecSecretDeletePolicy(kind, ref string) error {
+-	return DB.Where("kind = ? and ref = ?", kind, ref).Delete(&model.NextecSecretPolicy{}).Error
++	return DB.Where("kind = ? and ref = ?", kind, nextecNormalizePolicyRef(kind, ref)).Delete(&model.NextecSecretPolicy{}).Error
+ }
+ 
+ func NextecSecretPolicies() (res []*model.NextecSecretPolicy) {
+@@ -244,16 +272,13 @@ func NextecSecretPolicies() (res []*model.NextecSecretPolicy) {
+ 	return res
+ }
+ 
+-// effectivePolicy: a regra da máquina vence a do grupo.
++// effectivePolicy: a regra mais próxima vence (máquina > subgrupo > cliente > global); ver nextec_policy_inherit.go.
+ func effectivePolicy(peerID string, groupID uint) (bool, int) {
+-	p := &model.NextecSecretPolicy{}
+-	if DB.Where("kind = ? and ref = ?", "peer", peerID).First(p).Error == nil {
+-		return p.Enabled, p.IntervalMinutes
+-	}
+-	if groupID != 0 && DB.Where("kind = ? and ref = ?", "group", strconv.Itoa(int(groupID))).First(p).Error == nil {
+-		return p.Enabled, p.IntervalMinutes
++	r := NextecSecretEffective(peerID, groupID)
++	if r.Origin == NextecOriginNone {
++		return false, 0
+ 	}
+-	return false, 0
++	return r.Enabled, r.Interval
+ }
+ 
+ func peerGroup(peerID string) uint {
+@@ -764,6 +789,11 @@ type NextecSecretDevice struct {
+ 	SchemeSource string `json:"scheme_source,omitempty"` // machine | global
+ 	// Cliente sugerido para uma máquina pendente (convite não aceito ou download de convite do mesmo IP). Só sugestão.
+ 	Suggested *NextecClientSuggestion `json:"suggested,omitempty"`
++	// De onde vem a regra efetiva de senha: peer (própria) | group (cliente ou subgrupo) | global | none.
++	RuleOrigin      string `json:"rule_origin"`
++	RuleOriginGroup uint   `json:"rule_origin_group,omitempty"`
++	RuleOriginName  string `json:"rule_origin_name,omitempty"`
++	AutoApprove     bool   `json:"auto_approve,omitempty"`
+ }
+ 
+ // NextecSecretDevices lista as máquinas gerenciadas ou com agente cadastrado.
+@@ -784,24 +814,65 @@ func NextecSecretDevices() []*NextecSecretDevice {
+ 	for _, s := range states {
+ 		ids[s.PeerId] = true
+ 	}
++	allPeers := false
++	enabledGroups := map[uint]bool{}
+ 	for _, p := range policies {
+ 		if p.Kind == "peer" {
+ 			ids[p.Ref] = true
++		} else if p.Kind == NextecKindGlobal {
++			allPeers = allPeers || p.Enabled
+ 		} else if g, err := strconv.Atoi(p.Ref); err == nil && p.Enabled {
+-			groupIDs = append(groupIDs, uint(g))
++			enabledGroups[uint(g)] = true
++		}
++	}
++	// Subgrupos herdam a regra do cliente: entram na lista todos os grupos cuja cadeia passa por um grupo com regra ligada.
++	if len(enabledGroups) > 0 {
++		var all []*model.DeviceGroup
++		DB.Select("id", "parent_id").Find(&all)
++		parent := map[uint]uint{}
++		for _, g := range all {
++			parent[g.Id] = g.ParentId
++		}
++		for _, g := range all {
++			cur, seen := g.Id, map[uint]bool{}
++			for cur != 0 && !seen[cur] {
++				seen[cur] = true
++				if enabledGroups[cur] {
++					groupIDs = append(groupIDs, g.Id)
++					break
++				}
++				cur = parent[cur]
++			}
+ 		}
+ 	}
+ 	idList := make([]string, 0, len(ids))
+ 	for id := range ids {
+ 		idList = append(idList, id)
+ 	}
+-	if len(idList) == 0 && len(groupIDs) == 0 {
++	if len(idList) == 0 && len(groupIDs) == 0 && !allPeers {
+ 		return []*NextecSecretDevice{}
+ 	}
+ 	// Sempre junta com a tabela Peer (apelido, hostname, group_id): a mesma fonte da listagem de Dispositivos.
+ 	// Consulta em blocos para não estourar o limite de variáveis do SQLite com muitas máquinas, e um erro
+ 	// de leitura é registrado em vez de esvaziar a lista em silêncio.
+ 	peers := nextecSecretPeers(idList, groupIDs)
++	if allPeers {
++		var rows []*model.Peer
++		if err := DB.Model(&model.Peer{}).Find(&rows).Error; err != nil {
++			if Logger != nil {
++				Logger.Warn("nextec senhas: leitura de Peer (regra global) falhou: ", err)
++			}
++		}
++		have := map[uint]bool{}
++		for _, p := range peers {
++			have[p.RowId] = true
++		}
++		for _, p := range rows {
++			if !have[p.RowId] {
++				peers = append(peers, p)
++			}
++		}
++	}
+ 	peers = append(peers, nextecSecretPeersByCleanId(idList, peers)...)
+ 	rejects := nextecEnrollRejectsByPeer()
+ 	seen := map[string]bool{}
+@@ -811,8 +882,13 @@ func NextecSecretDevices() []*NextecSecretDevice {
+ 			return
+ 		}
+ 		seen[peerID] = true
+-		enabled, interval := effectivePolicy(peerID, groupID)
+-		dv := &NextecSecretDevice{PeerId: peerID, Hostname: hostname, Alias: alias, GroupId: groupID, Managed: enabled, IntervalMin: interval, AgentState: NextecAgentStateNone}
++		rule := NextecSecretEffective(peerID, groupID)
++		enabled, interval := rule.Enabled && rule.Origin != NextecOriginNone, rule.Interval
++		if !enabled {
++			interval = 0
++		}
++		dv := &NextecSecretDevice{PeerId: peerID, Hostname: hostname, Alias: alias, GroupId: groupID, Managed: enabled, IntervalMin: interval, AgentState: NextecAgentStateNone,
++			RuleOrigin: rule.Origin, RuleOriginGroup: rule.OriginGroupID, RuleOriginName: rule.OriginName, AutoApprove: rule.AutoApprove}
+ 		if peer != nil {
+ 			dv.LastIp, dv.Os, dv.Username = peer.LastOnlineIp, peer.Os, peer.Username
+ 		}

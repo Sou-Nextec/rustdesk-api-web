@@ -1,0 +1,504 @@
+diff --git a/http/controller/admin/nextec_client_lists.go b/http/controller/admin/nextec_client_lists.go
+new file mode 100644
+index 0000000..f94f8b4
+--- /dev/null
++++ b/http/controller/admin/nextec_client_lists.go
+@@ -0,0 +1,33 @@
++package admin
++
++import (
++	"github.com/gin-gonic/gin"
++	"github.com/lejianwen/rustdesk-api/v2/http/response"
++	"github.com/lejianwen/rustdesk-api/v2/service"
++)
++
++// NextecClientLists: sincroniza as listas "Cliente: X" com os dispositivos do cliente e dos subgrupos (somente admin).
++type NextecClientLists struct{}
++
++// Sync deixa cada lista igual ao grupo (inclui o que falta e remove o que sobra)
++// @Router /admin/nextec/client-lists/sync [post]
++func (n *NextecClientLists) Sync(c *gin.Context) {
++	var f struct {
++		CollectionIds []uint `json:"collection_ids"`
++	}
++	if err := c.ShouldBindJSON(&f); err != nil || len(f.CollectionIds) == 0 || len(f.CollectionIds) > 500 {
++		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError"))
++		return
++	}
++	u := service.AllService.UserService.CurUser(c)
++	out := make([]*service.NextecClientListSyncResult, 0, len(f.CollectionIds))
++	for _, id := range f.CollectionIds {
++		r, err := service.NextecReconcileClientList(u, nextecIP(c), id)
++		if err != nil {
++			response.Fail(c, 101, err.Error())
++			return
++		}
++		out = append(out, r)
++	}
++	response.Success(c, &gin.H{"results": out})
++}
+diff --git a/http/controller/admin/peer.go b/http/controller/admin/peer.go
+index d9f4184..e9b1c01 100644
+--- a/http/controller/admin/peer.go
++++ b/http/controller/admin/peer.go
+@@ -149,11 +149,17 @@ func (ct *Peer) Update(c *gin.Context) {
+ 	}
+ 	u := f.ToPeer()
+ 	u.Id = service.NextecCleanId(u.Id) // ID sem espaços
++	oldGroup := service.AllService.PeerService.InfoByRowId(f.RowId).GroupId
+ 	err := service.UpdateFields(u, "id", "cpu", "hostname", "memory", "os", "username", "uuid", "version", "group_id", "alias")
+ 	if err != nil {
+ 		response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
+ 		return
+ 	}
++	// listas "Cliente: X": sai da lista do cliente antigo e entra na do novo
++	if err := service.NextecSyncClientLists(service.AllService.UserService.CurUser(c), nextecIP(c), u.Id, oldGroup, u.GroupId); err != nil {
++		response.Fail(c, 101, "Dispositivo salvo, mas as listas de cliente não foram atualizadas: "+err.Error())
++		return
++	}
+ 	response.Success(c, nil)
+ }
+ 
+diff --git a/http/router/admin.go b/http/router/admin.go
+index 8b603c9..7babd78 100644
+--- a/http/router/admin.go
++++ b/http/router/admin.go
+@@ -111,6 +111,9 @@ func NextecBind(adg *gin.RouterGroup) {
+ 	rg.POST("/invites/batch", inv.Batch)
+ 	rg.POST("/invites/revoke", inv.Revoke)
+ 
++	cl := &admin.NextecClientLists{}
++	rg.POST("/client-lists/sync", cl.Sync)
++
+ 	asg := &admin.NextecAssign{}
+ 	rg.GET("/install-token", asg.Token)
+ 	rg.POST("/install-token/revoke", asg.Revoke)
+diff --git a/service/data/nextec-settings.json b/service/data/nextec-settings.json
+new file mode 100644
+index 0000000..ec7f9e4
+--- /dev/null
++++ b/service/data/nextec-settings.json
+@@ -0,0 +1,4 @@
++{
++  "agent_key_hash": "",
++  "app_scoped_rollouts": "[]"
++}
+diff --git a/service/nextec_assign.go b/service/nextec_assign.go
+index e2393e7..32aab44 100644
+--- a/service/nextec_assign.go
++++ b/service/nextec_assign.go
+@@ -96,7 +96,13 @@ func NextecAssignApplyInfo(ip, peerID string, group uint, token string) (*Nextec
+ 	if p.RowId != 0 {
+ 		switch rel := nextecGroupRelationTx(DB, p.GroupId, group); rel {
+ 		case nextecRelNone, nextecRelRefine:
+-			if err := DB.Model(&model.Peer{}).Where("row_id = ?", p.RowId).Update("group_id", group).Error; err != nil {
++			if err := DB.Transaction(func(tx *gorm.DB) error {
++				if err := tx.Model(&model.Peer{}).Where("row_id = ?", p.RowId).Update("group_id", group).Error; err != nil {
++					return err
++				}
++				_, _, err := NextecSyncClientListsTx(tx, peerID, p.GroupId, group)
++				return err
++			}); err != nil {
+ 				return nil, err
+ 			}
+ 			NextecSecretAuditAdd(nil, peerID, "assign_install_key", nextecBootstrapAuditIP(ip), "chave de instalação, grupo "+nextecGroupPathTx(DB, group))
+@@ -137,6 +143,11 @@ func NextecApplyPendingAssign(peerID string) {
+ 			return res.Error
+ 		}
+ 		applied = res.RowsAffected > 0
++		if applied {
++			if _, _, err := NextecSyncClientListsTx(tx, peerID, 0, row.GroupId); err != nil {
++				return err
++			}
++		}
+ 		return tx.Delete(&model.NextecPendingAssign{}, "peer_id = ?", peerID).Error
+ 	})
+ 	if err != nil {
+diff --git a/service/nextec_client_lists.go b/service/nextec_client_lists.go
+new file mode 100644
+index 0000000..711f973
+--- /dev/null
++++ b/service/nextec_client_lists.go
+@@ -0,0 +1,222 @@
++package service
++
++import (
++	"errors"
++	"fmt"
++	"strings"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"gorm.io/gorm"
++)
++
++// Listas "Cliente: X" (agenda de endereços por cliente ou subgrupo). A lista de um cliente contém as máquinas dele e
++// as de todos os subgrupos; a lista de um subgrupo contém as máquinas do subgrupo. Ao mover ou salvar uma máquina
++// com outro grupo, a lista antiga perde a máquina e a nova ganha (só as listas que já existem; criar lista é decisão
++// do admin na tela Acesso por cliente).
++const NextecClientListPrefix = "Cliente: "
++
++// nextecClientListsFor devolve as listas (de qualquer dono) que acompanham o grupo, comparando o nome sem diferenciar caixa.
++func nextecClientListsFor(tx *gorm.DB, groupIDs []uint) []uint {
++	out := []uint{}
++	for _, gid := range groupIDs {
++		var g model.DeviceGroup
++		if tx.Select("id", "name").Where("id = ?", gid).Limit(1).Find(&g).Error != nil || g.Id == 0 {
++			continue
++		}
++		var cols []model.AddressBookCollection
++		tx.Select("id").Where("lower(name) = ?", strings.ToLower(NextecClientListPrefix+g.Name)).Find(&cols)
++		for _, c := range cols {
++			out = append(out, c.Id)
++		}
++	}
++	return out
++}
++
++func nextecDiffIDs(from, notIn []uint) []uint {
++	skip := map[uint]bool{}
++	for _, v := range notIn {
++		skip[v] = true
++	}
++	out := []uint{}
++	for _, v := range from {
++		if !skip[v] {
++			out = append(out, v)
++		}
++	}
++	return out
++}
++
++func nextecEntryFromPeer(p *model.Peer, userID, collectionID uint) *model.AddressBook {
++	return &model.AddressBook{
++		Id: NextecCleanId(p.Id), Username: p.Username, Hostname: p.Hostname, Alias: p.Alias,
++		Platform: AllService.AddressBookService.PlatformFromOs(p.Os), Tags: []byte("[]"),
++		UserId: userID, CollectionId: collectionID,
++	}
++}
++
++// NextecSyncClientListsTx ajusta as listas quando a máquina muda de grupo: sai das listas dos grupos que deixou
++// (incluindo o cliente, se mudou de cliente) e entra nas dos novos. Mover entre subgrupos do mesmo cliente não mexe
++// na lista do cliente. Devolve quantas entradas foram removidas e incluídas.
++func NextecSyncClientListsTx(tx *gorm.DB, peerID string, oldGroup, newGroup uint) (removed, added int, err error) {
++	if oldGroup == newGroup {
++		return 0, 0, nil
++	}
++	oldChain, newChain := nextecGroupChainTx(tx, oldGroup), nextecGroupChainTx(tx, newGroup)
++	leave := nextecClientListsFor(tx, nextecDiffIDs(oldChain, newChain))
++	join := nextecClientListsFor(tx, nextecDiffIDs(newChain, oldChain))
++	if len(leave) > 0 {
++		res := tx.Where("id = ? AND collection_id IN ?", peerID, leave).Delete(&model.AddressBook{})
++		if res.Error != nil {
++			return 0, 0, res.Error
++		}
++		removed = int(res.RowsAffected)
++	}
++	if len(join) > 0 {
++		var p model.Peer
++		if tx.Where("id = ?", peerID).Limit(1).Find(&p).Error != nil || p.RowId == 0 {
++			return removed, 0, nil
++		}
++		for _, cid := range join {
++			var col model.AddressBookCollection
++			if tx.Where("id = ?", cid).Limit(1).Find(&col).Error != nil || col.Id == 0 {
++				continue
++			}
++			var n int64
++			tx.Model(&model.AddressBook{}).Where("id = ? AND collection_id = ?", peerID, cid).Count(&n)
++			if n > 0 {
++				continue
++			}
++			if err := tx.Create(nextecEntryFromPeer(&p, col.UserId, cid)).Error; err != nil {
++				return removed, added, err
++			}
++			added++
++		}
++	}
++	return removed, added, nil
++}
++
++// NextecSyncClientLists é a versão com transação própria e auditoria; u pode ser nil (fluxos automáticos).
++func NextecSyncClientLists(u *model.User, ip, peerID string, oldGroup, newGroup uint) error {
++	var removed, added int
++	err := DB.Transaction(func(tx *gorm.DB) error {
++		var e error
++		removed, added, e = NextecSyncClientListsTx(tx, peerID, oldGroup, newGroup)
++		return e
++	})
++	if err != nil {
++		return err
++	}
++	if removed+added > 0 {
++		NextecSecretAuditAdd(u, peerID, "client_lists_sync", ip,
++			fmt.Sprintf("de %s para %s: %d removida(s), %d incluída(s)", nextecGroupPathOrRoot(oldGroup), nextecGroupPathOrRoot(newGroup), removed, added))
++	}
++	return nil
++}
++
++func nextecGroupPathOrRoot(id uint) string {
++	if id == 0 {
++		return "sem cliente"
++	}
++	if p := NextecGroupPath(id); p != "" {
++		return p
++	}
++	return fmt.Sprintf("grupo %d", id)
++}
++
++// nextecSubtree devolve o grupo e todos os descendentes.
++func nextecSubtree(tx *gorm.DB, root uint) []uint {
++	var all []model.DeviceGroup
++	tx.Select("id", "parent_id").Find(&all)
++	kids := map[uint][]uint{}
++	for _, g := range all {
++		kids[g.ParentId] = append(kids[g.ParentId], g.Id)
++	}
++	out, seen, queue := []uint{}, map[uint]bool{root: true}, []uint{root}
++	for len(queue) > 0 {
++		cur := queue[0]
++		queue = queue[1:]
++		out = append(out, cur)
++		for _, k := range kids[cur] {
++			if !seen[k] {
++				seen[k] = true
++				queue = append(queue, k)
++			}
++		}
++	}
++	return out
++}
++
++type NextecClientListSyncResult struct {
++	CollectionId uint   `json:"collection_id"`
++	Name         string `json:"name"`
++	Added        int    `json:"added"`
++	Removed      int    `json:"removed"`
++}
++
++// NextecReconcileClientList deixa a lista igual ao grupo: inclui o que falta e remove o que sobra (máquinas que
++// saíram do cliente, foram apagadas ou nunca foram incluídas).
++func NextecReconcileClientList(u *model.User, ip string, collectionID uint) (*NextecClientListSyncResult, error) {
++	res := &NextecClientListSyncResult{CollectionId: collectionID}
++	err := DB.Transaction(func(tx *gorm.DB) error {
++		var col model.AddressBookCollection
++		if tx.Where("id = ?", collectionID).Limit(1).Find(&col).Error != nil || col.Id == 0 {
++			return errors.New("lista não encontrada")
++		}
++		if !strings.HasPrefix(strings.ToLower(col.Name), strings.ToLower(NextecClientListPrefix)) {
++			return errors.New("a lista não é de um cliente")
++		}
++		res.Name = col.Name
++		want := strings.ToLower(strings.TrimPrefix(col.Name, col.Name[:len(NextecClientListPrefix)]))
++		var g model.DeviceGroup
++		var groups []model.DeviceGroup
++		tx.Find(&groups)
++		for _, cand := range groups {
++			if strings.ToLower(cand.Name) == want {
++				g = cand
++				break
++			}
++		}
++		if g.Id == 0 {
++			return errors.New("cliente da lista não encontrado")
++		}
++		var peers []model.Peer
++		if err := tx.Where("group_id IN ?", nextecSubtree(tx, g.Id)).Find(&peers).Error; err != nil {
++			return err
++		}
++		expected := map[string]*model.Peer{}
++		for i := range peers {
++			expected[NextecCleanId(peers[i].Id)] = &peers[i]
++		}
++		var entries []model.AddressBook
++		if err := tx.Where("collection_id = ?", col.Id).Find(&entries).Error; err != nil {
++			return err
++		}
++		have := map[string]bool{}
++		for _, e := range entries {
++			id := NextecCleanId(e.Id)
++			if expected[id] == nil || have[id] {
++				if err := tx.Delete(&model.AddressBook{}, "row_id = ?", e.RowId).Error; err != nil {
++					return err
++				}
++				res.Removed++
++				continue
++			}
++			have[id] = true
++		}
++		for id, p := range expected {
++			if have[id] {
++				continue
++			}
++			if err := tx.Create(nextecEntryFromPeer(p, col.UserId, col.Id)).Error; err != nil {
++				return err
++			}
++			res.Added++
++		}
++		return nil
++	})
++	if err != nil {
++		return nil, err
++	}
++	NextecSecretAuditAdd(u, "", "client_list_reconcile", ip, fmt.Sprintf("%s: %d incluída(s), %d removida(s)", res.Name, res.Added, res.Removed))
++	return res, nil
++}
+diff --git a/service/nextec_client_lists_test.go b/service/nextec_client_lists_test.go
+new file mode 100644
+index 0000000..0735bce
+--- /dev/null
++++ b/service/nextec_client_lists_test.go
+@@ -0,0 +1,140 @@
++package service
++
++import (
++	"testing"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"gorm.io/gorm"
++)
++
++// listsSetup: Cliente A (7) com subgrupos Filial (9) e Loja (10), Cliente B (8); uma lista "Cliente: X" de cada, de um admin (user 1).
++func listsSetup(t *testing.T) (*gorm.DB, map[string]uint) {
++	t.Helper()
++	db := enrollSetup(t)
++	bug8Groups(t, db)
++	if err := db.AutoMigrate(&model.AddressBook{}, &model.AddressBookCollection{}); err != nil {
++		t.Fatal(err)
++	}
++	cols := map[string]uint{}
++	for _, c := range []struct{ key, name string }{
++		{"A", "Cliente: Cliente A"}, {"F", "Cliente: Cliente A / Filial"}, {"L", "Cliente: Cliente A / Loja"}, {"B", "Cliente: Cliente B"},
++	} {
++		col := &model.AddressBookCollection{UserId: 1, Name: c.name}
++		if err := db.Create(col).Error; err != nil {
++			t.Fatal(err)
++		}
++		cols[c.key] = col.Id
++	}
++	return db, cols
++}
++
++func inList(db *gorm.DB, col uint, peer string) bool {
++	var n int64
++	db.Model(&model.AddressBook{}).Where("collection_id = ? AND id = ?", col, peer).Count(&n)
++	return n > 0
++}
++
++func TestClientListsFollowMachineAcrossClientsAndSubgroups(t *testing.T) {
++	db, c := listsSetup(t)
++	move := func(from, to uint) {
++		t.Helper()
++		setPeerGroup(t, db, to)
++		if err := NextecSyncClientLists(nil, "10.0.0.1", enrollPeer, from, to); err != nil {
++			t.Fatal(err)
++		}
++	}
++	// sem cliente -> subgrupo Filial: entra na lista da Filial e na do cliente A (que inclui os subgrupos)
++	move(0, 9)
++	if !inList(db, c["F"], enrollPeer) || !inList(db, c["A"], enrollPeer) || inList(db, c["B"], enrollPeer) || inList(db, c["L"], enrollPeer) {
++		t.Fatal("entrada no subgrupo deveria cair na Filial e no cliente A")
++	}
++	// Filial -> Loja (mesmo cliente): sai da Filial, entra na Loja, a lista do cliente A não muda
++	move(9, 10)
++	if inList(db, c["F"], enrollPeer) || !inList(db, c["L"], enrollPeer) || !inList(db, c["A"], enrollPeer) {
++		t.Fatal("troca de subgrupo deveria mover só entre Filial e Loja")
++	}
++	var nA int64
++	db.Model(&model.AddressBook{}).Where("collection_id = ? AND id = ?", c["A"], enrollPeer).Count(&nA)
++	if nA != 1 {
++		t.Fatalf("lista do cliente A com %d entradas da máquina", nA)
++	}
++	// Loja -> Cliente B: sai de tudo do A e entra na lista do B
++	move(10, 8)
++	if inList(db, c["L"], enrollPeer) || inList(db, c["A"], enrollPeer) || !inList(db, c["B"], enrollPeer) {
++		t.Fatal("troca de cliente deveria sair do A (e subgrupos) e entrar no B")
++	}
++	// B -> sem cliente: sai da lista
++	move(8, 0)
++	if inList(db, c["B"], enrollPeer) {
++		t.Fatal("sem cliente deveria sair da lista do B")
++	}
++	if bug8Audit(db, "client_lists_sync") != 4 {
++		t.Fatalf("auditoria da sincronização: %d", bug8Audit(db, "client_lists_sync"))
++	}
++	// mesma posição não faz nada nem audita
++	if err := NextecSyncClientLists(nil, "", enrollPeer, 0, 0); err != nil || bug8Audit(db, "client_lists_sync") != 4 {
++		t.Fatal("sem mudança de grupo não deveria auditar")
++	}
++}
++
++func TestClientListsKeepOtherMachinesAndOtherOwners(t *testing.T) {
++	db, c := listsSetup(t)
++	other := &model.AddressBookCollection{UserId: 2, Name: "cliente: cliente a"}
++	db.Create(other)
++	db.Create(&model.Peer{Id: "999000111", Uuid: "u-other", GroupId: 7})
++	db.Create(&model.AddressBook{Id: "999000111", UserId: 1, CollectionId: c["A"]})
++	setPeerGroup(t, db, 9)
++	if err := NextecSyncClientLists(nil, "", enrollPeer, 0, 9); err != nil {
++		t.Fatal(err)
++	}
++	if !inList(db, other.Id, enrollPeer) {
++		t.Fatal("lista de outro dono com o mesmo nome (caixa diferente) também acompanha o cliente")
++	}
++	if !inList(db, c["A"], "999000111") {
++		t.Fatal("outra máquina do cliente foi mexida")
++	}
++	setPeerGroup(t, db, 8)
++	if err := NextecSyncClientLists(nil, "", enrollPeer, 9, 8); err != nil {
++		t.Fatal(err)
++	}
++	if !inList(db, c["A"], "999000111") || inList(db, other.Id, enrollPeer) {
++		t.Fatal("mover uma máquina não pode tirar as outras da lista do cliente antigo")
++	}
++}
++
++func TestReconcileClientListAddsMissingAndRemovesStale(t *testing.T) {
++	db, c := listsSetup(t)
++	// cliente A: máquina na raiz e outra no subgrupo; a lista está desatualizada (tem uma de B e duplicada, falta as duas)
++	db.Create(&model.Peer{Id: "100", Uuid: "u1", GroupId: 7, Hostname: "H1"})
++	db.Create(&model.Peer{Id: "200", Uuid: "u2", GroupId: 9, Hostname: "H2"})
++	db.Create(&model.Peer{Id: "300", Uuid: "u3", GroupId: 8, Hostname: "H3"})
++	db.Create(&model.AddressBook{Id: "300", UserId: 1, CollectionId: c["A"]})
++	db.Create(&model.AddressBook{Id: "100", UserId: 1, CollectionId: c["A"]})
++	db.Create(&model.AddressBook{Id: "100", UserId: 1, CollectionId: c["A"]})
++	r, err := NextecReconcileClientList(nil, "", c["A"])
++	if err != nil {
++		t.Fatal(err)
++	}
++	if r.Added != 1 || r.Removed != 2 {
++		t.Fatalf("resultado: %+v", r)
++	}
++	if !inList(db, c["A"], "100") || !inList(db, c["A"], "200") || inList(db, c["A"], "300") {
++		t.Fatal("lista do cliente A deveria ter 100 e 200 e não o 300")
++	}
++	// lista do subgrupo: só as do subgrupo
++	if _, err := NextecReconcileClientList(nil, "", c["F"]); err != nil {
++		t.Fatal(err)
++	}
++	if !inList(db, c["F"], "200") || inList(db, c["F"], "100") {
++		t.Fatal("lista da Filial deveria ter só a 200")
++	}
++	// lista que não é de cliente é recusada
++	other := &model.AddressBookCollection{UserId: 1, Name: "Favoritos"}
++	db.Create(other)
++	if _, err := NextecReconcileClientList(nil, "", other.Id); err == nil {
++		t.Fatal("lista comum não pode ser reconciliada")
++	}
++	if bug8Audit(db, "client_list_reconcile") != 2 {
++		t.Fatalf("auditoria: %d", bug8Audit(db, "client_list_reconcile"))
++	}
++}
+diff --git a/service/nextec_enroll.go b/service/nextec_enroll.go
+index 26df97d..cf47cd6 100644
+--- a/service/nextec_enroll.go
++++ b/service/nextec_enroll.go
+@@ -562,6 +562,9 @@ func NextecEnrollAssign(o NextecAssignOptions) (*NextecAssignResult, error) {
+ 			if err := tx.Model(&model.Peer{}).Where("row_id = ?", peer.RowId).Update("group_id", o.ClientID).Error; err != nil {
+ 				return err
+ 			}
++			if _, _, err := NextecSyncClientListsTx(tx, peer.Id, peer.GroupId, o.ClientID); err != nil {
++				return err
++			}
+ 		}
+ 		if !sameRule {
+ 			switch {

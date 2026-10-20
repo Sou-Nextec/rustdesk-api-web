@@ -1,0 +1,1155 @@
+diff --git a/cmd/apimain.go b/cmd/apimain.go
+index f789670..b372679 100644
+--- a/cmd/apimain.go
++++ b/cmd/apimain.go
+@@ -217,12 +217,18 @@ func InitGlobal() {
+ 	global.LoginLimiter.RegisterProvider(utils.B64StringCaptchaProvider{})
+ 	DatabaseAutoUpdate()
+ 	// Nextec: tabelas do cofre de senhas (criadas sempre, sem depender da versão do banco)
+-	if err := global.DB.AutoMigrate(&model.NextecSecretPolicy{}, &model.NextecDeviceSecret{}, &model.NextecSecretAudit{}, &model.NextecAgentBootstrap{}, &model.NextecEnrollBlock{}); err != nil {
++	if err := global.DB.AutoMigrate(&model.NextecSecretPolicy{}, &model.NextecDeviceSecret{}, &model.NextecSecretAudit{}, &model.NextecAgentBootstrap{}, &model.NextecEnrollBlock{}, &model.NextecEnrollReject{}); err != nil {
+ 		global.Logger.Error("migrate nextec secrets: ", err)
+ 	}
+ 	if err := global.DB.AutoMigrate(&model.NextecAppRelease{}, &model.NextecAppInstall{}, &model.NextecPendingAssign{}, &model.NextecAppPolicy{}, &model.NextecConnectNote{}, &model.NextecAppSignatureSequence{}); err != nil {
+ 		global.Logger.Error("migrate nextec updates: ", err)
+ 	}
++	// Nextec: subgrupo ligado ao cliente por parent_id (migra a partir do nome "Cliente / Sub")
++	if err := global.DB.AutoMigrate(&model.DeviceGroup{}); err != nil {
++		global.Logger.Error("migrate nextec device group: ", err)
++	} else {
++		service.NextecBackfillGroupParents()
++	}
+ 	// Nextec: IDs gravados com espaço passam a ser salvos sem espaço
+ 	service.NextecNormalizeIds()
+ }
+diff --git a/http/controller/admin/deviceGroup.go b/http/controller/admin/deviceGroup.go
+index 2adac4e..cf3929b 100644
+--- a/http/controller/admin/deviceGroup.go
++++ b/http/controller/admin/deviceGroup.go
+@@ -58,6 +58,10 @@ func (ct *DeviceGroup) Create(c *gin.Context) {
+ 		return
+ 	}
+ 	u := f.ToDeviceGroup()
++	if f.ParentId != nil && !service.NextecGroupValidateParent(0, *f.ParentId) {
++		response.Fail(c, 101, response.TranslateMsg(c, "ParamsError")+"parent_id")
++		return
++	}
+ 	err := service.AllService.GroupService.DeviceGroupCreate(u)
+ 	if err != nil {
+ 		response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
+@@ -115,7 +119,22 @@ func (ct *DeviceGroup) Update(c *gin.Context) {
+ 		return
+ 	}
+ 	u := f.ToDeviceGroup()
+-	err := service.UpdateFields(u, "name")
++	fields := []string{"name"}
++	switch {
++	case f.ParentId != nil:
++		if !service.NextecGroupValidateParent(f.Id, *f.ParentId) {
++			response.Fail(c, 101, response.TranslateMsg(c, "ParamsError")+"parent_id")
++			return
++		}
++		fields = append(fields, "parent_id")
++	default:
++		// renomeado para "Cliente / Sub" por um painel que não conhece parent_id: liga pelo nome, sem soltar quem já tem pai
++		if pid := service.NextecGroupParentFromName(f.Id, f.Name); pid != 0 && service.NextecGroupValidateParent(f.Id, pid) {
++			u.ParentId = pid
++			fields = append(fields, "parent_id")
++		}
++	}
++	err := service.UpdateFields(u, fields...)
+ 	if err != nil {
+ 		response.Fail(c, 101, response.TranslateMsg(c, "OperationFailed")+err.Error())
+ 		return
+diff --git a/http/controller/admin/nextec_enroll.go b/http/controller/admin/nextec_enroll.go
+index de07636..216202c 100644
+--- a/http/controller/admin/nextec_enroll.go
++++ b/http/controller/admin/nextec_enroll.go
+@@ -29,6 +29,8 @@ type nextecRejectForm struct {
+ 	Id    string `json:"id"`
+ 	Uuid  string `json:"uuid"`
+ 	Block bool   `json:"block"`
++	// Reason: motivo informado pelo admin ao rejeitar (até 255 caracteres), guardado na carência e na auditoria.
++	Reason string `json:"reason"`
+ }
+ 
+ type nextecUnblockForm struct {
+@@ -110,7 +112,7 @@ func (n *NextecEnroll) Reject(c *gin.Context) {
+ 	if u != nil {
+ 		uid, name = u.Id, u.Username
+ 	}
+-	if err := service.NextecEnrollRejectIdentity(f.Id, f.Uuid, f.Block, uid, name, nextecIP(c)); err != nil {
++	if err := service.NextecEnrollRejectReason(f.Id, f.Uuid, f.Block, f.Reason, uid, name, nextecIP(c)); err != nil {
+ 		enrollFail(c, err)
+ 		return
+ 	}
+diff --git a/http/controller/admin/nextec_secret.go b/http/controller/admin/nextec_secret.go
+index c9fbca1..7708722 100644
+--- a/http/controller/admin/nextec_secret.go
++++ b/http/controller/admin/nextec_secret.go
+@@ -38,6 +38,7 @@ func (n *NextecSecret) Overview(c *gin.Context) {
+ 		"pending_count": service.NextecEnrollPendingCount(),
+ 		"stale_count":   service.NextecEnrollStaleCount(),
+ 		"blocked":       service.NextecEnrollBlocks(),
++		"rejected":      service.NextecEnrollRejects(),
+ 	})
+ }
+ 
+diff --git a/http/controller/api/nextec_agent_interval_test.go b/http/controller/api/nextec_agent_interval_test.go
+index b78a65f..fc5311e 100644
+--- a/http/controller/api/nextec_agent_interval_test.go
++++ b/http/controller/api/nextec_agent_interval_test.go
+@@ -27,7 +27,7 @@ func TestAgentSyncStoresIntervalSeconds(t *testing.T) {
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+-	if err := db.AutoMigrate(&model.Peer{}, &model.DeviceGroup{}, &model.NextecSecretPolicy{}, &model.NextecDeviceSecret{}, &model.NextecSecretAudit{}, &model.NextecAgentBootstrap{}, &model.NextecEnrollBlock{}); err != nil {
++	if err := db.AutoMigrate(&model.Peer{}, &model.DeviceGroup{}, &model.NextecSecretPolicy{}, &model.NextecDeviceSecret{}, &model.NextecSecretAudit{}, &model.NextecAgentBootstrap{}, &model.NextecEnrollBlock{}, &model.NextecEnrollReject{}); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	sqlDB, _ := db.DB()
+diff --git a/http/controller/api/nextec_agent_probe_test.go b/http/controller/api/nextec_agent_probe_test.go
+index 7963a89..ef24379 100644
+--- a/http/controller/api/nextec_agent_probe_test.go
++++ b/http/controller/api/nextec_agent_probe_test.go
+@@ -27,7 +27,7 @@ func TestAgentSyncProbeFlagDoesNotRecordContact(t *testing.T) {
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+-	if err := db.AutoMigrate(&model.Peer{}, &model.DeviceGroup{}, &model.NextecSecretPolicy{}, &model.NextecDeviceSecret{}, &model.NextecSecretAudit{}, &model.NextecAgentBootstrap{}, &model.NextecEnrollBlock{}); err != nil {
++	if err := db.AutoMigrate(&model.Peer{}, &model.DeviceGroup{}, &model.NextecSecretPolicy{}, &model.NextecDeviceSecret{}, &model.NextecSecretAudit{}, &model.NextecAgentBootstrap{}, &model.NextecEnrollBlock{}, &model.NextecEnrollReject{}); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	sqlDB, _ := db.DB()
+diff --git a/http/controller/api/nextec_appname_test.go b/http/controller/api/nextec_appname_test.go
+index 29200e4..1f0c1bd 100644
+--- a/http/controller/api/nextec_appname_test.go
++++ b/http/controller/api/nextec_appname_test.go
+@@ -26,7 +26,7 @@ func TestAgentSyncAcceptsAppNameAdditively(t *testing.T) {
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+-	if err := db.AutoMigrate(&model.Peer{}, &model.DeviceGroup{}, &model.NextecSecretPolicy{}, &model.NextecDeviceSecret{}, &model.NextecSecretAudit{}, &model.NextecAgentBootstrap{}, &model.NextecEnrollBlock{}); err != nil {
++	if err := db.AutoMigrate(&model.Peer{}, &model.DeviceGroup{}, &model.NextecSecretPolicy{}, &model.NextecDeviceSecret{}, &model.NextecSecretAudit{}, &model.NextecAgentBootstrap{}, &model.NextecEnrollBlock{}, &model.NextecEnrollReject{}); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	sqlDB, _ := db.DB()
+diff --git a/http/controller/api/nextec_enroll.go b/http/controller/api/nextec_enroll.go
+index ec6c7c7..ad1708c 100644
+--- a/http/controller/api/nextec_enroll.go
++++ b/http/controller/api/nextec_enroll.go
+@@ -32,6 +32,9 @@ func (a *NextecAgent) SelfEnroll(c *gin.Context) {
+ 			c.JSON(http.StatusUnauthorized, gin.H{"error": "enroll_key_invalid"})
+ 		case errors.Is(err, service.ErrNextecEnrollBlocked):
+ 			c.JSON(http.StatusForbidden, gin.H{"error": "blocked"})
++		case errors.Is(err, service.ErrNextecEnrollRejected):
++			// 403 como o bloqueio: o agente espera 24 h e tenta de novo, e o servidor segue recusando durante a carência
++			c.JSON(http.StatusForbidden, gin.H{"error": "rejected"})
+ 		case errors.Is(err, service.ErrNextecPeerNotRegistered):
+ 			c.JSON(http.StatusNotFound, gin.H{"error": "peer_not_registered"})
+ 		case errors.Is(err, service.ErrNextecIdentityConflict):
+diff --git a/http/controller/api/nextec_enroll_identity_test.go b/http/controller/api/nextec_enroll_identity_test.go
+index c5fd453..7a721b2 100644
+--- a/http/controller/api/nextec_enroll_identity_test.go
++++ b/http/controller/api/nextec_enroll_identity_test.go
+@@ -25,7 +25,7 @@ func TestAgentIdentityConflictHTTP(t *testing.T) {
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+-	if err := db.AutoMigrate(&model.Peer{}, &model.DeviceGroup{}, &model.NextecSecretPolicy{}, &model.NextecDeviceSecret{}, &model.NextecSecretAudit{}, &model.NextecAgentBootstrap{}, &model.NextecEnrollBlock{}); err != nil {
++	if err := db.AutoMigrate(&model.Peer{}, &model.DeviceGroup{}, &model.NextecSecretPolicy{}, &model.NextecDeviceSecret{}, &model.NextecSecretAudit{}, &model.NextecAgentBootstrap{}, &model.NextecEnrollBlock{}, &model.NextecEnrollReject{}); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	sqlDB, _ := db.DB()
+diff --git a/http/controller/api/nextec_enroll_test.go b/http/controller/api/nextec_enroll_test.go
+index 8c00013..198d8e9 100644
+--- a/http/controller/api/nextec_enroll_test.go
++++ b/http/controller/api/nextec_enroll_test.go
+@@ -23,7 +23,7 @@ func TestSelfEnrollHTTPContract(t *testing.T) {
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+-	if err := db.AutoMigrate(&model.Peer{}, &model.DeviceGroup{}, &model.NextecSecretPolicy{}, &model.NextecDeviceSecret{}, &model.NextecSecretAudit{}, &model.NextecAgentBootstrap{}, &model.NextecEnrollBlock{}); err != nil {
++	if err := db.AutoMigrate(&model.Peer{}, &model.DeviceGroup{}, &model.NextecSecretPolicy{}, &model.NextecDeviceSecret{}, &model.NextecSecretAudit{}, &model.NextecAgentBootstrap{}, &model.NextecEnrollBlock{}, &model.NextecEnrollReject{}); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	sqlDB, _ := db.DB()
+@@ -111,6 +111,23 @@ func TestSelfEnrollHTTPContract(t *testing.T) {
+ 	if code != 403 || out["error"] != "pending_approval" {
+ 		t.Fatalf("confirm do pendente: %d %v", code, out)
+ 	}
++	// Rejeição com carência: o agente insiste e continua recebendo 403 "rejected".
++	if err := service.NextecEnrollReject("424242424", false, 1, "admin", ""); err != nil {
++		t.Fatal(err)
++	}
++	for i := 0; i < 3; i++ {
++		code, out = call("/self-enroll", good, "10.20.0.1")
++		if code != 403 || out["error"] != "rejected" {
++			t.Fatalf("rejeitada, ciclo %d: %d %v", i, code, out)
++		}
++	}
++	if _, err := service.NextecEnrollUnblock("424242424", "", 1, "admin", ""); err != nil {
++		t.Fatal(err)
++	}
++	code, out = call("/self-enroll", good, "10.20.0.1")
++	if code != 200 {
++		t.Fatalf("após liberar a carência: %d %v", code, out)
++	}
+ 	// Bloqueio.
+ 	if err := service.NextecEnrollReject("424242424", true, 1, "admin", ""); err != nil {
+ 		t.Fatal(err)
+diff --git a/http/controller/api/nextec_genkey_test.go b/http/controller/api/nextec_genkey_test.go
+index b4ca80a..5b617e5 100644
+--- a/http/controller/api/nextec_genkey_test.go
++++ b/http/controller/api/nextec_genkey_test.go
+@@ -21,7 +21,7 @@ func TestGenEnrollKey(t *testing.T) {
+ 	if err != nil {
+ 		t.Fatal(err)
+ 	}
+-	if err := db.AutoMigrate(&model.Peer{}, &model.DeviceGroup{}, &model.NextecSecretPolicy{}, &model.NextecDeviceSecret{}, &model.NextecSecretAudit{}, &model.NextecAgentBootstrap{}, &model.NextecEnrollBlock{}); err != nil {
++	if err := db.AutoMigrate(&model.Peer{}, &model.DeviceGroup{}, &model.NextecSecretPolicy{}, &model.NextecDeviceSecret{}, &model.NextecSecretAudit{}, &model.NextecAgentBootstrap{}, &model.NextecEnrollBlock{}, &model.NextecEnrollReject{}); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	sqlDB, _ := db.DB()
+diff --git a/http/request/admin/group.go b/http/request/admin/group.go
+index 1c51e68..905fa83 100644
+--- a/http/request/admin/group.go
++++ b/http/request/admin/group.go
+@@ -26,11 +26,16 @@ func (gf *GroupForm) ToGroup() *model.Group {
+ type DeviceGroupForm struct {
+ 	Id   uint   `json:"id"`
+ 	Name string `json:"name" validate:"required"`
++	// ParentId: ausente = não mexe (na edição) ou deriva do nome (na criação); 0 = raiz; N = subgrupo do cliente N.
++	ParentId *uint `json:"parent_id"`
+ }
+ 
+ func (gf *DeviceGroupForm) ToDeviceGroup() *model.DeviceGroup {
+ 	group := &model.DeviceGroup{}
+ 	group.Id = gf.Id
+ 	group.Name = gf.Name
++	if gf.ParentId != nil {
++		group.ParentId = *gf.ParentId
++	}
+ 	return group
+ }
+diff --git a/model/group.go b/model/group.go
+index e49e794..cc7e9f7 100644
+--- a/model/group.go
++++ b/model/group.go
+@@ -20,6 +20,10 @@ type GroupList struct {
+ type DeviceGroup struct {
+ 	IdModel
+ 	Name string `json:"name" gorm:"default:'';not null;"`
++	// ParentId liga o subgrupo ao cliente (0 = cliente/raiz). O nome "Cliente / Sub" continua gravado por compatibilidade.
++	ParentId uint `json:"parent_id" gorm:"default:0;not null;index"`
++	// Path é o caminho completo (raiz primeiro), calculado na listagem; não é coluna.
++	Path string `json:"path" gorm:"-"`
+ 	TimeModel
+ }
+ 
+diff --git a/model/nextec_secret.go b/model/nextec_secret.go
+index 89e7083..974e4ac 100644
+--- a/model/nextec_secret.go
++++ b/model/nextec_secret.go
+@@ -46,6 +46,8 @@ type NextecDeviceSecret struct {
+ 	ApprovedAt       int64  `gorm:"not null;default:0" json:"approved_at"`
+ 	ApprovedBy       uint   `gorm:"not null;default:0" json:"approved_by"`
+ 	Uuid             string `gorm:"not null;default:''" json:"-"`
++	// Solicitação aberta depois de uma rejeição anterior do mesmo ID (identidade nova).
++	AfterReject bool `gorm:"not null;default:false" json:"after_reject"`
+ 	// Nome do app instalado, enviado pelo agente (nextec-marker.json). Define o protocolo do link da máquina.
+ 	AppName string `gorm:"not null;default:'';size:64" json:"-"`
+ 	TimeModel
+@@ -60,6 +62,20 @@ type NextecEnrollBlock struct {
+ 	BlockedBy uint   `gorm:"not null;default:0" json:"blocked_by"`
+ }
+ 
++// NextecEnrollReject guarda a rejeição de uma solicitação de cadastro de senha. Enquanto Until não passa, o mesmo
++// par ID+UUID não volta a criar solicitação (o agente tenta de novo sozinho, mas o servidor recusa). UUID ou ID
++// diferentes não casam com a linha e abrem uma solicitação nova, marcada como "após rejeição".
++type NextecEnrollReject struct {
++	Id         uint   `gorm:"primaryKey" json:"id"`
++	PeerId     string `gorm:"not null;size:64;index:idx_nx_enroll_reject,unique" json:"peer_id"`
++	Uuid       string `gorm:"not null;size:128;index:idx_nx_enroll_reject,unique" json:"uuid"`
++	Reason     string `gorm:"not null;default:'';size:255" json:"reason"`
++	RejectedAt int64  `gorm:"not null;default:0" json:"rejected_at"`
++	Until      int64  `gorm:"not null;default:0" json:"until"`
++	RejectedBy uint   `gorm:"not null;default:0" json:"rejected_by"`
++	Count      int    `gorm:"not null;default:1" json:"count"`
++}
++
+ // NextecSecretAudit registra quem viu, usou ou trocou senhas.
+ type NextecSecretAudit struct {
+ 	Id       uint   `gorm:"primaryKey" json:"id"`
+diff --git a/service/group.go b/service/group.go
+index 001ea97..0597f1e 100644
+--- a/service/group.go
++++ b/service/group.go
+@@ -47,6 +47,9 @@ func (us *GroupService) Update(u *model.Group) error {
+ func (us *GroupService) DeviceGroupInfoById(id uint) *model.DeviceGroup {
+ 	u := &model.DeviceGroup{}
+ 	DB.Where("id = ?", id).First(u)
++	if u.Id != 0 {
++		NextecFillGroupPaths([]*model.DeviceGroup{u})
++	}
+ 	return u
+ }
+ 
+@@ -61,15 +64,26 @@ func (us *GroupService) DeviceGroupList(page, pageSize uint, where func(tx *gorm
+ 	tx.Count(&res.Total)
+ 	tx.Scopes(Paginate(page, pageSize))
+ 	tx.Find(&res.DeviceGroups)
++	NextecFillGroupPaths(res.DeviceGroups)
+ 	return
+ }
+ 
+ func (us *GroupService) DeviceGroupCreate(u *model.DeviceGroup) error {
++	// painel antigo cria "Cliente / Sub" sem parent_id: deriva o pai pelo nome
++	if u.ParentId == 0 {
++		u.ParentId = NextecGroupParentFromName(0, u.Name)
++	}
+ 	res := DB.Create(u).Error
+ 	return res
+ }
+ func (us *GroupService) DeviceGroupDelete(u *model.DeviceGroup) error {
+-	return DB.Delete(u).Error
++	// filhos de um grupo apagado viram raiz, em vez de apontar para um pai que não existe mais
++	return DB.Transaction(func(tx *gorm.DB) error {
++		if err := tx.Model(&model.DeviceGroup{}).Where("parent_id = ?", u.Id).Update("parent_id", 0).Error; err != nil {
++			return err
++		}
++		return tx.Delete(u).Error
++	})
+ }
+ 
+ func (us *GroupService) DeviceGroupUpdate(u *model.DeviceGroup) error {
+diff --git a/service/nextec_enroll.go b/service/nextec_enroll.go
+index 9744907..6136983 100644
+--- a/service/nextec_enroll.go
++++ b/service/nextec_enroll.go
+@@ -34,6 +34,12 @@ const (
+ 	nextecEnrollMaxEpoch    = 1_000_000_000
+ 	nextecEnrollKeyMaxBytes = 160
+ 
++	// Carência de uma rejeição: o mesmo ID+UUID não reabre solicitação nesse prazo, por mais que o agente tente.
++	// Ajustável em nextec-settings.json (enroll_reject_grace_hours, 1 a 8760).
++	settingEnrollRejectGraceHours = "enroll_reject_grace_hours"
++	nextecEnrollRejectGraceHours  = 168
++	nextecEnrollRejectReasonMax   = 255
++
+ 	NextecStatePending  = "pending"
+ 	NextecStateAssigned = "assigned"
+ )
+@@ -42,6 +48,7 @@ var (
+ 	ErrNextecEnrollKeyInvalid  = errors.New("enroll key invalid")
+ 	ErrNextecEnrollBadRequest  = errors.New("bad request")
+ 	ErrNextecEnrollBlocked     = errors.New("enrollment blocked")
++	ErrNextecEnrollRejected    = errors.New("enrollment rejected")
+ 	ErrNextecPeerNotRegistered = errors.New("peer not registered")
+ 	ErrNextecIdentityConflict  = errors.New("identity conflict")
+ 	ErrNextecPendingLimit      = errors.New("pending limit")
+@@ -152,6 +159,41 @@ func nextecEnrollBlocked(db *gorm.DB, peerID, uuid string) bool {
+ 	return db.Model(&model.NextecEnrollBlock{}).Where("peer_id = ? AND uuid = ?", peerID, uuid).Count(&n).Error != nil || n > 0
+ }
+ 
++// ---------- rejeição com carência ----------
++
++func nextecEnrollRejectGrace() time.Duration {
++	if n, err := strconv.Atoi(global.NextecSettingGet(settingEnrollRejectGraceHours)); err == nil && n >= 1 && n <= 8760 {
++		return time.Duration(n) * time.Hour
++	}
++	return nextecEnrollRejectGraceHours * time.Hour
++}
++
++// nextecEnrollRejectedActive: o par ID+UUID foi rejeitado e ainda está dentro da carência.
++func nextecEnrollRejectedActive(db *gorm.DB, peerID, uuid string, now int64) bool {
++	var n int64
++	return db.Model(&model.NextecEnrollReject{}).Where("peer_id = ? AND uuid = ? AND until > ?", peerID, uuid, now).Count(&n).Error != nil || n > 0
++}
++
++// nextecEnrollRejectedBefore: o ID já teve alguma rejeição (de qualquer identidade, vencida ou não).
++func nextecEnrollRejectedBefore(db *gorm.DB, peerID string) bool {
++	var n int64
++	return db.Model(&model.NextecEnrollReject{}).Where("peer_id = ?", peerID).Count(&n).Error == nil && n > 0
++}
++
++func nextecEnrollCleanReason(s string) string {
++	s = strings.Map(func(r rune) rune {
++		if r < 0x20 || r == 0x7f {
++			return ' '
++		}
++		return r
++	}, s)
++	s = strings.TrimSpace(s)
++	if r := []rune(s); len(r) > nextecEnrollRejectReasonMax {
++		s = string(r[:nextecEnrollRejectReasonMax])
++	}
++	return s
++}
++
+ // ---------- inscrição pela máquina ----------
+ 
+ type NextecSelfEnrollResult struct {
+@@ -185,6 +227,9 @@ func NextecSelfEnroll(ip, enrollKey, peerID, uuid, proposedToken string) (*Nexte
+ 	if nextecEnrollBlocked(DB, peerID, uuid) {
+ 		return nil, ErrNextecEnrollBlocked
+ 	}
++	if nextecEnrollRejectedActive(DB, peerID, uuid, time.Now().Unix()) {
++		return nil, ErrNextecEnrollRejected
++	}
+ 	proposedHash := sha256Hex(proposedToken)
+ 	var result *NextecSelfEnrollResult
+ 	var lastErr error
+@@ -260,9 +305,10 @@ func NextecSelfEnroll(ip, enrollKey, peerID, uuid, proposedToken string) (*Nexte
+ 			if n >= nextecEnrollIPPerHour {
+ 				return ErrNextecPendingLimit
+ 			}
++			afterReject := nextecEnrollRejectedBefore(tx, peerID)
+ 			row := &model.NextecDeviceSecret{
+ 				PeerId: peerID, TokenHash: proposedHash, LastSeenAt: now, AwaitingApproval: true,
+-				EnrolledVia: "self", EnrolledAt: now, EnrolledIp: ip, EnrollEpoch: epoch, Uuid: uuid,
++				EnrolledVia: "self", EnrolledAt: now, EnrolledIp: ip, EnrollEpoch: epoch, Uuid: uuid, AfterReject: afterReject,
+ 			}
+ 			if found {
+ 				// Linha sem agente (token vazio): reaproveita preservando o histórico e zerando o estado da senha.
+@@ -273,7 +319,7 @@ func NextecSelfEnroll(ip, enrollKey, peerID, uuid, proposedToken string) (*Nexte
+ 						"protocol_version": 0, "pending_operation": "", "pending_version": 0, "last_operation_id": "",
+ 						"active_at": 0, "next_rotation_at": 0, "force_rotate": false, "last_seen_at": now,
+ 						"awaiting_approval": true, "enrolled_via": "self", "enrolled_at": now, "enrolled_ip": ip,
+-						"enroll_epoch": epoch, "approved_at": 0, "approved_by": 0, "uuid": uuid,
++						"enroll_epoch": epoch, "approved_at": 0, "approved_by": 0, "uuid": uuid, "after_reject": afterReject,
+ 					})
+ 				if res.Error != nil {
+ 					return res.Error
+@@ -586,6 +632,14 @@ func NextecEnrollReject(peerID string, block bool, userID uint, username, ip str
+ 
+ // NextecEnrollRejectIdentity é o Reject com a identidade (uuid) que o admin viu na lista.
+ func NextecEnrollRejectIdentity(peerID, uuidSeen string, block bool, userID uint, username, ip string) error {
++	return NextecEnrollRejectReason(peerID, uuidSeen, block, "", userID, username, ip)
++}
++
++// NextecEnrollRejectReason rejeita a solicitação pendente. Sem block, grava uma rejeição com carência
++// (NextecEnrollReject): o mesmo ID+UUID não volta a pedir até o prazo vencer, nem a cada ciclo do agente.
++// Com block, o par fica barrado até o admin liberar.
++func NextecEnrollRejectReason(peerID, uuidSeen string, block bool, reason string, userID uint, username, ip string) error {
++	reason = nextecEnrollCleanReason(reason)
+ 	if peerID == "" || len(peerID) > 64 {
+ 		return ErrNextecEnrollBadRequest
+ 	}
+@@ -627,6 +681,28 @@ func NextecEnrollRejectIdentity(peerID, uuidSeen string, block bool, userID uint
+ 				}
+ 			}
+ 		}
++		if !block {
++			rejUUID := d.Uuid
++			if rejUUID == "" {
++				var peer model.Peer
++				if tx.Where("id = ?", peerID).Limit(1).Find(&peer).Error == nil {
++					rejUUID = peer.Uuid
++				}
++			}
++			until := now + int64(nextecEnrollRejectGrace().Seconds())
++			var rej model.NextecEnrollReject
++			if err := tx.Where("peer_id = ? AND uuid = ?", peerID, rejUUID).Limit(1).Find(&rej).Error; err != nil {
++				return err
++			}
++			if rej.Id == 0 {
++				if err := tx.Create(&model.NextecEnrollReject{PeerId: peerID, Uuid: rejUUID, Reason: reason, RejectedAt: now, Until: until, RejectedBy: userID, Count: 1}).Error; err != nil {
++					return err
++				}
++			} else if err := tx.Model(&model.NextecEnrollReject{}).Where("id = ?", rej.Id).
++				Updates(map[string]interface{}{"reason": reason, "rejected_at": now, "until": until, "rejected_by": userID, "count": rej.Count + 1}).Error; err != nil {
++				return err
++			}
++		}
+ 		res := tx.Where("id = ? AND peer_id = ? AND awaiting_approval = ?", d.Id, peerID, true).Delete(&model.NextecDeviceSecret{})
+ 		if res.Error != nil {
+ 			return res.Error
+@@ -638,7 +714,7 @@ func NextecEnrollRejectIdentity(peerID, uuidSeen string, block bool, userID uint
+ 		if block {
+ 			action = "enroll_block"
+ 		}
+-		return tx.Create(&model.NextecSecretAudit{At: now, UserId: userID, Username: username, PeerId: peerID, Action: action, Ip: ip}).Error
++		return tx.Create(&model.NextecSecretAudit{At: now, UserId: userID, Username: username, PeerId: peerID, Action: action, Ip: ip, Detail: reason}).Error
+ 	})
+ 	if err != nil && identityFail {
+ 		nextecIdentityAudit("enroll_identity_conflict", peerID, ip, nextecIdentityDetail, userID, username)
+@@ -659,10 +735,40 @@ func NextecEnrollUnblock(peerID, uuid string, userID uint, username, ip string)
+ 	if res.Error != nil {
+ 		return 0, res.Error
+ 	}
+-	if res.RowsAffected > 0 {
++	// liberar também encerra a carência de uma rejeição
++	qr := DB.Where("peer_id = ?", peerID)
++	if uuid != "" {
++		qr = qr.Where("uuid = ?", uuid)
++	}
++	resR := qr.Delete(&model.NextecEnrollReject{})
++	if resR.Error != nil {
++		return res.RowsAffected, resR.Error
++	}
++	removed := res.RowsAffected + resR.RowsAffected
++	if removed > 0 {
+ 		NextecSecretAuditAdd(&model.User{IdModel: model.IdModel{Id: userID}, Username: username}, peerID, "enroll_unblock", ip, "")
+ 	}
+-	return res.RowsAffected, nil
++	return removed, nil
++}
++
++type NextecEnrollRejectInfo struct {
++	PeerId     string `json:"peer_id"`
++	Uuid       string `json:"uuid"`
++	Reason     string `json:"reason"`
++	RejectedAt int64  `json:"rejected_at"`
++	Until      int64  `json:"until"`
++	Count      int    `json:"count"`
++}
++
++// NextecEnrollRejects lista as rejeições ainda dentro da carência (para o admin ver e liberar).
++func NextecEnrollRejects() []*NextecEnrollRejectInfo {
++	var rows []*model.NextecEnrollReject
++	DB.Where("until > ?", time.Now().Unix()).Order("rejected_at desc").Limit(500).Find(&rows)
++	out := make([]*NextecEnrollRejectInfo, 0, len(rows))
++	for _, r := range rows {
++		out = append(out, &NextecEnrollRejectInfo{PeerId: r.PeerId, Uuid: r.Uuid, Reason: r.Reason, RejectedAt: r.RejectedAt, Until: r.Until, Count: r.Count})
++	}
++	return out
+ }
+ 
+ type NextecEnrollBlockInfo struct {
+diff --git a/service/nextec_enroll_test.go b/service/nextec_enroll_test.go
+index 4351efe..072654e 100644
+--- a/service/nextec_enroll_test.go
++++ b/service/nextec_enroll_test.go
+@@ -40,7 +40,7 @@ func enrollSetup(t *testing.T) *gorm.DB {
+ 		t.Fatal(err)
+ 	}
+ 	if err := db.AutoMigrate(&model.Peer{}, &model.DeviceGroup{}, &model.NextecSecretPolicy{}, &model.NextecDeviceSecret{},
+-		&model.NextecSecretAudit{}, &model.NextecAgentBootstrap{}, &model.NextecEnrollBlock{}); err != nil {
++		&model.NextecSecretAudit{}, &model.NextecAgentBootstrap{}, &model.NextecEnrollBlock{}, &model.NextecEnrollReject{}); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	sqlDB, err := db.DB()
+@@ -628,15 +628,21 @@ func TestRejectBlockAndUnblock(t *testing.T) {
+ 	if _, err := NextecSelfEnroll("10.7.0.1", key, enrollPeer, enrollUUID, token); err != nil {
+ 		t.Fatal(err)
+ 	}
+-	// Rejeitar sem bloquear remove a linha; a máquina pode se inscrever de novo.
++	// Rejeitar sem bloquear remove a linha e grava a carência: a mesma máquina não volta até liberar.
+ 	if err := NextecEnrollReject(enrollPeer, false, 1, "admin", "10.9.9.9"); err != nil {
+ 		t.Fatal(err)
+ 	}
+ 	if err := NextecEnrollReject(enrollPeer, false, 1, "admin", "10.9.9.9"); !errors.Is(err, ErrNextecEnrollNotFound) {
+ 		t.Fatalf("rejeitar de novo: %v", err)
+ 	}
++	if _, err := NextecSelfEnroll("10.7.0.1", key, enrollPeer, enrollUUID, token); !errors.Is(err, ErrNextecEnrollRejected) {
++		t.Fatalf("máquina rejeitada voltou durante a carência: %v", err)
++	}
++	if removed, err := NextecEnrollUnblock(enrollPeer, "", 1, "admin", "10.9.9.9"); err != nil || removed != 1 {
++		t.Fatalf("liberar a carência: %d %v", removed, err)
++	}
+ 	if _, err := NextecSelfEnroll("10.7.0.1", key, enrollPeer, enrollUUID, token); err != nil {
+-		t.Fatalf("reinscrição após rejeitar: %v", err)
++		t.Fatalf("reinscrição após liberar: %v", err)
+ 	}
+ 	// Bloquear impede a volta, mesmo com chave válida.
+ 	if err := NextecEnrollReject(enrollPeer, true, 1, "admin", "10.9.9.9"); err != nil {
+diff --git a/service/nextec_group.go b/service/nextec_group.go
+new file mode 100644
+index 0000000..a7c2d13
+--- /dev/null
++++ b/service/nextec_group.go
+@@ -0,0 +1,166 @@
++package service
++
++import (
++	"strings"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"gorm.io/gorm"
++)
++
++// Cliente = DeviceGroup raiz; subgrupo = DeviceGroup com parent_id apontando para o cliente. O nome continua
++// "Cliente / Sub" por compatibilidade com o painel e com listas antigas.
++
++const (
++	nextecGroupSep      = " / "
++	nextecGroupMaxDepth = 8
++)
++
++// nextecGroupParentName devolve os nomes candidatos ao pai de "A / B / C", do mais longo ao mais curto
++// ("A / B", depois "A").
++func nextecGroupParentNames(name string) []string {
++	parts := strings.Split(name, nextecGroupSep)
++	out := []string{}
++	for i := len(parts) - 1; i >= 1; i-- {
++		p := strings.TrimSpace(strings.Join(parts[:i], nextecGroupSep))
++		if p != "" {
++			out = append(out, p)
++		}
++	}
++	return out
++}
++
++// nextecGroupParentFromName procura o grupo pai pelo nome "A / B" (0 = nenhum). Ignora o próprio grupo.
++func nextecGroupParentFromName(tx *gorm.DB, selfID uint, name string) uint {
++	for _, cand := range nextecGroupParentNames(name) {
++		var g model.DeviceGroup
++		q := tx.Where("name = ?", cand)
++		if selfID != 0 {
++			q = q.Where("id <> ?", selfID)
++		}
++		if q.Order("id").First(&g).Error == nil && g.Id != 0 {
++			return g.Id
++		}
++	}
++	return 0
++}
++
++// NextecBackfillGroupParents preenche parent_id dos grupos "A / B" existentes. Idempotente: só toca em quem
++// ainda não tem pai e cujo pai existe. Devolve quantos grupos foram ligados.
++func NextecBackfillGroupParents() int {
++	var groups []*model.DeviceGroup
++	if err := DB.Where("parent_id = ?", 0).Find(&groups).Error; err != nil {
++		if Logger != nil {
++			Logger.Warn("nextec group parents: ", err)
++		}
++		return 0
++	}
++	linked := 0
++	for _, g := range groups {
++		if !strings.Contains(g.Name, nextecGroupSep) {
++			continue
++		}
++		pid := nextecGroupParentFromName(DB, g.Id, g.Name)
++		if pid == 0 || pid == g.Id || nextecGroupWouldLoop(DB, g.Id, pid) {
++			continue
++		}
++		if err := DB.Model(&model.DeviceGroup{}).Where("id = ? AND parent_id = ?", g.Id, 0).Update("parent_id", pid).Error; err == nil {
++			linked++
++		}
++	}
++	if linked > 0 && Logger != nil {
++		Logger.Info("nextec group parents: ", linked, " subgrupo(s) ligados ao cliente pelo nome")
++	}
++	return linked
++}
++
++// nextecGroupWouldLoop diz se ligar selfID como filho de parentID criaria ciclo.
++func nextecGroupWouldLoop(tx *gorm.DB, selfID, parentID uint) bool {
++	for _, id := range nextecGroupChainTx(tx, parentID) {
++		if id == selfID {
++			return true
++		}
++	}
++	return false
++}
++
++// nextecGroupChain devolve o grupo e os ancestrais, do subgrupo ao cliente: [sub, cliente]. Grupo 0 ou inexistente
++// devolve vazio. Protegido contra ciclo e profundidade absurda.
++func nextecGroupChain(groupID uint) []uint {
++	return nextecGroupChainTx(DB, groupID)
++}
++
++func nextecGroupChainTx(tx *gorm.DB, groupID uint) []uint {
++	chain := []uint{}
++	seen := map[uint]bool{}
++	cur := groupID
++	for cur != 0 && !seen[cur] && len(chain) < nextecGroupMaxDepth {
++		var g model.DeviceGroup
++		if tx.Select("id", "parent_id").Where("id = ?", cur).Limit(1).Find(&g).Error != nil || g.Id == 0 {
++			break
++		}
++		seen[cur] = true
++		chain = append(chain, g.Id)
++		cur = g.ParentId
++	}
++	return chain
++}
++
++// NextecGroupChain é a versão exportada de nextecGroupChain, para política, visibilidade e senhas.
++func NextecGroupChain(groupID uint) []uint { return nextecGroupChain(groupID) }
++
++// NextecFillGroupPaths preenche Path (raiz primeiro, separado por " / ") usando todos os grupos de uma vez.
++func NextecFillGroupPaths(groups []*model.DeviceGroup) {
++	if len(groups) == 0 {
++		return
++	}
++	var all []*model.DeviceGroup
++	if DB.Select("id", "name", "parent_id").Find(&all).Error != nil {
++		return
++	}
++	byID := make(map[uint]*model.DeviceGroup, len(all))
++	for _, g := range all {
++		byID[g.Id] = g
++	}
++	for _, g := range groups {
++		names := []string{}
++		seen := map[uint]bool{}
++		for cur := byID[g.Id]; cur != nil && !seen[cur.Id] && len(names) < nextecGroupMaxDepth; cur = byID[cur.ParentId] {
++			seen[cur.Id] = true
++			names = append([]string{nextecGroupLeaf(cur, byID)}, names...)
++		}
++		if len(names) == 0 {
++			g.Path = g.Name
++			continue
++		}
++		g.Path = strings.Join(names, nextecGroupSep)
++	}
++}
++
++// nextecGroupLeaf: o nome antigo "A / B" já carrega o pai; com parent_id, o segmento próprio é só o que vem
++// depois do prefixo do pai.
++func nextecGroupLeaf(g *model.DeviceGroup, byID map[uint]*model.DeviceGroup) string {
++	if p := byID[g.ParentId]; p != nil && strings.HasPrefix(g.Name, p.Name+nextecGroupSep) {
++		return strings.TrimPrefix(g.Name, p.Name+nextecGroupSep)
++	}
++	return g.Name
++}
++
++// NextecGroupValidateParent confere o pai de um grupo: existe, não é o próprio grupo e não cria ciclo.
++func NextecGroupValidateParent(selfID, parentID uint) bool {
++	if parentID == 0 {
++		return true
++	}
++	if parentID == selfID {
++		return false
++	}
++	var n int64
++	if DB.Model(&model.DeviceGroup{}).Where("id = ?", parentID).Count(&n).Error != nil || n == 0 {
++		return false
++	}
++	return selfID == 0 || !nextecGroupWouldLoop(DB, selfID, parentID)
++}
++
++// NextecGroupParentFromName é o derivador usado quando o painel antigo cria "A / B" sem parent_id.
++func NextecGroupParentFromName(selfID uint, name string) uint {
++	return nextecGroupParentFromName(DB, selfID, name)
++}
+diff --git a/service/nextec_phase0_test.go b/service/nextec_phase0_test.go
+new file mode 100644
+index 0000000..1e4b0aa
+--- /dev/null
++++ b/service/nextec_phase0_test.go
+@@ -0,0 +1,264 @@
++package service
++
++import (
++	"errors"
++	"reflect"
++	"strconv"
++	"testing"
++	"time"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++)
++
++// ---------- Fase 0: parent_id e nextecGroupChain ----------
++
++func TestGroupParentBackfillFromName(t *testing.T) {
++	db := enrollSetup(t) // cria "Cliente A" (7) e "Cliente B" (8)
++	mk := func(id uint, name string) {
++		if err := db.Create(&model.DeviceGroup{IdModel: model.IdModel{Id: id}, Name: name}).Error; err != nil {
++			t.Fatal(err)
++		}
++	}
++	mk(21, "Cliente A / Filial")
++	mk(22, "Cliente A / Filial / Caixa")
++	mk(23, "Sem Pai / Sub") // o pai não existe: continua raiz
++	mk(24, "Cliente B")
++
++	if n := NextecBackfillGroupParents(); n != 2 {
++		t.Fatalf("ligados = %d, esperado 2", n)
++	}
++	want := map[uint]uint{7: 0, 8: 0, 21: 7, 22: 21, 23: 0, 24: 0}
++	for id, parent := range want {
++		var g model.DeviceGroup
++		if err := db.First(&g, id).Error; err != nil {
++			t.Fatal(err)
++		}
++		if g.ParentId != parent {
++			t.Fatalf("grupo %d: parent_id = %d, esperado %d", id, g.ParentId, parent)
++		}
++	}
++	// Idempotente.
++	if n := NextecBackfillGroupParents(); n != 0 {
++		t.Fatalf("segunda passada ligou %d", n)
++	}
++}
++
++func TestGroupChainSubToClientAndGuards(t *testing.T) {
++	db := enrollSetup(t)
++	db.Create(&model.DeviceGroup{IdModel: model.IdModel{Id: 21}, Name: "Cliente A / Filial", ParentId: 7})
++	db.Create(&model.DeviceGroup{IdModel: model.IdModel{Id: 22}, Name: "Cliente A / Filial / Caixa", ParentId: 21})
++
++	if got := nextecGroupChain(22); !reflect.DeepEqual(got, []uint{22, 21, 7}) {
++		t.Fatalf("cadeia = %v", got)
++	}
++	if got := nextecGroupChain(7); !reflect.DeepEqual(got, []uint{7}) {
++		t.Fatalf("cadeia do cliente = %v", got)
++	}
++	if got := nextecGroupChain(0); len(got) != 0 {
++		t.Fatalf("grupo 0 = %v", got)
++	}
++	if got := nextecGroupChain(999); len(got) != 0 {
++		t.Fatalf("grupo inexistente = %v", got)
++	}
++	// Pai que não existe mais: a cadeia termina no último grupo válido.
++	db.Create(&model.DeviceGroup{IdModel: model.IdModel{Id: 30}, Name: "Órfão", ParentId: 404})
++	if got := nextecGroupChain(30); !reflect.DeepEqual(got, []uint{30}) {
++		t.Fatalf("órfão = %v", got)
++	}
++	// Ciclo no banco não trava: corta na primeira repetição.
++	db.Model(&model.DeviceGroup{}).Where("id = ?", 7).Update("parent_id", 22)
++	if got := nextecGroupChain(22); len(got) != 3 {
++		t.Fatalf("ciclo = %v", got)
++	}
++	// Validação do pai: não aceita ciclo, o próprio grupo nem pai inexistente.
++	db.Model(&model.DeviceGroup{}).Where("id = ?", 7).Update("parent_id", 0)
++	if NextecGroupValidateParent(7, 22) {
++		t.Fatal("aceitou ciclo")
++	}
++	if NextecGroupValidateParent(7, 7) || NextecGroupValidateParent(7, 999) {
++		t.Fatal("aceitou pai inválido")
++	}
++	if !NextecGroupValidateParent(22, 8) || !NextecGroupValidateParent(22, 0) {
++		t.Fatal("recusou pai válido")
++	}
++}
++
++func TestGroupPathsAndCreateDerivesParent(t *testing.T) {
++	db := enrollSetup(t)
++	gs := &GroupService{}
++	u := &model.DeviceGroup{Name: "Cliente A / Filial"}
++	if err := gs.DeviceGroupCreate(u); err != nil {
++		t.Fatal(err)
++	}
++	if u.ParentId != 7 {
++		t.Fatalf("pai derivado do nome = %d", u.ParentId)
++	}
++	explicit := &model.DeviceGroup{Name: "Loja", ParentId: 8}
++	if err := gs.DeviceGroupCreate(explicit); err != nil {
++		t.Fatal(err)
++	}
++	list := gs.DeviceGroupList(1, 100, nil)
++	paths := map[string]string{}
++	for _, g := range list.DeviceGroups {
++		paths[g.Name] = g.Path
++	}
++	if paths["Cliente A / Filial"] != "Cliente A / Filial" || paths["Loja"] != "Cliente B / Loja" || paths["Cliente A"] != "Cliente A" {
++		t.Fatalf("caminhos = %v", paths)
++	}
++	// Apagar o cliente solta os subgrupos (viram raiz) em vez de deixar um pai que não existe.
++	if err := gs.DeviceGroupDelete(&model.DeviceGroup{IdModel: model.IdModel{Id: 7}}); err != nil {
++		t.Fatal(err)
++	}
++	var g model.DeviceGroup
++	db.First(&g, u.Id)
++	if g.ParentId != 0 {
++		t.Fatalf("filho ficou com pai %d", g.ParentId)
++	}
++}
++
++// ---------- Bug 11: rejeitar grava carência ----------
++
++func TestRejectGracePersistsAcrossAgentCycles(t *testing.T) {
++	db := enrollSetup(t)
++	key := enrollKey(t)
++	token := enrollToken()
++	if _, err := NextecSelfEnroll("10.7.0.1", key, enrollPeer, enrollUUID, token); err != nil {
++		t.Fatal(err)
++	}
++	if err := NextecEnrollRejectReason(enrollPeer, enrollUUID, false, "  máquina\nde teste  ", 5, "admin", "10.9.9.9"); err != nil {
++		t.Fatal(err)
++	}
++	var rej model.NextecEnrollReject
++	if err := db.Where("peer_id = ?", enrollPeer).First(&rej).Error; err != nil {
++		t.Fatalf("carência não gravada: %v", err)
++	}
++	if rej.Uuid != enrollUUID || rej.Reason != "máquina de teste" || rej.RejectedBy != 5 || rej.Count != 1 {
++		t.Fatalf("linha = %+v", rej)
++	}
++	if d := time.Duration(rej.Until-rej.RejectedAt) * time.Second; d != 168*time.Hour {
++		t.Fatalf("carência = %s", d)
++	}
++	// O agente tenta várias vezes (mais de 2 ciclos): nunca recria a solicitação.
++	for i := 0; i < 5; i++ {
++		if _, err := NextecSelfEnroll("10.7.0.1", key, enrollPeer, enrollUUID, enrollToken()); !errors.Is(err, ErrNextecEnrollRejected) {
++			t.Fatalf("ciclo %d: %v", i, err)
++		}
++	}
++	var n int64
++	db.Model(&model.NextecDeviceSecret{}).Where("peer_id = ?", enrollPeer).Count(&n)
++	if n != 0 {
++		t.Fatal("solicitação reapareceu")
++	}
++	// A auditoria guarda o motivo.
++	var au model.NextecSecretAudit
++	if err := db.Where("peer_id = ? AND action = ?", enrollPeer, "enroll_reject").First(&au).Error; err != nil || au.Detail != "máquina de teste" {
++		t.Fatalf("auditoria = %+v %v", au, err)
++	}
++	// Rejeitar de novo (após liberar) soma a contagem; a lista mostra só carências vigentes.
++	if len(NextecEnrollRejects()) != 1 {
++		t.Fatal("lista de rejeitadas")
++	}
++}
++
++func TestRejectGraceExpiresAndNewIdentityIsMarked(t *testing.T) {
++	db := enrollSetup(t)
++	key := enrollKey(t)
++	if _, err := NextecSelfEnroll("10.7.0.1", key, enrollPeer, enrollUUID, enrollToken()); err != nil {
++		t.Fatal(err)
++	}
++	if err := NextecEnrollRejectReason(enrollPeer, "", false, "", 1, "admin", ""); err != nil {
++		t.Fatal(err)
++	}
++	// Carência vencida: volta a aceitar, marcada como nova após rejeição.
++	db.Model(&model.NextecEnrollReject{}).Where("peer_id = ?", enrollPeer).Update("until", time.Now().Unix()-1)
++	if len(NextecEnrollRejects()) != 0 {
++		t.Fatal("carência vencida ainda listada")
++	}
++	if _, err := NextecSelfEnroll("10.7.0.1", key, enrollPeer, enrollUUID, enrollToken()); err != nil {
++		t.Fatalf("após vencer: %v", err)
++	}
++	d := deviceRow(t, db, enrollPeer)
++	if !d.AfterReject {
++		t.Fatal("não marcou 'nova após rejeição'")
++	}
++	var dv *NextecSecretDevice
++	for _, x := range NextecSecretDevices() {
++		if x.PeerId == enrollPeer {
++			dv = x
++		}
++	}
++	if dv == nil || !dv.AfterReject {
++		t.Fatalf("lista sem a marca: %+v", dv)
++	}
++	// Identidade nova (UUID diferente) no mesmo ID, dentro da carência: abre solicitação nova, marcada.
++	if err := NextecEnrollRejectReason(enrollPeer, "", false, "", 1, "admin", ""); err != nil {
++		t.Fatal(err)
++	}
++	db.Model(&model.Peer{}).Where("id = ?", enrollPeer).Update("uuid", "uuid-outro")
++	if _, err := NextecSelfEnroll("10.7.0.1", key, enrollPeer, enrollUUID, enrollToken()); !errors.Is(err, ErrNextecEnrollRejected) {
++		t.Fatalf("uuid antigo não é mais do peer, mas a carência vale: %v", err)
++	}
++	if _, err := NextecSelfEnroll("10.7.0.1", key, enrollPeer, "uuid-outro", enrollToken()); err != nil {
++		t.Fatalf("identidade nova: %v", err)
++	}
++	if !deviceRow(t, db, enrollPeer).AfterReject {
++		t.Fatal("identidade nova sem marca")
++	}
++}
++
++// ---------- Bug 10: Senhas do servidor junta sempre com Peer ----------
++
++func TestSecretDevicesAlwaysJoinPeer(t *testing.T) {
++	db := enrollSetup(t)
++	db.Model(&model.Peer{}).Where("id = ?", enrollPeer).Updates(map[string]interface{}{"alias": "Caixa 1", "group_id": 7, "hostname": "PC-CAIXA"})
++	// Muito mais máquinas do que cabe em um bloco de consulta: todas precisam trazer apelido, hostname e cliente.
++	const total = 1300
++	peers := make([]*model.Peer, 0, total)
++	rows := make([]*model.NextecDeviceSecret, 0, total)
++	for i := 0; i < total; i++ {
++		id := strconv.Itoa(500000000 + i)
++		peers = append(peers, &model.Peer{Id: id, Uuid: "u" + id, Alias: "Apelido " + id, Hostname: "H" + id, GroupId: 8})
++		rows = append(rows, &model.NextecDeviceSecret{PeerId: id, TokenHash: "h" + id, Uuid: "u" + id})
++	}
++	if err := db.CreateInBatches(peers, 200).Error; err != nil {
++		t.Fatal(err)
++	}
++	if err := db.CreateInBatches(rows, 200).Error; err != nil {
++		t.Fatal(err)
++	}
++	if _, err := NextecSelfEnroll("10.7.0.1", enrollKey(t), enrollPeer, enrollUUID, enrollToken()); err != nil {
++		t.Fatal(err)
++	}
++	got := map[string]*NextecSecretDevice{}
++	for _, d := range NextecSecretDevices() {
++		got[d.PeerId] = d
++	}
++	if len(got) != total+1 {
++		t.Fatalf("máquinas = %d", len(got))
++	}
++	for _, p := range peers {
++		d := got[p.Id]
++		if d == nil || d.Alias != p.Alias || d.Hostname != p.Hostname || d.GroupId != 8 {
++			t.Fatalf("%s sem junção com Peer: %+v", p.Id, d)
++		}
++	}
++	if d := got[enrollPeer]; d.Alias != "Caixa 1" || d.Hostname != "PC-CAIXA" || d.GroupId != 7 || d.State != NextecStatePending {
++		t.Fatalf("pendente: %+v", d)
++	}
++}
++
++func TestSecretDevicesFindPeerStoredWithSpaces(t *testing.T) {
++	db := enrollSetup(t)
++	// O cofre guarda o ID limpo; a tabela Peer ainda tem a versão digitada com espaço.
++	db.Create(&model.Peer{Id: "777 888 999", Uuid: "u-esp", Alias: "Com espaço", Hostname: "PC-ESP", GroupId: 8})
++	db.Create(&model.NextecDeviceSecret{PeerId: "777888999", TokenHash: "h", Uuid: "u-esp"})
++	for _, d := range NextecSecretDevices() {
++		if d.PeerId == "777888999" {
++			if d.Alias != "Com espaço" || d.Hostname != "PC-ESP" || d.GroupId != 8 {
++				t.Fatalf("sem junção: %+v", d)
++			}
++			return
++		}
++	}
++	t.Fatal("máquina não listada")
++}
+diff --git a/service/nextec_secret.go b/service/nextec_secret.go
+index 177ec3c..21fd39c 100644
+--- a/service/nextec_secret.go
++++ b/service/nextec_secret.go
+@@ -753,6 +753,11 @@ type NextecSecretDevice struct {
+ 	LastIp      string `json:"last_ip,omitempty"`
+ 	Os          string `json:"os,omitempty"`
+ 	Username    string `json:"username,omitempty"`
++	// Solicitação aberta depois de uma rejeição do mesmo ID (identidade nova) e o motivo da rejeição anterior.
++	AfterReject  bool   `json:"after_reject,omitempty"`
++	RejectReason string `json:"reject_reason,omitempty"`
++	RejectedAt   int64  `json:"rejected_at,omitempty"`
++	RejectCount  int    `json:"reject_count,omitempty"`
+ 	// Nome do app instalado (informado pelo agente) e o protocolo que o link da máquina usa.
+ 	AppName      string `json:"app_name,omitempty"`
+ 	Scheme       string `json:"scheme,omitempty"`
+@@ -784,23 +789,19 @@ func NextecSecretDevices() []*NextecSecretDevice {
+ 			groupIDs = append(groupIDs, uint(g))
+ 		}
+ 	}
+-	var peers []*model.Peer
+-	q := DB.Model(&model.Peer{})
+ 	idList := make([]string, 0, len(ids))
+ 	for id := range ids {
+ 		idList = append(idList, id)
+ 	}
+-	switch {
+-	case len(idList) > 0 && len(groupIDs) > 0:
+-		q = q.Where("id in ? or group_id in ?", idList, groupIDs)
+-	case len(idList) > 0:
+-		q = q.Where("id in ?", idList)
+-	case len(groupIDs) > 0:
+-		q = q.Where("group_id in ?", groupIDs)
+-	default:
++	if len(idList) == 0 && len(groupIDs) == 0 {
+ 		return []*NextecSecretDevice{}
+ 	}
+-	q.Find(&peers)
++	// Sempre junta com a tabela Peer (apelido, hostname, group_id): a mesma fonte da listagem de Dispositivos.
++	// Consulta em blocos para não estourar o limite de variáveis do SQLite com muitas máquinas, e um erro
++	// de leitura é registrado em vez de esvaziar a lista em silêncio.
++	peers := nextecSecretPeers(idList, groupIDs)
++	peers = append(peers, nextecSecretPeersByCleanId(idList, peers)...)
++	rejects := nextecEnrollRejectsByPeer()
+ 	seen := map[string]bool{}
+ 	out := make([]*NextecSecretDevice, 0, len(peers)+len(states))
+ 	add := func(peerID, hostname, alias string, groupID uint, peer *model.Peer) {
+@@ -826,6 +827,12 @@ func NextecSecretDevices() []*NextecSecretDevice {
+ 				dv.Managed, dv.IntervalMin = false, 0
+ 				dv.StaleKey = s.EnrollEpoch < minEpoch
+ 				dv.Uuid = s.Uuid
++				if s.AfterReject {
++					dv.AfterReject = true
++					if r := rejects[peerID]; r != nil {
++						dv.RejectReason, dv.RejectedAt, dv.RejectCount = r.Reason, r.RejectedAt, r.Count
++					}
++				}
+ 			}
+ 			dv.Enrolled = s.TokenHash != ""
+ 			if !s.AwaitingApproval {
+@@ -853,6 +860,96 @@ func NextecSecretDevices() []*NextecSecretDevice {
+ 	return out
+ }
+ 
++const nextecSecretPeerChunk = 400
++
++// nextecSecretPeers lê os Peers dos ids dados e dos grupos com regra ligada, em blocos. Mantém uma linha por ID
++// (a mais recente, igual à listagem de Dispositivos quando há duplicados).
++func nextecSecretPeers(ids []string, groupIDs []uint) []*model.Peer {
++	var out []*model.Peer
++	seen := map[uint]bool{}
++	collect := func(q *gorm.DB) {
++		var rows []*model.Peer
++		if err := q.Find(&rows).Error; err != nil {
++			if Logger != nil {
++				Logger.Warn("nextec senhas: leitura de Peer falhou: ", err)
++			}
++			return
++		}
++		for _, p := range rows {
++			if !seen[p.RowId] {
++				seen[p.RowId] = true
++				out = append(out, p)
++			}
++		}
++	}
++	for i := 0; i < len(ids); i += nextecSecretPeerChunk {
++		end := i + nextecSecretPeerChunk
++		if end > len(ids) {
++			end = len(ids)
++		}
++		collect(DB.Model(&model.Peer{}).Where("id in ?", ids[i:end]))
++	}
++	for i := 0; i < len(groupIDs); i += nextecSecretPeerChunk {
++		end := i + nextecSecretPeerChunk
++		if end > len(groupIDs) {
++			end = len(groupIDs)
++		}
++		collect(DB.Model(&model.Peer{}).Where("group_id in ?", groupIDs[i:end]))
++	}
++	return out
++}
++
++// nextecSecretPeersByCleanId acha o Peer de IDs que o cofre tem sem espaço mas a tabela Peer ainda guarda com espaço
++// (ID digitado à mão; o NextecNormalizeIds só corrige quando não há conflito). Devolve cópias com o ID do cofre.
++func nextecSecretPeersByCleanId(ids []string, found []*model.Peer) []*model.Peer {
++	have := make(map[string]bool, len(found))
++	for _, p := range found {
++		have[NextecCleanId(p.Id)] = true
++	}
++	missing := []string{}
++	for _, id := range ids {
++		if !have[id] {
++			missing = append(missing, id)
++		}
++	}
++	var out []*model.Peer
++	for i := 0; i < len(missing); i += nextecSecretPeerChunk {
++		end := i + nextecSecretPeerChunk
++		if end > len(missing) {
++			end = len(missing)
++		}
++		var rows []*model.Peer
++		if err := DB.Model(&model.Peer{}).Where("REPLACE(REPLACE(id, ' ', ''), ?, '') IN ?", "\u00a0", missing[i:end]).Find(&rows).Error; err != nil {
++			if Logger != nil {
++				Logger.Warn("nextec senhas: leitura de Peer por ID limpo falhou: ", err)
++			}
++			continue
++		}
++		for _, p := range rows {
++			cp := *p
++			cp.Id = NextecCleanId(p.Id)
++			if !have[cp.Id] {
++				have[cp.Id] = true
++				out = append(out, &cp)
++			}
++		}
++	}
++	return out
++}
++
++// nextecEnrollRejectsByPeer devolve a rejeição mais recente de cada ID.
++func nextecEnrollRejectsByPeer() map[string]*model.NextecEnrollReject {
++	var rows []*model.NextecEnrollReject
++	out := map[string]*model.NextecEnrollReject{}
++	if err := DB.Order("rejected_at asc").Find(&rows).Error; err != nil {
++		return out
++	}
++	for _, r := range rows {
++		out[r.PeerId] = r
++	}
++	return out
++}
++
+ // NextecSecretRotateNow manda trocar a senha na próxima verificação do agente.
+ func NextecSecretRotateNow(peerID string) error {
+ 	res := DB.Model(&model.NextecDeviceSecret{}).Where("peer_id = ? AND awaiting_approval = ?", peerID, false).Update("force_rotate", true)

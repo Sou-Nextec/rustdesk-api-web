@@ -14,6 +14,7 @@ export function normalizeOverview(res) {
     devices,
     policies: list(data.policies).map(p => ({ ...p })),
     blocked: list(data.blocked),
+    rejected: list(data.rejected),
     agentKeySet: Boolean(data.agent_key_set),
     pendingCount: count(data.pending_count) || pending.length,
     staleCount: count(data.stale_count) || pending.filter(d => d.stale_key === true).length,

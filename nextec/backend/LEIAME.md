@@ -336,3 +336,138 @@ ter o mesmo nome do app (o gerador pré-preenche os dois iguais); se forem difer
 - Cria `service/nextec_connect_app.go` e `service/nextec_connect_app_test.go`; o 0037 passa a chamar a função.
 - **Limpar o campo volta ao automático:** `NextecConnectSchemeSet("")` (0020) agora apaga a configuração em vez de gravar `rustdesk`;
   `GET/POST /nextec/connect-scheme` devolvem `scheme` (vazio = automático), `effective` e `source` (`manual`, `published` ou `default`).
+
+## Patch 0045: subgrupo por parent_id, Senhas do servidor com Peer e rejeição com carência
+
+Fase 0 e bugs 10 e 11 do plano "Nextec Connect: melhorias". Aplica depois do 0044, sobre `v2.6.29`.
+
+- **`parent_id` em `DeviceGroup`:** coluna nova (0 = cliente/raiz). A migração (`NextecBackfillGroupParents`, chamada na
+  inicialização, idempotente) liga os grupos "Cliente / Sub" ao grupo cujo nome é o prefixo (o maior prefixo existente vence;
+  sem pai com esse nome, continua raiz). O nome continua gravado como antes. `device_group/list` e `detail` devolvem `parent_id`
+  e `path` (raiz primeiro). `create` e `update` aceitam `parent_id` opcional (ausente: não mexe na edição e deriva do nome na
+  criação; recusa pai inexistente, o próprio grupo e ciclo). Apagar um cliente solta os subgrupos (viram raiz).
+- **`nextecGroupChain(groupId) []uint`** (`service/nextec_group.go`, exportada como `NextecGroupChain`): subgrupo primeiro, cliente
+  por último; protegida contra ciclo e profundidade. É a função única para política, visibilidade e senhas (itens 2 a 4 do plano).
+- **Bug 10, Senhas do servidor:** `NextecSecretDevices` sempre junta com `Peer` (apelido, hostname, `group_id`) em blocos de 400
+  ids (não estoura o limite de variáveis do SQLite nem esvazia a lista em silêncio; erro de leitura vai para o log) e acha o Peer
+  de IDs que a tabela guarda com espaço. A mesma fonte da listagem de Dispositivos.
+- **Bug 11, rejeitar não volta:** `NextecEnrollReject` (`peer_id`, `uuid`, `reason`, `rejected_at`, `until`, `count`). Rejeitar sem
+  bloquear grava a carência (168 h; `enroll_reject_grace_hours` em `nextec-settings.json`, 1 a 8760). Dentro dela o self-enroll do mesmo
+  ID+UUID responde `403 {"error":"rejected"}` (o agente trata 403 como bloqueio de 24 h e tenta de novo; o servidor segue recusando).
+  Outro UUID ou carência vencida abre solicitação nova, marcada `after_reject` ("Nova após rejeição"). `POST /nextec/secrets/reject`
+  aceita `reason` (até 255 caracteres, vai para a auditoria). `GET /nextec/secrets` ganhou `rejected` (carências vigentes) e, por
+  máquina, `after_reject`, `reject_reason`, `rejected_at`, `reject_count`. `POST /nextec/secrets/unblock` também encerra a carência.
+- **Painel:** "Bloquear" virou "Bloquear cadastro de senha desta máquina" (confirmação diz que vale só para o cofre de senhas),
+  "Rejeitar solicitação" pede motivo e explica a carência, e a lista "Rejeitadas em carência" permite liberar.
+- Testes: `service/nextec_phase0_test.go` e ajustes em `nextec_enroll_test.go` e `http/controller/api/nextec_enroll_test.go`.
+
+## Patch 0046: chave por cliente com subgrupo, conflito explícito e resultado do convite
+
+Bug 8 do plano. Aplica depois do 0045.
+
+- **Relação entre grupos** (`nextecGroupRelationTx`, usa `nextecGroupChain`): `none` (sem grupo), `same`, `inside` (a máquina já está
+  num subgrupo do pedido), `refine` (a máquina está na raiz do cliente e o pedido é um subgrupo dele) e `other` (outro cliente).
+- **Chave de instalação por cliente** (`NextecAssignApplyInfo`, `POST /nextec/install/assign`): a chave de um subgrupo vale. Sem
+  grupo ou na raiz do cliente, a máquina vai para o grupo da chave; dentro do cliente ou em outro subgrupo, fica onde está; em
+  outro cliente, fica e a resposta traz `current_client`. Tudo auditado (`assign_install_key`, `assign_install_conflict`).
+- **Pendência de atribuição** (`NextecApplyPendingAssign`): o prazo (24 h) é conferido antes de qualquer mudança e a pendência só
+  some junto com a atribuição (mesma transação); vencida é descartada e auditada (`assign_pending_expired`, `assign_pending_applied`).
+- **Convite** (`POST /nextec/agent/invite`): a máquina na raiz do cliente do convite pode descer para o subgrupo; dentro do cliente
+  do convite não há conflito. Conflito real devolve `409 {"error":"client_conflict","current_client":"Cliente B"}`. O erro é
+  `NextecClientConflictError` (continua `errors.Is(err, ErrNextecClientConflict)`) e a tela de Senhas do servidor mostra o cliente atual.
+- **Resultado por máquina:** tabela `NextecInstallInviteTry` (uma linha por convite e máquina: `linked`, `conflict`, `identity`,
+  `invalid`, com detalhe e hora). `GET /nextec/invites` devolve `results` em cada convite. Auditoria: `invite_claim`,
+  `invite_conflict`, `invite_invalid`.
+- Painel: o diálogo de convites mostra "Instalações: 2 vinculadas, 1 com problema" e a lista por máquina.
+- Agente (repositório rdgen, `Provisionar-Agente-Nextec.ps1`): 409 e 403 não apagam `convite.json`; o motivo vai para
+  `convite-resultado.json` e para o log (`invite_conflict`, `invite_rejected`); repete após 6 h, até 3 dias.
+- Testes: `service/nextec_bug8_test.go`.
+
+## Patch 0047: listas "Cliente: X" sincronizadas ao mover ou salvar dispositivo
+
+Bug 4 do plano. Aplica depois do 0046.
+
+- **Regra:** a lista de um cliente contém as máquinas dele e as de todos os subgrupos; a lista de um subgrupo contém as do subgrupo.
+  Ao mudar o grupo de uma máquina (`NextecSyncClientListsTx`, usa `nextecGroupChain`), ela sai das listas dos grupos que deixou
+  e entra nas dos novos. Trocar de subgrupo no mesmo cliente não mexe na lista do cliente. Só entram listas que já existem
+  (criar lista continua sendo decisão do admin em Acesso por cliente); vale para as listas de qualquer dono com o nome do grupo.
+- **Onde dispara:** `POST /admin/peer/update` (editar, mover e mover em lote, que o painel faz uma máquina por vez), atribuição por
+  chave de instalação, atribuição pendente aplicada no sysinfo e aprovação de dispositivo (`NextecEnrollAssign`). Auditoria `client_lists_sync`.
+- **Reconciliação:** `POST /admin/nextec/client-lists/sync {"collection_ids":[...]}` deixa cada lista igual ao grupo (inclui o que
+  falta, remove o que sobra e duplicatas). Só aceita listas "Cliente: X" cujo cliente existe. Auditoria `client_list_reconcile`.
+  Não há remoção ao apagar uma máquina: a próxima sincronização ou reconciliação limpa a entrada.
+- **Painel (Acesso por cliente):** a contagem e o "fora da lista" passam a incluir os subgrupos, aparece "N a mais" quando a lista
+  tem entradas que não deveriam estar, e Sincronizar chama a reconciliação (antes só incluía).
+- Testes: `service/nextec_client_lists_test.go`.
+
+## Patch 0048: download do convite com nome fixo e sugestão de cliente
+
+Item 6 do plano. Aplica depois do 0047.
+
+- **Nome do arquivo:** `GET /i/<código>/baixar` entrega `nextec-acesso-<versão>.msi`, sem o código. O instalador (agente, repositório rdgen)
+  lê o código da marca de origem do arquivo (Zone.Identifier: `HostUrl` e `ReferrerUrl` com `/i/<código>/baixar` e `/i/<código>`) e, para
+  MSI baixado antes, ainda entende o código no nome. O comando PowerShell do painel continua gravando o código no nome do arquivo
+  (o PowerShell não grava a marca de origem).
+- **Download registrado:** tabela `NextecInviteDownload` (convite, IP, hora; guardada por 7 dias, no máximo 5000 linhas).
+- **Sugestão de cliente (`NextecSuggestClient`):** máquina pendente e sem cliente recebe `suggested` em `GET /nextec/secrets` quando (1) o
+  agente apresentou um código que o servidor recusou (convite cancelado, vencido ou esgotado): sugere o cliente do convite; ou (2) o IP
+  de origem é o de um download de convite nas últimas 72 h e todos esses downloads são do mesmo cliente. Dois clientes no mesmo IP não geram
+  sugestão. É só sugestão: a máquina continua pendente até o admin atribuir, e o painel pré-seleciona o cliente no diálogo.
+- **Suporte avulso (Quick Support):** o link `/s/<token>` já associa a máquina pelo IP e hora do download e entrega `Suporte-Nextec.exe`
+  com nome fixo; não há MSI nem código no nome, então nada muda ali.
+- Testes: `service/nextec_invite_suggest_test.go`.
+
+## Patch 0049: herança global > cliente > subgrupo > máquina e aprovação automática
+
+- **Ordem de resolução (uma só, para senha e política do app):** máquina, depois o subgrupo, o cliente (subindo pela hierarquia
+  `parent_id`, no máximo 8 níveis) e por fim a regra **global**. Vale a regra mais próxima, inteira (sem mesclar chave a chave).
+  Regra de senha desligada em um grupo também vale e encerra a busca; política do app desligada é ignorada e a busca continua.
+- **Regra global:** `kind = global`, `ref = global`, aceita em `POST /admin/nextec/secrets/policy` e `POST /admin/nextec/policies`.
+- **`auto_approve` (item 11a):** novo campo da regra de senha (`NextecSecretPolicy.AutoApprove`, padrão desligado), aceito só em regra
+  de grupo ou global (regra de máquina é recusada). `NextecSelfEnroll` não deixa pendente a máquina que entra com cliente quando a regra
+  efetiva do GRUPO (sem contar a regra da própria máquina) tem `auto_approve`: aprova na hora, força a troca da primeira senha e grava
+  `enroll_auto_approved` na auditoria com a origem da regra e o caminho do cliente. Máquina sem cliente é sempre pendente.
+  A aprovação automática não consome o limite de pendentes.
+- **Origem em cada máquina:** `GET /nextec/secrets` devolve `rule_origin` (peer|group|global|none), `rule_origin_group`,
+  `rule_origin_name` e `auto_approve`; a lista inclui as máquinas dos subgrupos que herdam a regra do cliente e todas, com a global ligada.
+- **Novos endpoints:** `GET /admin/nextec/policies/effective?peer_id=` (regra de senha e política do app que valem, com origem e caminho do
+  cliente) e `GET /admin/nextec/policies/scopes` (por cliente e subgrupo: máquinas, regra própria ou herdada e origem).
+- **Auditoria:** alterações de regra de senha (`policy_set`/`policy_remove`) e de política do app (`app_policy_set`/`app_policy_remove`)
+  gravam o texto de antes e depois.
+- Testes: `service/nextec_inherit_test.go` (precedência e origem, validação do `auto_approve`, aprovação automática, lista de senhas e escopos).
+
+## Patch 0050: dispositivos paginados no servidor, árvore de clientes, troca em lote e acesso por equipe e pessoa
+
+Arquivos novos: `service/nextec_devices.go`, `service/nextec_access.go`, `http/controller/admin/nextec_devices.go` (somente admin) e testes em `service/nextec_devices_test.go`. Rotas em `/api/admin/nextec`:
+
+| Rota | O que faz |
+|---|---|
+| `GET /devices` | Uma página filtrada. Parâmetros: `page`, `page_size` (1 a 200, padrão 20), `q`, `client_id` (cliente com todos os subgrupos, ou o subgrupo e os níveis abaixo), `sub_id` (só as máquinas diretas daquele grupo), `no_client=1`, `status=online\|offline` (online = visto há menos de 60 s), `ids` (favoritos, até 500), `sort=online\|recent\|client\|name`. Devolve `list`, `total` e `online` do filtro inteiro. |
+| `GET /devices/tree` | Clientes e subgrupos com total e online, mais `no_client` e `all`, sem trazer máquinas. |
+| `POST /devices/move` | `{row_ids, group_id}` (0 = sem cliente). Uma transação: ou move todas ou nenhuma, até 500 por chamada. Ajusta as listas "Cliente: X" (sai da antiga, entra na nova) e grava auditoria `device_move` com origem, destino e quantidade. |
+| `POST /access/grant` | Concede, altera ou tira acesso de uma equipe (`target_type` 2) ou pessoa (1) a um cliente ou subgrupo (`scope` `client` + `group_id`) ou a uma máquina avulsa (`scope` `machine` + `peer_id`, cria a lista "Máquina: nome (id)" só com ela). `rule` 1 ver, 2 controle total. Idempotente: devolve `changed` falso quando já estava assim. |
+| `GET /access/users`, `GET /access/user?user_id=` | Resumo por pessoa e acesso efetivo com a origem (`direto`, `equipe` ou `direto e equipe`) e a contagem de máquinas. |
+| `GET /access/team?team_id=` | O que uma equipe acessa. |
+
+Isolamento: as telas são só de admin; uma pessoa só enxerga o que as regras das listas dela e da equipe dela liberam, e o acesso efetivo soma as duas origens (a regra de equipe 0 não vale para quem não tem equipe).
+
+Limitação conhecida: a busca `q` do servidor não ignora acentos (o `lower()` do SQLite só entende ASCII). Quem digita "joao" não acha "João"; digite com o acento.
+
+
+## Patch 0051: listas "Cliente: X" sincronizadas só de administrador
+
+Correção de revisão (P1). A sincronização do patch 0047 achava a coleção só pelo nome "Cliente: <grupo>", sem olhar o dono. Um usuário comum que criasse uma coleção pessoal com esse nome recebia e perdia entradas (IDs, hostnames, apelidos, usernames). Agora `nextecClientListsFor` só considera coleções cujo dono é administrador, e `NextecReconcileClientList` recusa lista de dono comum. Teste: `TestClientListsIgnoreNonAdminCollectionWithSameName`. O patch altera `service/nextec_client_lists.go` e os testes; aplica depois do 0050.
+
+## Patch 0052: exceção desligada na atribuição e listas ao mudar o pai do subgrupo
+
+Duas correções de revisão (P1), aplicam depois do 0051.
+
+- **"Sem senha automática" com regra herdada.** `NextecEnrollAssign` com `Rule: none` só criava a exceção desligada da máquina quando o próprio cliente tinha regra ligada; com regra global ou de cliente-pai a rotação continuava valendo. Agora vale a regra que a máquina herdaria (`nextecSecretEffectiveTx` sem a regra própria): se for ligada, grava a exceção desligada, que vence a herdada (origem `peer`). Também corrigido o GORM devolver o default (`true`) ao `Enabled: false` no `Create`, que desfazia a exceção quando a máquina ainda não tinha regra própria. Teste: `TestAssignNoneCreatesDisabledExceptionOverInheritedRule`.
+- **Mudar o pai de um subgrupo.** `device_group/update` com `parent_id` passa por `NextecGroupUpdateSync`: numa transação, grava o grupo e, para as máquinas da subárvore, tira das listas "Cliente: X" dos ancestrais antigos e coloca nas dos novos (só listas de dono administrador). Grava auditoria `client_lists_sync`. Teste: `TestClientListsFollowSubgroupReparent`.
+
+## Patch 0053: atribuição decide pela regra efetiva do escopo real da máquina
+
+Duas correções de revisão em `NextecEnrollAssign` (aplica depois do 0052).
+
+- **P1, "sem senha automática" em subgrupo.** A máquina que já está num subgrupo do cliente pedido fica onde está; a exceção desligada agora é decidida pela regra efetiva desse subgrupo (cadeia subgrupo > cliente > global, sem a regra própria da máquina), e não só pela do cliente pedido. O "Já tinha essa regra" e o resultado final também usam esse escopo. Testes: `TestAssignNoneUsesEffectiveRuleOfMachineSubgroup` (regra só no subgrupo e regra só no cliente).
+- **P2, aprovação não sobrepõe a herança.** "Seguir a regra do cliente" vale quando existe regra efetiva ligada herdada (cliente, ancestral, subgrupo ou global): nada é criado. Só sem nenhuma regra, e com `enable_group_rule`, a atribuição cria a regra do cliente (180 min por padrão). Teste: `TestAssignGroupFollowsInheritedRuleAndCreatesOnlyWhenNone` (global, cliente-pai, nenhuma).

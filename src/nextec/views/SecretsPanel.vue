@@ -96,6 +96,8 @@
           <template #default="{ row }">
             <div>{{ ago(row.enrolled_at) }}</div>
             <div class="nx-muted nx-small">{{ viaText[row.enrolled_via] || 'Inscrição global' }}</div>
+            <div v-if="row.after_reject" class="nx-muted nx-small nx-after-reject">Nova após rejeição{{ row.reject_reason ? ': ' + row.reject_reason : '' }}</div>
+            <div v-if="row.suggested" class="nx-small nx-suggested" :title="row.suggested.reason">Sugestão: {{ row.suggested.client }}</div>
             <div class="nx-muted nx-small nx-next-check">{{ nextCheckText(row) }}</div>
           </template>
         </el-table-column>
@@ -105,11 +107,12 @@
             <el-button size="small" type="primary" class="nx-next" @click="onNext(row)">{{ nextStep(row, nowSec).label }}</el-button>
           </template>
         </el-table-column>
-        <el-table-column label="Ações" width="200" fixed="right">
+        <el-table-column label="Ações" width="230" fixed="right">
           <template #default="{ row }">
-            <div class="nx-row-actions">
-              <el-button size="small" @click="rejectRow(row, false)">Rejeitar</el-button>
-              <el-button size="small" @click="rejectRow(row, true)"><span class="nx-danger-text">Bloquear</span></el-button>
+            <div class="nx-row-actions nx-row-actions-stack">
+              <el-button size="small" @click="rejectRow(row, false)">Rejeitar solicitação</el-button>
+              <el-button size="small" @click="rejectRow(row, true)"
+                         title="Impede só o cadastro de senha desta máquina. Ela continua em Dispositivos e o acesso remoto não muda."><span class="nx-danger-text">Bloquear cadastro de senha desta máquina</span></el-button>
             </div>
           </template>
         </el-table-column>
@@ -124,6 +127,7 @@
         Elas continuam aqui até você atribuir, rejeitar ou bloquear. Só as inscrições novas exigem a credencial atual.
       </p>
       <div class="nx-foot">
+        <el-button text :disabled="!rejected.length" @click="rejectedDlg.visible = true">Rejeitadas em carência ({{ rejected.length }})</el-button>
         <el-button text :disabled="!blocked.length" @click="blockedDlg.visible = true">Bloqueadas ({{ blocked.length }})</el-button>
       </div>
     </div>
@@ -150,10 +154,10 @@
         </el-table-column>
         <el-table-column label="Regra da senha" min-width="170">
           <template #default="{ row }">
-            <button type="button" class="nx-rule" :class="'is-' + ruleBadge(ruleOf(row, policies)).tone"
-                    :aria-label="'Alterar a regra da senha de ' + (row.alias || row.hostname || fmtId(row.peer_id)) + '. Hoje: ' + ruleBadge(ruleOf(row, policies)).title" @click="openRule(row)">
-              <span class="nx-rule-title">{{ ruleBadge(ruleOf(row, policies)).title }}</span>
-              <span class="nx-rule-detail">{{ ruleBadge(ruleOf(row, policies)).detail }}</span>
+            <button type="button" class="nx-rule" :class="'is-' + ruleBadge(ruleOf(row, policies, groups)).tone"
+                    :aria-label="'Alterar a regra da senha de ' + (row.alias || row.hostname || fmtId(row.peer_id)) + '. Hoje: ' + ruleBadge(ruleOf(row, policies, groups)).title" @click="openRule(row)">
+              <span class="nx-rule-title">{{ ruleBadge(ruleOf(row, policies, groups)).title }}</span>
+              <span class="nx-rule-detail">{{ ruleBadge(ruleOf(row, policies, groups)).detail }}</span>
               <span class="nx-rule-edit">Alterar</span>
             </button>
           </template>
@@ -213,6 +217,7 @@
     <!-- escolher cliente -->
     <el-dialog v-model="pick.visible" class="nx-dlg" title="Escolher cliente" width="min(520px, 92vw)">
       <p class="nx-help nx-help-top">{{ pick.name }} ({{ fmtId(pick.peer) }}). Só depois do cliente o cofre gera e libera a senha desta máquina.</p>
+      <p v-if="pick.suggested && pick.client === pick.suggested.client_id" class="nx-help nx-suggested">Cliente sugerido: {{ pick.suggested.client }}, porque {{ pick.suggested.reason }}. Confirme antes de atribuir.</p>
       <el-form label-position="top" class="nx-form" @submit.prevent>
         <el-form-item label="Cliente" required class="is-required">
           <el-select v-model="pick.client" filterable :filter-method="onClientFilter" placeholder="Busque o cliente" no-data-text="Nenhum cliente com esse nome." @visible-change="onClientOpen">
@@ -279,6 +284,21 @@
       </template>
     </el-dialog>
 
+    <!-- rejeitadas em carência -->
+    <el-dialog v-model="rejectedDlg.visible" class="nx-dlg" title="Solicitações rejeitadas em carência" width="min(640px, 92vw)">
+      <p class="nx-help nx-small">Enquanto durar a carência, a mesma máquina (mesmo ID e identidade) não abre nova solicitação. Se a identidade mudar, ela volta marcada como “Nova após rejeição”.</p>
+      <el-table :data="rejected" empty-text="Nenhuma solicitação em carência." aria-label="Solicitações rejeitadas em carência">
+        <el-table-column label="Máquina" min-width="130"><template #default="{ row }"><span class="nx-mono">{{ fmtId(row.peer_id) }}</span></template></el-table-column>
+        <el-table-column label="Rejeitada" min-width="120"><template #default="{ row }">{{ ago(row.rejected_at) }}<div v-if="row.count > 1" class="nx-muted nx-small">{{ row.count }} vezes</div></template></el-table-column>
+        <el-table-column label="Motivo" min-width="150"><template #default="{ row }">{{ row.reason || '-' }}</template></el-table-column>
+        <el-table-column label="Carência até" min-width="130"><template #default="{ row }">{{ untilText(row.until) }}</template></el-table-column>
+        <el-table-column label="" width="110">
+          <template #default="{ row }"><el-button size="small" @click="unblock(row)">Liberar</el-button></template>
+        </el-table-column>
+      </el-table>
+      <template #footer><el-button type="primary" @click="rejectedDlg.visible = false">Fechar</el-button></template>
+    </el-dialog>
+
     <!-- bloqueadas -->
     <el-dialog v-model="blockedDlg.visible" class="nx-dlg" title="Máquinas bloqueadas" width="min(560px, 92vw)">
       <el-table :data="blocked" empty-text="Nenhuma máquina bloqueada." aria-label="Máquinas bloqueadas">
@@ -323,7 +343,17 @@
 
     <!-- regras por grupo -->
     <el-dialog v-model="rules.visible" class="nx-dlg" title="Regras de senha automática" width="720px">
-      <p class="nx-help nx-help-top">Máquinas dos grupos ligados abaixo passam a trocar a senha sozinhas, no intervalo escolhido. Uma regra na própria máquina vale mais que a do grupo. A regra vale só para as máquinas que estão direto no grupo: um subgrupo (ex.: "Cliente / Servidores") não herda a do cliente e precisa da própria regra.</p>
+      <p class="nx-help nx-help-top">Máquinas dos grupos ligados abaixo passam a trocar a senha sozinhas, no intervalo escolhido. Vale a regra mais próxima da máquina: a da própria máquina, depois a do subgrupo, a do cliente e por fim a global. Um subgrupo (ex.: "Cliente / Servidores") herda a regra do cliente, a menos que tenha a própria. "Aprovar sozinho" libera a primeira senha das máquinas novas desse grupo sem fila de aprovação.</p>
+      <div class="nx-global-rule" role="group" aria-label="Regra global">
+        <strong>Regra global</strong>
+        <span class="nx-small nx-muted">Vale para toda máquina que não tem regra própria, do subgrupo ou do cliente.</span>
+        <el-switch :model-value="!!globalPolicy.enabled" aria-label="Regra global ligada" @change="v => saveGlobal({ enabled: v })"/>
+        <el-select :model-value="globalPolicy.interval_minutes || 180" aria-label="Intervalo global" style="width: 150px" @change="v => saveGlobal({ interval_minutes: v })">
+          <el-option v-for="o in intervals" :key="o.value" :label="o.label" :value="o.value"/>
+        </el-select>
+        <el-checkbox :model-value="!!globalPolicy.auto_approve" @change="v => saveGlobal({ auto_approve: v })">Aprovar sozinho</el-checkbox>
+        <el-button v-if="globalPolicy.ref" size="small" text type="danger" @click="removePolicy(globalPolicy)">Remover</el-button>
+      </div>
       <el-table :data="groupPolicies" empty-text="Nenhum grupo ligado ainda." aria-label="Regras por grupo">
         <el-table-column label="Grupo" min-width="200">
           <template #default="{ row }">{{ groupName(Number(row.ref)) || 'grupo ' + row.ref }}</template>
@@ -336,6 +366,11 @@
         <el-table-column label="Máquinas" min-width="150">
           <template #default="{ row }">
             <span class="nx-small">{{ usageText(row) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="Aprovar sozinho" width="130">
+          <template #default="{ row }">
+            <el-switch v-model="row.auto_approve" aria-label="Aprovar sozinho" @change="savePolicy(row)"/>
           </template>
         </el-table-column>
         <el-table-column label="Trocar a cada" width="150">
@@ -460,11 +495,13 @@
   const groups = ref([])
   const agentKeySet = ref(false)
   const blocked = ref([])
+  const rejected = ref([])
   const pendingCount = ref(0)
   const staleCount = ref(0)
   const loadError = ref(false)
   const loaded = ref(false)
   const blockedDlg = reactive({ visible: false })
+  const rejectedDlg = reactive({ visible: false })
   const tab = ref('machines')
   const viaText = { self: 'Inscrição global', bootstrap: 'Autorização individual', legacy: 'Chave do agente' }
 
@@ -502,6 +539,7 @@
       policies.value = n.policies
       agentKeySet.value = n.agentKeySet
       blocked.value = n.blocked
+      rejected.value = n.rejected
       pendingCount.value = n.pendingCount
       staleCount.value = n.staleCount
     }
@@ -653,8 +691,15 @@
   // ---------- regras ----------
   const rules = reactive({ visible: false, group: null, interval: 180 })
   const savePolicy = async (p) => {
-    const r = await secretsPolicy({ kind: p.kind, ref: p.ref, enabled: p.enabled, interval_minutes: p.interval_minutes }).catch(() => false)
+    const r = await secretsPolicy({ kind: p.kind, ref: p.ref, enabled: p.enabled, interval_minutes: p.interval_minutes, auto_approve: !!p.auto_approve }).catch(() => false)
     if (r) { ElMessage.success('Regra salva.'); load() }
+  }
+  // regra global: uma linha só (kind global), criada na primeira alteração
+  const globalPolicy = computed(() => policies.value.find(p => p.kind === 'global') || { kind: 'global', ref: '', enabled: false, interval_minutes: 180, auto_approve: false })
+  const saveGlobal = async (patch) => {
+    const g = { ...globalPolicy.value, ...patch }
+    const r = await secretsPolicy({ kind: 'global', ref: 'global', enabled: !!g.enabled, interval_minutes: g.interval_minutes || 180, auto_approve: !!g.auto_approve }).catch(() => false)
+    if (r) { ElMessage.success('Regra global salva.'); load() }
   }
   const addGroupRule = async () => {
     const r = await secretsPolicy({ kind: 'group', ref: String(rules.group), enabled: true, interval_minutes: rules.interval }).catch(() => false)
@@ -667,7 +712,7 @@
   // ---------- regra de uma máquina ----------
   const ruleDlg = reactive({ visible: false, peer: '', name: '', client: '', choice: 'client', interval: 180, nowTitle: '', nowDetail: '', followText: '', saving: false })
   const openRule = (row) => {
-    const rule = ruleOf(row, policies.value)
+    const rule = ruleOf(row, policies.value, groups.value)
     const badge = ruleBadge(rule)
     const client = groupName(row.group_id)
     Object.assign(ruleDlg, {
@@ -708,13 +753,13 @@
 
   // ---------- escolher cliente (pendentes e máquinas sem cliente) ----------
   const pick = reactive({
-    visible: false, loading: false, error: '', peer: '', name: '', pending: false, uuid: '', client: null, term: '',
+    visible: false, loading: false, error: '', peer: '', name: '', pending: false, uuid: '', client: null, suggested: null, term: '',
     rule: 'none', interval: 180, move: false, currentGroup: 0, creating: false, newName: '', createError: '', createBusy: false,
   })
   const openChoose = (row) => {
     Object.assign(pick, {
       visible: true, loading: false, error: '', peer: row.peer_id, name: row.alias || row.hostname || 'Máquina',
-      pending: row.state === 'pending', uuid: row.uuid || '', client: row.group_id || null, term: '', rule: 'none', interval: 180,
+      pending: row.state === 'pending', uuid: row.uuid || '', client: row.group_id || row.suggested?.client_id || null, suggested: row.suggested || null, term: '', rule: 'none', interval: 180,
       move: false, currentGroup: row.group_id || 0, creating: false, newName: '', createError: '', createBusy: false,
     })
   }
@@ -777,21 +822,31 @@
       pick.error = friendlyError(e, 'Não foi possível salvar o cliente. Atualize a lista e tente de novo.')
     } finally { pick.loading = false }
   }
+  const untilText = (t) => (t ? new Date(Number(t) * 1000).toLocaleString('pt-BR') : '-')
   const rejectRow = async (row, block) => {
     const name = row.alias || row.hostname || fmtId(row.peer_id)
-    const text = block
-      ? `Bloquear ${name} impede que esta máquina se inscreva de novo (o ID e a identidade dela ficam na lista de bloqueadas). Você pode desbloquear depois.`
-      : `Rejeitar ${name} remove a inscrição. Se o instalador continuar nela, a máquina volta a aparecer aqui. Para impedir de vez, use Bloquear.`
-    const c = await ElMessageBox.confirm(text, block ? 'Bloquear máquina' : 'Rejeitar máquina',
-      { confirmButtonText: block ? 'Bloquear' : 'Rejeitar', cancelButtonText: 'Cancelar', type: 'warning' }).catch(() => false)
-    if (!c) return
-    if (await secretsReject(row.peer_id, block, row.uuid).catch(() => false)) {
-      ElMessage.success(block ? 'Máquina bloqueada.' : 'Inscrição rejeitada.')
+    let reason = ''
+    if (block) {
+      const text = `Bloquear o cadastro de senha de ${name}: o ID e a identidade dela ficam na lista de bloqueadas e a máquina não pede cadastro de novo. `
+        + 'Vale só para o cofre de senhas. A máquina continua em Dispositivos e o acesso remoto não muda. Você pode desbloquear depois.'
+      const c = await ElMessageBox.confirm(text, 'Bloquear cadastro de senha desta máquina',
+        { confirmButtonText: 'Bloquear cadastro', cancelButtonText: 'Cancelar', type: 'warning' }).catch(() => false)
+      if (!c) return
+    } else {
+      const text = `Rejeitar a solicitação de ${name} a remove da fila. O agente pode insistir, mas o servidor recusa a mesma máquina durante a carência `
+        + '(7 dias por padrão). Se a identidade dela mudar, a solicitação volta marcada como “Nova após rejeição”. Para liberar antes, use “Rejeitadas em carência”. Motivo (opcional):'
+      const r = await ElMessageBox.prompt(text, 'Rejeitar solicitação',
+        { confirmButtonText: 'Rejeitar', cancelButtonText: 'Cancelar', type: 'warning', inputPlaceholder: 'Ex.: máquina de teste do técnico', inputValidator: v => (!v || v.length <= 255) || 'No máximo 255 caracteres.' }).catch(() => false)
+      if (!r) return
+      reason = String(r.value || '').trim()
+    }
+    if (await secretsReject(row.peer_id, block, row.uuid, reason).catch(() => false)) {
+      ElMessage.success(block ? 'Cadastro de senha da máquina bloqueado.' : 'Solicitação rejeitada.')
       load()
     }
   }
   const unblock = async (row) => {
-    if (await secretsUnblock(row.peer_id, row.uuid).catch(() => false)) { ElMessage.success('Máquina desbloqueada.'); load() }
+    if (await secretsUnblock(row.peer_id, row.uuid).catch(() => false)) { ElMessage.success('Máquina liberada.'); load() }
   }
 
   // ---------- credencial de inscrição ----------
@@ -936,6 +991,9 @@
     &.is-off { background: #9A97AD; }
     &.is-warn { background: #9A5B00; box-shadow: 0 0 0 3px #FEF3C7; }
   }
+  .nx-row-actions-stack { flex-direction: column; align-items: stretch; .el-button { white-space: normal; height: auto; padding: 6px 8px; text-align: left; line-height: 1.3; } }
+  .nx-after-reject { color: var(--nx-warning, #b45309); }
+  .nx-suggested { color: var(--nx-primary, #1d4ed8); }
   .nx-row-actions { display: flex; gap: 6px; flex-wrap: nowrap; justify-content: flex-end; .el-button { margin: 0 !important; } }
   .nx-status { cursor: default; outline-offset: 2px; }
   .nx-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
@@ -946,6 +1004,7 @@
     .nx-rule-detail { font-size: 12px; color: var(--nx-text-muted); }
     .nx-rule-edit { font-size: 12px; color: var(--nx-accent); font-weight: 600; }
     &.is-client { border-left: 4px solid #613CB3; }
+    &.is-global { border-left: 4px solid #0B6E8A; }
     &.is-machine { border-left: 4px solid #B26A00; }
     &.is-off { border-left: 4px solid #9A97AD; }
     &.is-none { border-style: dashed; }
@@ -959,6 +1018,7 @@
   .nx-help-top { margin: 0 0 14px; font-size: 13px; }
   .nx-pw { display: flex; gap: 10px; align-items: center; padding: 12px 14px; border-radius: 12px; background: var(--nx-field);
     code { flex: 1; font-size: 16px; letter-spacing: .04em; word-break: break-all; color: var(--nx-text); } }
+  .nx-global-rule { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 14px; margin-bottom: 14px; border-radius: 14px; background: var(--nx-bg); .nx-small { flex: 1 1 220px; } }
   .nx-add-group { display: flex; gap: 8px; margin-top: 14px; .el-select:first-child { flex: 1; min-width: 0; } .el-button { margin: 0; } }
   .nx-cmd { margin-top: 14px; padding: 12px 14px; border-radius: 12px; background: var(--nx-field); display: flex; flex-direction: column; gap: 8px; align-items: flex-start;
     code { font-size: 12px; line-height: 1.5; word-break: break-all; color: var(--nx-text); } }

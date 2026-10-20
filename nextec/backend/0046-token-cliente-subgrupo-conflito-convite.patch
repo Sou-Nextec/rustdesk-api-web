@@ -1,0 +1,661 @@
+diff --git a/http/controller/admin/nextec_enroll.go b/http/controller/admin/nextec_enroll.go
+index 216202c..a45172c 100644
+--- a/http/controller/admin/nextec_enroll.go
++++ b/http/controller/admin/nextec_enroll.go
+@@ -45,6 +45,9 @@ func enrollFail(c *gin.Context, err error) {
+ 		msg = "Esta máquina não está mais pendente. Atualize a lista."
+ 	case errors.Is(err, service.ErrNextecClientConflict):
+ 		msg = "Esta máquina já pertence a outro cliente. Marque a opção de mover para trocar."
++		if cur := service.NextecClientConflictCurrent(err); cur != "" {
++			msg = "Esta máquina já pertence a " + cur + ". Marque a opção de mover para trocar."
++		}
+ 	case errors.Is(err, service.ErrNextecNoGroupRule):
+ 		msg = "O cliente não tem regra de senha automática ligada. Escolha a regra da máquina ou ligue a regra do cliente em Regras."
+ 	case errors.Is(err, service.ErrNextecNoGroup):
+diff --git a/http/controller/api/nextec_assign.go b/http/controller/api/nextec_assign.go
+index de10060..cea0a19 100644
+--- a/http/controller/api/nextec_assign.go
++++ b/http/controller/api/nextec_assign.go
+@@ -24,7 +24,7 @@ func (a *NextecAssign) Assign(c *gin.Context) {
+ 		c.JSON(http.StatusBadRequest, gin.H{"error": "bad request"})
+ 		return
+ 	}
+-	state, err := service.NextecAssignApply(agentIP(c), f.Id, f.Group, f.Token)
++	info, err := service.NextecAssignApplyInfo(agentIP(c), f.Id, f.Group, f.Token)
+ 	if err != nil {
+ 		switch {
+ 		case errors.Is(err, service.ErrNextecTooManyFails):
+@@ -38,5 +38,9 @@ func (a *NextecAssign) Assign(c *gin.Context) {
+ 		}
+ 		return
+ 	}
+-	c.JSON(http.StatusOK, gin.H{"state": state})
++	if info.Current != "" {
++		c.JSON(http.StatusOK, gin.H{"state": info.State, "current_client": info.Current})
++		return
++	}
++	c.JSON(http.StatusOK, gin.H{"state": info.State})
+ }
+diff --git a/http/controller/api/nextec_invite_claim.go b/http/controller/api/nextec_invite_claim.go
+index a9269b9..5e02afe 100644
+--- a/http/controller/api/nextec_invite_claim.go
++++ b/http/controller/api/nextec_invite_claim.go
+@@ -29,7 +29,7 @@ func (a *NextecAgent) InviteClaim(c *gin.Context) {
+ 		case errors.Is(err, service.ErrNextecInviteInvalid):
+ 			c.JSON(http.StatusForbidden, gin.H{"error": "invite_invalid"})
+ 		case errors.Is(err, service.ErrNextecClientConflict):
+-			c.JSON(http.StatusConflict, gin.H{"error": "client_conflict"})
++			c.JSON(http.StatusConflict, gin.H{"error": "client_conflict", "current_client": service.NextecClientConflictCurrent(err)})
+ 		case errors.Is(err, service.ErrNextecIdentityConflict):
+ 			c.JSON(http.StatusConflict, gin.H{"error": "identity_conflict"})
+ 		case errors.Is(err, service.ErrNextecTooManyFails):
+diff --git a/model/nextec_install_invite.go b/model/nextec_install_invite.go
+index 8669742..0a00f85 100644
+--- a/model/nextec_install_invite.go
++++ b/model/nextec_install_invite.go
+@@ -33,3 +33,14 @@ type NextecInstallInviteUse struct {
+ 	At       int64  `json:"at"`
+ 	Ip       string `json:"ip" gorm:"size:64"`
+ }
++
++// NextecInstallInviteTry guarda o último resultado de cada máquina com cada convite (vinculada, conflito, convite inválido),
++// para o painel mostrar o que aconteceu na instalação. Uma linha por convite e máquina.
++type NextecInstallInviteTry struct {
++	Id       uint   `json:"id" gorm:"primaryKey"`
++	InviteId uint   `json:"invite_id" gorm:"uniqueIndex:ux_nextec_invite_try"`
++	PeerId   string `json:"peer_id" gorm:"size:64;uniqueIndex:ux_nextec_invite_try"`
++	Result   string `json:"result" gorm:"size:12"` // linked | conflict | identity | invalid
++	Detail   string `json:"detail" gorm:"size:200"`
++	At       int64  `json:"at"`
++}
+diff --git a/service/nextec_assign.go b/service/nextec_assign.go
+index 5e36976..e2393e7 100644
+--- a/service/nextec_assign.go
++++ b/service/nextec_assign.go
+@@ -12,6 +12,7 @@ import (
+ 
+ 	"github.com/lejianwen/rustdesk-api/v2/global"
+ 	"github.com/lejianwen/rustdesk-api/v2/model"
++	"gorm.io/gorm"
+ )
+ 
+ // Instalação por cliente (Nextec): o comando de instalação de cada cliente leva uma chave própria (HMAC do cliente com a chave do cofre).
+@@ -56,50 +57,95 @@ func NextecAssignRevoke() error {
+ 	return global.NextecSettingSet(settingAssignEpoch, strconv.Itoa(n+1))
+ }
+ 
+-// NextecAssignApply é chamado pelo script de instalação. Devolve "assigned", "pending" (a máquina ainda não se registrou) ou "kept"
+-// (já tinha cliente, nada muda).
++// NextecAssignInfo é o resultado da chave de instalação por cliente.
++type NextecAssignInfo struct {
++	State string // assigned | pending | kept
++	// Current é o cliente a que a máquina já pertence quando ela fica onde está ("kept") e esse cliente não é o do comando.
++	Current string
++}
++
++// NextecAssignApply é o NextecAssignApplyInfo só com o estado.
+ func NextecAssignApply(ip, peerID string, group uint, token string) (string, error) {
++	info, err := NextecAssignApplyInfo(ip, peerID, group, token)
++	if err != nil {
++		return "", err
++	}
++	return info.State, nil
++}
++
++// NextecAssignApplyInfo é chamado pelo script de instalação. Estado "assigned", "pending" (a máquina ainda não se registrou)
++// ou "kept" (já tinha cliente, nada muda). A chave pode ser de um cliente ou de um subgrupo: a máquina na raiz do cliente
++// desce para o subgrupo da chave; a que já está num subgrupo do cliente fica; a de outro cliente nunca é movida e o
++// conflito é auditado, com o nome do cliente atual na resposta.
++func NextecAssignApplyInfo(ip, peerID string, group uint, token string) (*NextecAssignInfo, error) {
+ 	if !nextecFailCheck(ip) {
+-		return "", ErrNextecTooManyFails
++		return nil, ErrNextecTooManyFails
+ 	}
+ 	want, err := nextecAssignMac(group)
+ 	if err != nil || token == "" || subtle.ConstantTimeCompare([]byte(token), []byte(want)) != 1 {
+ 		nextecFailAdd(ip)
+-		return "", ErrNextecBadAgentAuth
++		return nil, ErrNextecBadAgentAuth
+ 	}
+ 	if !nextecPeerPattern.MatchString(peerID) {
+-		return "", errors.New("id inválido")
++		return nil, errors.New("id inválido")
+ 	}
+ 	if AllService.GroupService.DeviceGroupInfoById(group).Id == 0 {
+-		return "", ErrNextecNoGroup
++		return nil, ErrNextecNoGroup
+ 	}
+ 	p := AllService.PeerService.FindById(peerID)
+ 	if p.RowId != 0 {
+-		if p.GroupId != 0 {
+-			return "kept", nil
++		switch rel := nextecGroupRelationTx(DB, p.GroupId, group); rel {
++		case nextecRelNone, nextecRelRefine:
++			if err := DB.Model(&model.Peer{}).Where("row_id = ?", p.RowId).Update("group_id", group).Error; err != nil {
++				return nil, err
++			}
++			NextecSecretAuditAdd(nil, peerID, "assign_install_key", nextecBootstrapAuditIP(ip), "chave de instalação, grupo "+nextecGroupPathTx(DB, group))
++			return &NextecAssignInfo{State: "assigned"}, nil
++		case nextecRelOther:
++			cur := nextecGroupPathTx(DB, p.GroupId)
++			NextecSecretAuditAdd(nil, peerID, "assign_install_conflict", nextecBootstrapAuditIP(ip),
++				"chave de instalação de "+nextecGroupPathTx(DB, group)+", máquina já pertence a "+cur)
++			return &NextecAssignInfo{State: "kept", Current: cur}, nil
+ 		}
+-		if err := DB.Model(&model.Peer{}).Where("row_id = ?", p.RowId).Update("group_id", group).Error; err != nil {
+-			return "", err
+-		}
+-		return "assigned", nil
++		return &NextecAssignInfo{State: "kept"}, nil
+ 	}
+ 	row := &model.NextecPendingAssign{PeerId: peerID, GroupId: group, ExpiresAt: time.Now().Add(nextecPendingTTL).Unix()}
+ 	if err := DB.Save(row).Error; err != nil {
+-		return "", err
++		return nil, err
+ 	}
+-	return "pending", nil
++	return &NextecAssignInfo{State: "pending"}, nil
+ }
+ 
+ // NextecApplyPendingAssign aplica a atribuição guardada quando a máquina finalmente se registra (chamado após o sysinfo).
++// O prazo é conferido antes de qualquer mudança e a pendência só some junto com a atribuição (mesma transação): uma falha
++// ao gravar não perde a pendência, e uma vencida é descartada com auditoria em vez de atribuir.
+ func NextecApplyPendingAssign(peerID string) {
+ 	row := &model.NextecPendingAssign{}
+ 	if DB.First(row, "peer_id = ?", peerID).Error != nil {
+ 		return
+ 	}
+-	DB.Delete(row)
+ 	if row.ExpiresAt < time.Now().Unix() {
++		DB.Delete(row)
++		NextecSecretAuditAdd(nil, peerID, "assign_pending_expired", "", "chave de instalação vencida, grupo "+nextecGroupPathTx(DB, row.GroupId))
++		return
++	}
++	applied := false
++	err := DB.Transaction(func(tx *gorm.DB) error {
++		// só atribui se ainda não tem cliente
++		res := tx.Model(&model.Peer{}).Where("id = ? AND group_id = 0", peerID).Update("group_id", row.GroupId)
++		if res.Error != nil {
++			return res.Error
++		}
++		applied = res.RowsAffected > 0
++		return tx.Delete(&model.NextecPendingAssign{}, "peer_id = ?", peerID).Error
++	})
++	if err != nil {
++		if Logger != nil {
++			Logger.Warn("nextec: atribuição pendente não aplicada, fica para a próxima: ", err)
++		}
+ 		return
+ 	}
+-	// só atribui se ainda não tem cliente
+-	DB.Model(&model.Peer{}).Where("id = ? AND group_id = 0", peerID).Update("group_id", row.GroupId)
++	if applied {
++		NextecSecretAuditAdd(nil, peerID, "assign_pending_applied", "", "chave de instalação, grupo "+nextecGroupPathTx(DB, row.GroupId))
++	}
+ }
+diff --git a/service/nextec_bug8_test.go b/service/nextec_bug8_test.go
+new file mode 100644
+index 0000000..470b070
+--- /dev/null
++++ b/service/nextec_bug8_test.go
+@@ -0,0 +1,190 @@
++package service
++
++import (
++	"errors"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"gorm.io/gorm"
++)
++
++// bug8Groups cria dois subgrupos do Cliente A (7): 9 "Filial" e 10 "Loja".
++func bug8Groups(t *testing.T, db *gorm.DB) {
++	t.Helper()
++	for _, g := range []model.DeviceGroup{
++		{IdModel: model.IdModel{Id: 9}, Name: "Cliente A / Filial", ParentId: 7},
++		{IdModel: model.IdModel{Id: 10}, Name: "Cliente A / Loja", ParentId: 7},
++	} {
++		g := g
++		if err := db.Create(&g).Error; err != nil {
++			t.Fatal(err)
++		}
++	}
++}
++
++func setPeerGroup(t *testing.T, db *gorm.DB, g uint) {
++	t.Helper()
++	if err := db.Model(&model.Peer{}).Where("id = ?", enrollPeer).Update("group_id", g).Error; err != nil {
++		t.Fatal(err)
++	}
++}
++
++func bug8Audit(db *gorm.DB, action string) int64 {
++	var n int64
++	db.Model(&model.NextecSecretAudit{}).Where("action = ?", action).Count(&n)
++	return n
++}
++
++func TestPendingAssignValidatesTTLBeforeDeletingAndAudits(t *testing.T) {
++	db := enrollSetup(t)
++	if err := db.AutoMigrate(&model.NextecPendingAssign{}); err != nil {
++		t.Fatal(err)
++	}
++	// vencida: não atribui, a pendência some e fica auditado
++	db.Create(&model.NextecPendingAssign{PeerId: enrollPeer, GroupId: 8, ExpiresAt: time.Now().Add(-time.Minute).Unix()})
++	NextecApplyPendingAssign(enrollPeer)
++	if g := peerGroupOf(t, db); g != 0 {
++		t.Fatalf("pendência vencida atribuiu o grupo %d", g)
++	}
++	var left int64
++	db.Model(&model.NextecPendingAssign{}).Count(&left)
++	if left != 0 || bug8Audit(db, "assign_pending_expired") != 1 {
++		t.Fatalf("vencida: sobrou %d, auditoria %d", left, bug8Audit(db, "assign_pending_expired"))
++	}
++	// válida: atribui, a pendência some e fica auditado
++	db.Create(&model.NextecPendingAssign{PeerId: enrollPeer, GroupId: 8, ExpiresAt: time.Now().Add(time.Hour).Unix()})
++	NextecApplyPendingAssign(enrollPeer)
++	db.Model(&model.NextecPendingAssign{}).Count(&left)
++	if g := peerGroupOf(t, db); g != 8 || left != 0 || bug8Audit(db, "assign_pending_applied") != 1 {
++		t.Fatalf("válida: grupo %d, sobrou %d, auditoria %d", g, left, bug8Audit(db, "assign_pending_applied"))
++	}
++	// máquina que já tem cliente não é movida pela pendência
++	db.Create(&model.NextecPendingAssign{PeerId: enrollPeer, GroupId: 7, ExpiresAt: time.Now().Add(time.Hour).Unix()})
++	NextecApplyPendingAssign(enrollPeer)
++	if g := peerGroupOf(t, db); g != 8 {
++		t.Fatalf("pendência moveu máquina que já tinha cliente: %d", g)
++	}
++	db.Model(&model.NextecPendingAssign{}).Count(&left)
++	if left != 0 {
++		t.Fatal("pendência obsoleta ficou na tabela")
++	}
++}
++
++func TestInstallKeyAcceptsSubgroupAndReportsConflict(t *testing.T) {
++	db := enrollSetup(t)
++	bug8Groups(t, db)
++	tokenOf := func(g uint) string {
++		tk, err := NextecAssignToken(g)
++		if err != nil {
++			t.Fatal(err)
++		}
++		return tk
++	}
++	// chave do subgrupo vale e coloca a máquina sem cliente direto no subgrupo
++	info, err := NextecAssignApplyInfo("10.5.0.1", enrollPeer, 9, tokenOf(9))
++	if err != nil || info.State != "assigned" || peerGroupOf(t, db) != 9 {
++		t.Fatalf("subgrupo: %+v %v grupo %d", info, err, peerGroupOf(t, db))
++	}
++	// chave do cliente (pai) com a máquina já no subgrupo dele: nada muda, sem conflito
++	info, err = NextecAssignApplyInfo("10.5.0.1", enrollPeer, 7, tokenOf(7))
++	if err != nil || info.State != "kept" || info.Current != "" || peerGroupOf(t, db) != 9 {
++		t.Fatalf("pai com a máquina no subgrupo: %+v %v grupo %d", info, err, peerGroupOf(t, db))
++	}
++	// chave de outro subgrupo do mesmo cliente: a máquina não é movida entre subgrupos, e isso é conflito de verdade
++	info, err = NextecAssignApplyInfo("10.5.0.1", enrollPeer, 10, tokenOf(10))
++	if err != nil || info.State != "kept" || info.Current != "Cliente A / Filial" || peerGroupOf(t, db) != 9 {
++		t.Fatalf("outro subgrupo: %+v %v grupo %d", info, err, peerGroupOf(t, db))
++	}
++	// máquina na raiz do cliente desce para o subgrupo da chave
++	setPeerGroup(t, db, 7)
++	info, err = NextecAssignApplyInfo("10.5.0.1", enrollPeer, 10, tokenOf(10))
++	if err != nil || info.State != "assigned" || peerGroupOf(t, db) != 10 {
++		t.Fatalf("raiz para subgrupo: %+v %v grupo %d", info, err, peerGroupOf(t, db))
++	}
++	// máquina de outro cliente: continua onde está, devolve o nome e audita
++	setPeerGroup(t, db, 8)
++	info, err = NextecAssignApplyInfo("10.5.0.1", enrollPeer, 9, tokenOf(9))
++	if err != nil || info.State != "kept" || info.Current != "Cliente B" || peerGroupOf(t, db) != 8 {
++		t.Fatalf("outro cliente: %+v %v grupo %d", info, err, peerGroupOf(t, db))
++	}
++	if bug8Audit(db, "assign_install_conflict") < 1 || bug8Audit(db, "assign_install_key") != 2 {
++		t.Fatalf("auditoria: conflito %d, chave %d", bug8Audit(db, "assign_install_conflict"), bug8Audit(db, "assign_install_key"))
++	}
++	// chave de outro cliente não vale para este grupo
++	if _, err := NextecAssignApplyInfo("10.5.0.2", enrollPeer, 9, tokenOf(8)); !errors.Is(err, ErrNextecBadAgentAuth) {
++		t.Fatalf("chave trocada: %v", err)
++	}
++}
++
++func TestInviteClaimConflictIsRecordedAndListedAndRetryWorks(t *testing.T) {
++	db, token := enrollPending(t, "10.7.8.1")
++	bug8Groups(t, db)
++	c, err := NextecInviteCreate(nil, inviteBase())
++	if err != nil {
++		t.Fatal(err)
++	}
++	// máquina de outro cliente: 409 com o nome, nada gasto, resultado e auditoria gravados
++	setPeerGroup(t, db, 8)
++	_, err = NextecInviteClaim("10.7.8.1", enrollPeer, token, c.Code)
++	if !errors.Is(err, ErrNextecClientConflict) || NextecClientConflictCurrent(err) != "Cliente B" {
++		t.Fatalf("conflito: %v atual %q", err, NextecClientConflictCurrent(err))
++	}
++	views, _ := NextecInviteList()
++	var res []NextecInviteTryView
++	for _, v := range views {
++		if v.Id == c.Invite.Id {
++			res = v.Results
++		}
++	}
++	if len(res) != 1 || res[0].Result != "conflict" || !strings.Contains(res[0].Detail, "Cliente B") || res[0].PeerId != enrollPeer {
++		t.Fatalf("resultado no painel: %+v", res)
++	}
++	if bug8Audit(db, "invite_conflict") != 1 {
++		t.Fatal("conflito sem auditoria")
++	}
++	// o admin libera a máquina; a nova tentativa vincula e atualiza o resultado (uma linha por convite e máquina)
++	setPeerGroup(t, db, 0)
++	if _, err := NextecInviteClaim("10.7.8.1", enrollPeer, token, c.Code); err != nil {
++		t.Fatal(err)
++	}
++	views, _ = NextecInviteList()
++	for _, v := range views {
++		if v.Id == c.Invite.Id {
++			res = v.Results
++		}
++	}
++	if len(res) != 1 || res[0].Result != "linked" || !strings.Contains(res[0].Detail, "Cliente A") {
++		t.Fatalf("resultado após vincular: %+v", res)
++	}
++}
++
++func TestInviteClaimToParentClientKeepsMachineInSubgroup(t *testing.T) {
++	db, token := enrollPending(t, "10.7.8.2")
++	bug8Groups(t, db)
++	setPeerGroup(t, db, 9)
++	c, _ := NextecInviteCreate(nil, inviteBase()) // cliente 7
++	res, err := NextecInviteClaim("10.7.8.2", enrollPeer, token, c.Code)
++	if err != nil || peerGroupOf(t, db) != 9 || res.Moved {
++		t.Fatalf("convite do cliente com a máquina no subgrupo dele: %+v %v grupo %d", res, err, peerGroupOf(t, db))
++	}
++}
++
++func TestInviteClaimRevokedIsRecordedAsInvalid(t *testing.T) {
++	db, token := enrollPending(t, "10.7.8.3")
++	c, _ := NextecInviteCreate(nil, inviteBase())
++	if err := NextecInviteRevoke(c.Invite.Id); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := NextecInviteClaim("10.7.8.3", enrollPeer, token, c.Code); !errors.Is(err, ErrNextecInviteInvalid) {
++		t.Fatalf("revogado: %v", err)
++	}
++	var tr model.NextecInstallInviteTry
++	if err := db.Where("invite_id = ?", c.Invite.Id).First(&tr).Error; err != nil || tr.Result != "invalid" || tr.Detail != "convite cancelado" {
++		t.Fatalf("resultado: %+v %v", tr, err)
++	}
++	if bug8Audit(db, "invite_invalid") != 1 {
++		t.Fatal("convite inválido sem auditoria")
++	}
++}
+diff --git a/service/nextec_enroll.go b/service/nextec_enroll.go
+index 6136983..26df97d 100644
+--- a/service/nextec_enroll.go
++++ b/service/nextec_enroll.go
+@@ -44,6 +44,21 @@ const (
+ 	NextecStateAssigned = "assigned"
+ )
+ 
++// NextecClientConflictError é o ErrNextecClientConflict com o nome do cliente a que a máquina já pertence.
++type NextecClientConflictError struct{ Current string }
++
++func (e *NextecClientConflictError) Error() string { return ErrNextecClientConflict.Error() }
++func (e *NextecClientConflictError) Is(target error) bool { return target == ErrNextecClientConflict }
++
++// NextecClientConflictCurrent devolve o cliente atual da máquina num erro de conflito ("" se não há).
++func NextecClientConflictCurrent(err error) string {
++	var ce *NextecClientConflictError
++	if errors.As(err, &ce) {
++		return ce.Current
++	}
++	return ""
++}
++
+ var (
+ 	ErrNextecEnrollKeyInvalid  = errors.New("enroll key invalid")
+ 	ErrNextecEnrollBadRequest  = errors.New("bad request")
+@@ -480,8 +495,11 @@ func NextecEnrollAssign(o NextecAssignOptions) (*NextecAssignResult, error) {
+ 			identityFail = true
+ 			return ErrNextecIdentityConflict
+ 		}
+-		if peer.GroupId != 0 && peer.GroupId != o.ClientID && !o.Move {
+-			return ErrNextecClientConflict
++		// Subgrupo conta como o mesmo cliente: quem já está num subgrupo do cliente pedido fica onde está, e quem está
++		// na raiz do cliente pode descer para o subgrupo pedido. Só outro cliente é conflito.
++		rel := nextecGroupRelationTx(tx, peer.GroupId, o.ClientID)
++		if rel == nextecRelOther && !o.Move {
++			return &NextecClientConflictError{Current: nextecGroupPathTx(tx, peer.GroupId)}
+ 		}
+ 		clientRef := strconv.FormatUint(uint64(o.ClientID), 10)
+ 		var groupRule model.NextecSecretPolicy
+@@ -529,7 +547,7 @@ func NextecEnrollAssign(o NextecAssignOptions) (*NextecAssignResult, error) {
+ 		}
+ 		sameRule := (want == nil && !hasOwn) || (want != nil && hasOwn && own.Enabled == want.Enabled &&
+ 			(!want.Enabled || own.IntervalMinutes == want.IntervalMinutes))
+-		sameClient := peer.GroupId == o.ClientID
++		sameClient := rel == nextecRelSame || rel == nextecRelInside
+ 		if !d.AwaitingApproval && sameClient && sameRule && !ruleEnabledNow {
+ 			enabled, iv := effectivePolicyTx(tx, o.PeerID, o.ClientID)
+ 			if !enabled {
+@@ -539,7 +557,7 @@ func NextecEnrollAssign(o NextecAssignOptions) (*NextecAssignResult, error) {
+ 			return nil
+ 		}
+ 		now := time.Now().Unix()
+-		moved := peer.GroupId != 0 && !sameClient
++		moved := rel == nextecRelOther
+ 		if !sameClient {
+ 			if err := tx.Model(&model.Peer{}).Where("row_id = ?", peer.RowId).Update("group_id", o.ClientID).Error; err != nil {
+ 				return err
+diff --git a/service/nextec_group.go b/service/nextec_group.go
+index a7c2d13..dbd1b8c 100644
+--- a/service/nextec_group.go
++++ b/service/nextec_group.go
+@@ -164,3 +164,54 @@ func NextecGroupValidateParent(selfID, parentID uint) bool {
+ func NextecGroupParentFromName(selfID uint, name string) uint {
+ 	return nextecGroupParentFromName(DB, selfID, name)
+ }
++
++// Relações entre o grupo atual da máquina e o grupo pedido (cliente ou subgrupo).
++const (
++	nextecRelNone   = "none"   // a máquina ainda não tem grupo
++	nextecRelSame   = "same"   // é o mesmo grupo
++	nextecRelInside = "inside" // a máquina já está dentro do pedido (subgrupo do cliente pedido): nada muda
++	nextecRelRefine = "refine" // a máquina está no pai do pedido (raiz do cliente): pode descer para o subgrupo
++	nextecRelOther  = "other"  // outro cliente: conflito
++)
++
++func nextecGroupRelationTx(tx *gorm.DB, current, target uint) string {
++	switch {
++	case current == 0:
++		return nextecRelNone
++	case current == target:
++		return nextecRelSame
++	}
++	for _, id := range nextecGroupChainTx(tx, current) {
++		if id == target {
++			return nextecRelInside
++		}
++	}
++	for _, id := range nextecGroupChainTx(tx, target) {
++		if id == current {
++			return nextecRelRefine
++		}
++	}
++	return nextecRelOther
++}
++
++// nextecGroupPathTx devolve "Cliente / Sub" (raiz primeiro) para mensagens e auditoria; vazio se o grupo não existe.
++func nextecGroupPathTx(tx *gorm.DB, groupID uint) string {
++	chain := nextecGroupChainTx(tx, groupID)
++	byID := make(map[uint]*model.DeviceGroup, len(chain))
++	for _, id := range chain {
++		g := &model.DeviceGroup{}
++		if tx.Select("id", "name", "parent_id").Where("id = ?", id).Limit(1).Find(g).Error == nil && g.Id != 0 {
++			byID[id] = g
++		}
++	}
++	names := make([]string, 0, len(chain))
++	for i := len(chain) - 1; i >= 0; i-- {
++		if g := byID[chain[i]]; g != nil {
++			names = append(names, nextecGroupLeaf(g, byID))
++		}
++	}
++	return strings.Join(names, nextecGroupSep)
++}
++
++// NextecGroupPath é o caminho "Cliente / Sub" do grupo, para mensagens e telas.
++func NextecGroupPath(groupID uint) string { return nextecGroupPathTx(DB, groupID) }
+diff --git a/service/nextec_install_invite.go b/service/nextec_install_invite.go
+index d7fa036..0eb2b0f 100644
+--- a/service/nextec_install_invite.go
++++ b/service/nextec_install_invite.go
+@@ -55,7 +55,7 @@ func invitesReady() error {
+ 	if invitesMigrated == DB {
+ 		return nil
+ 	}
+-	if err := DB.AutoMigrate(&model.NextecInstallInvite{}, &model.NextecInstallInviteUse{}); err != nil {
++	if err := DB.AutoMigrate(&model.NextecInstallInvite{}, &model.NextecInstallInviteUse{}, &model.NextecInstallInviteTry{}); err != nil {
+ 		return err
+ 	}
+ 	invitesMigrated = DB
+@@ -283,6 +283,8 @@ type NextecInviteView struct {
+ 	PeerIds    []string `json:"peer_ids"`
+ 	// Release é o MSI fixado no convite: o hash do comando copiado é o dele, mesmo que outra versão seja publicada depois.
+ 	Release *NextecInviteReleaseInfo `json:"release"`
++	// Results é o resultado da instalação em cada máquina (vinculada, conflito, convite inválido).
++	Results []NextecInviteTryView `json:"results"`
+ }
+ 
+ // NextecInviteReleaseInfo descreve o MSI de um convite (nunca o caminho no disco).
+@@ -312,6 +314,7 @@ func NextecInviteList() ([]NextecInviteView, error) {
+ 	DB.Model(&model.NextecInstallInvite{}).Where("expires_at < ?", cutoff).Pluck("id", &old)
+ 	if len(old) > 0 {
+ 		DB.Where("invite_id IN ?", old).Delete(&model.NextecInstallInviteUse{})
++		DB.Where("invite_id IN ?", old).Delete(&model.NextecInstallInviteTry{})
+ 		DB.Where("id IN ?", old).Delete(&model.NextecInstallInvite{})
+ 	}
+ 	var invites []model.NextecInstallInvite
+@@ -332,6 +335,14 @@ func NextecInviteList() ([]NextecInviteView, error) {
+ 			usesBy[u.InviteId] = append(usesBy[u.InviteId], u.PeerId)
+ 		}
+ 	}
++	triesBy := map[uint][]NextecInviteTryView{}
++	if len(ids) > 0 {
++		var tries []model.NextecInstallInviteTry
++		DB.Where("invite_id IN ?", ids).Order("at asc").Find(&tries)
++		for _, t := range tries {
++			triesBy[t.InviteId] = append(triesBy[t.InviteId], NextecInviteTryView{PeerId: t.PeerId, Result: t.Result, Detail: t.Detail, At: t.At})
++		}
++	}
+ 	names := map[uint]string{}
+ 	if len(clientIDs) > 0 {
+ 		var groups []model.DeviceGroup
+@@ -352,6 +363,10 @@ func NextecInviteList() ([]NextecInviteView, error) {
+ 		if v.PeerIds == nil {
+ 			v.PeerIds = []string{}
+ 		}
++		v.Results = triesBy[inv.Id]
++		if v.Results == nil {
++			v.Results = []NextecInviteTryView{}
++		}
+ 		switch {
+ 		case inv.Revoked:
+ 			v.Status = "revoked"
+@@ -395,6 +410,28 @@ func NextecInviteReleaseOf(inv *model.NextecInstallInvite) *model.NextecAppRelea
+ 	return NextecReleaseByVersion(inv.Version)
+ }
+ 
++// nextecInviteTry grava (ou atualiza) o resultado da máquina com o convite, para o painel mostrar na tela de instalação.
++func nextecInviteTry(inviteID uint, peerID, result, detail string) {
++	if len(detail) > 200 {
++		detail = detail[:200]
++	}
++	row := &model.NextecInstallInviteTry{InviteId: inviteID, PeerId: peerID, Result: result, Detail: detail, At: time.Now().Unix()}
++	if err := DB.Clauses(clause.OnConflict{
++		Columns:   []clause.Column{{Name: "invite_id"}, {Name: "peer_id"}},
++		DoUpdates: clause.AssignmentColumns([]string{"result", "detail", "at"}),
++	}).Create(row).Error; err != nil && Logger != nil {
++		Logger.Warn("nextec convite: resultado não gravado: ", err)
++	}
++}
++
++// NextecInviteTryView é o resultado de uma máquina com um convite, como o painel mostra.
++type NextecInviteTryView struct {
++	PeerId string `json:"peer_id"`
++	Result string `json:"result"`
++	Detail string `json:"detail"`
++	At     int64  `json:"at"`
++}
++
+ // NextecInviteClaim: o agente, já inscrito (com o token dele), apresenta o código do convite. A máquina é atribuída ao
+ // cliente do convite com a regra de senha escolhida e recebe o apelido. Repetir com a mesma máquina é idempotente; uma
+ // vaga só é gasta quando a atribuição dá certo.
+@@ -417,6 +454,12 @@ func NextecInviteClaim(ip, peerID, token, code string) (*NextecAssignResult, err
+ 	}
+ 	now := time.Now().Unix()
+ 	if inv.Revoked || inv.ExpiresAt <= now {
++		why := "convite vencido"
++		if inv.Revoked {
++			why = "convite cancelado"
++		}
++		nextecInviteTry(inv.Id, peerID, "invalid", why)
++		NextecSecretAuditAdd(nil, peerID, "invite_invalid", nextecBootstrapAuditIP(ip), "convite "+inv.Hint+": "+why)
+ 		return nil, ErrNextecInviteInvalid
+ 	}
+ 	assign := func() (*NextecAssignResult, error) {
+@@ -449,6 +492,9 @@ func NextecInviteClaim(ip, peerID, token, code string) (*NextecAssignResult, err
+ 		}
+ 		return nil
+ 	}); err != nil {
++		if errors.Is(err, ErrNextecInviteInvalid) {
++			nextecInviteTry(inv.Id, peerID, "invalid", "convite já usado ou fora do prazo")
++		}
+ 		return nil, err
+ 	}
+ 	if already {
+@@ -459,6 +505,15 @@ func NextecInviteClaim(ip, peerID, token, code string) (*NextecAssignResult, err
+ 		// atribuição falhou: devolve a vaga (e o registro de uso) para a máquina poder tentar de novo
+ 		DB.Delete(&model.NextecInstallInviteUse{}, use.Id)
+ 		DB.Model(&model.NextecInstallInvite{}).Where("id = ? AND uses > 0", inv.Id).UpdateColumn("uses", gorm.Expr("uses - 1"))
++		switch {
++		case errors.Is(err, ErrNextecClientConflict):
++			cur := NextecClientConflictCurrent(err)
++			nextecInviteTry(inv.Id, peerID, "conflict", "conflito: já pertence a "+cur)
++			NextecSecretAuditAdd(nil, peerID, "invite_conflict", nextecBootstrapAuditIP(ip),
++				fmt.Sprintf("convite %s cliente %d recusado, máquina já pertence a %s", inv.Hint, inv.ClientId, cur))
++		case errors.Is(err, ErrNextecIdentityConflict):
++			nextecInviteTry(inv.Id, peerID, "identity", "identidade da máquina mudou")
++		}
+ 		return nil, err
+ 	}
+ 	if inv.Alias != "" {
+@@ -470,6 +525,7 @@ func NextecInviteClaim(ip, peerID, token, code string) (*NextecAssignResult, err
+ 		}
+ 		DB.Model(&model.Peer{}).Where("id = ? AND (alias = '' OR alias IS NULL)", peerID).Update("alias", alias)
+ 	}
++	nextecInviteTry(inv.Id, peerID, "linked", "vinculado a "+NextecGroupPath(inv.ClientId))
+ 	NextecSecretAuditAdd(nil, peerID, "invite_claim", nextecBootstrapAuditIP(ip), fmt.Sprintf("convite %s cliente %d", inv.Hint, inv.ClientId))
+ 	return out, nil
+ }
+diff --git a/service/nextec_install_invite_test.go b/service/nextec_install_invite_test.go
+index 4336b70..3634b1c 100644
+--- a/service/nextec_install_invite_test.go
++++ b/service/nextec_install_invite_test.go
+@@ -1,6 +1,7 @@
+ package service
+ 
+ import (
++	"errors"
+ 	"strings"
+ 	"testing"
+ 	"time"
+@@ -200,7 +201,7 @@ func TestInviteClaimClientModeHasUseLimitAndFailedAssignKeepsTheSlot(t *testing.
+ 	}
+ 	// máquina que já é de outro cliente: a atribuição falha e a vaga não é gasta
+ 	db.Model(&model.Peer{}).Where("id = ?", enrollPeer).Update("group_id", 8)
+-	if _, err := NextecInviteClaim("10.7.2.1", enrollPeer, token, c.Code); err != ErrNextecClientConflict {
++	if _, err := NextecInviteClaim("10.7.2.1", enrollPeer, token, c.Code); !errors.Is(err, ErrNextecClientConflict) {
+ 		t.Fatalf("conflito: %v", err)
+ 	}
+ 	var inv model.NextecInstallInvite

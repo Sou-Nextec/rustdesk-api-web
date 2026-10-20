@@ -75,12 +75,14 @@ try {
     Assert ((Invoke-Claim $temp) -eq 'retry') "status $temp deveria tentar de novo"
     Assert (Test-Path -LiteralPath $paths.Invite) "status $temp apagou o convite"
   }
-  foreach ($final in @(403, 409)) {
+  # 403 (convite recusado) e 409 (maquina de outro cliente) nao apagam o convite: o motivo fica gravado e a nova tentativa so
+  # acontece depois de 6 h (detalhes em test_convite_resultado.ps1)
+  foreach ($final in @(@{ s = 403; r = 'rejected' }, @{ s = 409; r = 'conflict' })) {
     New-Root; Add-Credential; Write-Invite @{ codigo = $CODE; criado_utc = $t0.ToString('o') }
-    Assert ((Invoke-Claim $final) -eq 'discarded') "status $final deveria descartar"
-    Assert (-not (Test-Path -LiteralPath $paths.Invite)) "status $final manteve o convite"
+    Assert ((Invoke-Claim $final.s) -eq $final.r) "status $($final.s) deveria registrar $($final.r)"
+    Assert (Test-Path -LiteralPath $paths.Invite) "status $($final.s) apagou o convite"
   }
-  Write-Host 'PASS Invite_RetryAndDiscardRules'
+  Write-Host 'PASS Invite_RetryAndKeepRules'
 
   # sem credencial: espera sem chamar o painel; vencido (72 h), codigo invalido e data no futuro: descarta sem rede
   New-Root; Write-Invite @{ codigo = $CODE; criado_utc = $t0.ToString('o') }

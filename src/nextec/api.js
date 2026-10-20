@@ -73,9 +73,22 @@ export const supportWaiting = () => request({ url: '/my/support/waiting' })
 
 // patches 0011 a 0013: instalação por cliente, políticas do app, conexões ativas, chamado e relatório
 export const installToken = (group_id) => request({ url: '/nextec/install-token', params: { group_id } })
+// patch 0047: listas "Cliente: X" sempre iguais ao cliente (inclui subgrupos, remove o que saiu)
+export const clientListsSync = (collection_ids) => request({ url: '/nextec/client-lists/sync', method: 'post', data: { collection_ids } })
 export const installRevoke = () => request({ url: '/nextec/install-token/revoke', method: 'post', data: {} })
 export const policiesList = () => request({ url: '/nextec/policies' })
 export const policySave = (data) => request({ url: '/nextec/policies', method: 'post', data })
+// patch 0049: herança global > cliente > subgrupo > dispositivo
+export const policyScopes = () => request({ url: '/nextec/policies/scopes' })
+export const policyEffective = (peer_id) => request({ url: '/nextec/policies/effective', params: { peer_id } })
+// item 5: lista paginada no servidor, árvore e troca em lote; itens 1 e 9: acesso por equipe e pessoa
+export const devicesList = (params) => request({ url: '/nextec/devices', params })
+export const devicesTree = () => request({ url: '/nextec/devices/tree' })
+export const devicesMove = (data) => request({ url: '/nextec/devices/move', method: 'post', data })
+export const accessGrant = (data) => request({ url: '/nextec/access/grant', method: 'post', data })
+export const accessUsers = () => request({ url: '/nextec/access/users' })
+export const accessUser = (user_id) => request({ url: '/nextec/access/user', params: { user_id } })
+export const accessTeam = (team_id) => request({ url: '/nextec/access/team', params: { team_id } })
 export const sessionsList = () => request({ url: '/nextec/sessions' })
 export const sessionDisconnect = (peer_id, conn_id) => request({ url: '/nextec/sessions/disconnect', method: 'post', data: { peer_id, conn_id } })
 export const ticketSettings = () => request({ url: '/nextec/ticket-settings' })
@@ -92,7 +105,7 @@ export const supportPublicUrlSave = (public_url) => request({ url: '/nextec/supp
 // patch 0031: inscrição global (a máquina se inscreve sozinha como pendente; o admin atribui a um cliente)
 export const secretsAssign = (data) => request({ url: '/nextec/secrets/assign', method: 'post', data })
 // uuid: a identidade que o admin viu na lista; se a linha mudou de identidade, a API recusa (conflito de identidade).
-export const secretsReject = (id, block, uuid) => request({ url: '/nextec/secrets/reject', method: 'post', data: { id, block: !!block, uuid: uuid || undefined } })
+export const secretsReject = (id, block, uuid, reason) => request({ url: '/nextec/secrets/reject', method: 'post', data: { id, block: !!block, uuid: uuid || undefined, reason: reason || undefined } })
 export const secretsUnblock = (id, uuid) => request({ url: '/nextec/secrets/unblock', method: 'post', data: { id, uuid: uuid || undefined } })
 export const enrollKeyGet = () => request({ url: '/nextec/enroll-key' })
 export const enrollKeyRotate = () => request({ url: '/nextec/enroll-key/rotate', method: 'post', data: {} })

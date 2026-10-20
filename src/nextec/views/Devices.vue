@@ -60,9 +60,9 @@
 
     <!-- resumo e ações em lote -->
     <div class="nx-summary">
-      <span>{{ filtered.length }} de {{ all.length }} dispositivos</span>
+      <span>{{ total }} de {{ tree.all }} dispositivos</span>
       <span class="nx-sep">·</span>
-      <span><span class="nx-dot is-on"></span>{{ onlineCount }} online</span>
+      <span><span class="nx-dot is-on"></span>{{ onlineTotal }} online</span>
       <template v-if="selected.length">
         <span class="nx-sep">·</span>
         <strong>{{ selected.length }} selecionado(s)</strong>
@@ -79,12 +79,17 @@
       </label>
     </div>
 
+    <!-- árvore de clientes ao lado da tabela -->
+    <div class="nx-layout">
+    <DeviceTree class="nx-side" :class="{ 'is-closed': !treeOpen }" :open="treeOpen" :nodes="tree.nodes" :all="tree.all" :no-client="tree.no_client"
+                :client="clientFilter" :sub="subFilter" @select="onTreeSelect" @toggle="toggleTree"/>
+    <div class="nx-content">
     <!-- tabela -->
     <div class="nx-card">
       <template v-for="sec in sections" :key="sec.key + '-' + tblKey">
       <div v-if="sec.title" class="nx-sec-head">
         <strong>{{ sec.title }}</strong>
-        <span class="nx-muted">{{ sec.total }} {{ sec.total === 1 ? 'dispositivo' : 'dispositivos' }} · {{ sec.online }} online</span>
+        <span class="nx-muted">{{ sec.total }} {{ sec.total === 1 ? 'dispositivo' : 'dispositivos' }}<template v-if="sec.online !== undefined"> · {{ sec.online }} online</template></span>
       </div>
       <el-table :data="sec.rows" v-loading="loading && sec.first" row-key="row_id" :aria-label="sec.title || 'Dispositivos'"
                 :show-header="!sec.title || sec.first"
@@ -155,18 +160,20 @@
         </el-table-column>
       </el-table>
       </template>
-      <el-empty v-if="!loading && !filtered.length" :image-size="72"
-                :description="all.length ? 'Nenhum dispositivo encontrado com esses filtros.' : 'Nenhum dispositivo conectado a este servidor ainda.'">
-        <el-button v-if="all.length" @click="clearFilters">Limpar filtros</el-button>
+      <el-empty v-if="!loading && !rows.length" :image-size="72"
+                :description="tree.all ? 'Nenhum dispositivo encontrado com esses filtros.' : 'Nenhum dispositivo conectado a este servidor ainda.'">
+        <el-button v-if="tree.all" @click="clearFilters">Limpar filtros</el-button>
         <template v-else>
           <p class="nx-empty-hint">Para trazer a primeira máquina, crie um convite de instalação: um link por cliente, e a máquina já entra no cliente certo.</p>
           <el-button type="primary" @click="onAdd('invite')">Instalar em uma máquina nova</el-button>
         </template>
       </el-empty>
-      <div v-if="filtered.length > pageSize || pageSize !== 20" class="nx-pager">
+      <div v-if="total > pageSize || pageSize !== 20" class="nx-pager">
         <el-pagination v-model:current-page="page" v-model:page-size="pageSize" :page-sizes="[20, 50, 100]"
-                       layout="total, prev, pager, next, sizes" :total="filtered.length" background/>
+                       layout="total, prev, pager, next, sizes" :total="total" background/>
       </div>
+    </div>
+    </div>
     </div>
 
     <!-- editar / adicionar -->
@@ -182,12 +189,7 @@
           <el-form-item label="Apelido">
             <el-input v-model="form.data.alias" placeholder="Como a equipe reconhece (ex.: Recepção)"/>
           </el-form-item>
-          <el-form-item label="Cliente">
-            <el-select v-model="form.data.group_id" filterable>
-              <el-option label="Sem cliente" :value="0"/>
-              <el-option v-for="g in groups" :key="g.id" :label="g.name" :value="g.id"/>
-            </el-select>
-          </el-form-item>
+          <GroupPicker v-model="form.data.group_id" :groups="groups"/>
           <el-form-item label="Usuário">
             <el-input v-model="form.data.username"/>
           </el-form-item>
@@ -226,24 +228,38 @@
             <dd>{{ f.value || '-' }}</dd>
           </template>
         </dl>
+        <h4 class="nx-rules-title">Regras que valem aqui</h4>
+        <p v-if="effLoading" class="nx-muted nx-small">Conferindo as regras...</p>
+        <ul v-else-if="effLines.length" class="nx-rules-list" aria-label="Regras efetivas">
+          <li v-for="l in effLines" :key="l.label"><strong>{{ l.label }}</strong><span>{{ l.text }}</span></li>
+        </ul>
+        <p v-else class="nx-muted nx-small">Não foi possível conferir as regras agora.</p>
       </template>
       <template #footer>
         <el-button @click="details.visible = false">Fechar</el-button>
+        <el-button @click="openClientDlg(details.row)">Adicionar ou alterar cliente</el-button>
         <el-button @click="openForm(details.row); details.visible = false">Editar</el-button>
         <el-button type="primary" @click="connectByClient(details.row.id)">Conectar</el-button>
       </template>
     </el-drawer>
 
+    <!-- adicionar ou alterar o cliente de uma máquina -->
+    <el-dialog v-model="clientDlg.visible" title="Adicionar ou alterar cliente" width="480px">
+      <el-form label-position="top" class="nx-form" @submit.prevent>
+        <p class="nx-muted">{{ clientDlg.name }}: escolha o cliente e, se precisar, o subgrupo. "Raiz do cliente" deixa a máquina direto no cliente.</p>
+        <GroupPicker v-model="clientDlg.group_id" :groups="groups"/>
+      </el-form>
+      <template #footer>
+        <el-button @click="clientDlg.visible = false">Cancelar</el-button>
+        <el-button type="primary" :loading="clientDlg.saving" @click="saveClientDlg">Salvar</el-button>
+      </template>
+    </el-dialog>
+
     <!-- mover para um cliente (vários) -->
     <el-dialog v-model="batchMove.visible" title="Mover para um cliente" width="480px">
       <el-form label-position="top" class="nx-form" @submit.prevent>
         <p class="nx-muted">{{ selected.length }} dispositivo(s) passam para o cliente escolhido.</p>
-        <el-form-item label="Cliente" required class="is-required">
-          <el-select v-model="batchMove.group_id" filterable placeholder="Escolha o cliente">
-            <el-option label="Sem cliente" :value="0"/>
-            <el-option v-for="g in groups" :key="g.id" :label="g.name" :value="g.id"/>
-          </el-select>
-        </el-form-item>
+        <GroupPicker v-model="batchMove.group_id" :groups="groups" required placeholder="Escolha o cliente"/>
       </el-form>
       <template #footer>
         <el-button @click="batchMove.visible = false">Cancelar</el-button>
@@ -316,9 +332,14 @@
   import { fmtId, rawId } from '@/nextec/id'
   import { useRoute } from 'vue-router'
   import { ElMessage, ElMessageBox } from 'element-plus'
-  import { batchRemove, create, list, remove, update } from '@/api/peer'
+  import { batchRemove, create, remove, update } from '@/api/peer'
   import { list as groupList } from '@/api/device_group'
   import InviteDialog from '@/nextec/views/InviteDialog.vue'
+  import GroupPicker from '@/nextec/views/GroupPicker.vue'
+  import { policyEffective, devicesList, devicesTree, devicesMove } from '@/nextec/api'
+  import DeviceTree from '@/nextec/views/DeviceTree.vue'
+  import { deviceQueryParams, collectAllPages, PAGE_MAX, EXPORT_MAX } from '@/nextec/device-query.mjs'
+  import { everyText, originText } from '@/nextec/secret-rule.mjs'
   import { clientColorIndex, clientChipStyle } from '@/nextec/client-color.mjs'
   import { clientOptions, subOptions, matchesClient, matchesSub, deviceClientParts } from '@/nextec/client-groups.mjs'
   import SupportQuickDialog from '@/nextec/views/SupportQuickDialog.vue'
@@ -337,7 +358,11 @@
   const ok = (m = 'Operação concluída.') => ElMessage.success(m)
 
   // ---------- dados ----------
-  const all = ref([])
+  // a lista vem paginada do servidor: só a página atual fica na memória; total e online valem para o filtro inteiro
+  const rows = ref([])
+  const total = ref(0)
+  const onlineTotal = ref(0)
+  const tree = ref({ nodes: [], no_client: 0, all: 0, online: 0 })
   const groups = ref([])
   const addVisible = ref(false)
   const quickVisible = ref(false)
@@ -347,17 +372,40 @@
     else openForm()
   }
   const loading = ref(false)
-  const load = async () => {
+  let seq = 0
+  const fetchPage = async () => {
+    const mine = ++seq
     loading.value = true
-    const [p, g] = await Promise.all([
-      list({ page: 1, page_size: 10000 }).catch(() => false),
-      groupList({ page: 1, page_size: 999 }).catch(() => false),
-    ])
+    const r = await devicesList(deviceQueryParams({
+      page: page.value, pageSize: pageSize.value, q: q.value, client: clientFilter.value, sub: subFilter.value,
+      status: statusFilter.value, sort: effSort.value, favorites: qa.state.favorites,
+    })).catch(() => false)
+    if (mine !== seq) return // chegou uma resposta mais nova
     loading.value = false
-    if (p) all.value = p.data.list || []
-    if (g) groups.value = g.data.list || []
-    normalizeClientFilter()
+    if (!r) return
+    rows.value = r.data.list || []
+    total.value = r.data.total || 0
+    onlineTotal.value = r.data.online || 0
+    // apagou ou moveu o último item de uma página que deixou de existir
+    if (!rows.value.length && total.value && page.value > 1) page.value = Math.max(1, Math.ceil(total.value / pageSize.value))
   }
+  const load = async () => {
+    const [g, t] = await Promise.all([
+      groupList({ page: 1, page_size: 999 }).catch(() => false),
+      devicesTree().catch(() => false),
+    ])
+    if (g) groups.value = g.data.list || []
+    if (t) {
+      // o servidor pode devolver vazio ou sem algum campo: a árvore sempre tem a forma esperada
+      const d = t.data || {}
+      tree.value = { nodes: Array.isArray(d.nodes) ? d.nodes : [], no_client: Number(d.no_client) || 0, all: Number(d.all) || 0, online: Number(d.online) || 0 }
+    }
+    normalizeClientFilter()
+    await fetchPage()
+  }
+  // qualquer mudança de filtro ou de página busca de novo (com um pequeno atraso para a digitação)
+  let timer = null
+  const schedule = () => { clearTimeout(timer); timer = setTimeout(fetchPage, 250) }
   onMounted(load)
   onActivated(load)
   const groupName = id => (id && groups.value.find(g => g.id === id)?.name) || ''
@@ -369,7 +417,11 @@
   const clientChoices = computed(() => clientOptions(groups.value))
   // o convite já nasce no cliente (ou subgrupo) que a lista está filtrando
   const inviteClient = computed(() => (typeof subFilter.value === 'number' ? subFilter.value : (typeof clientFilter.value === 'number' && clientFilter.value > 0 ? clientFilter.value : null)))
-  const subChoices = computed(() => subOptions(groups.value, clientFilter.value, groupName, all.value))
+  // contagem de cada subgrupo vem da árvore do servidor
+  const subChoices = computed(() => {
+    const by = new Map(tree.value.nodes.map(n => [n.group_id, n.total]))
+    return subOptions(groups.value, clientFilter.value, groupName, []).map(s => ({ ...s, count: by.get(s.value) || 0 }))
+  })
 
   const qa = useQuickAccess()
   const toggleFav = (row) => {
@@ -378,7 +430,6 @@
   }
 
   const isOnline = row => row.last_online_time && (Date.now() / 1000 - row.last_online_time) < 60
-  const onlineCount = computed(() => all.value.filter(isOnline).length)
 
   // ---------- filtros ----------
   const q = ref('')
@@ -401,27 +452,17 @@
   const effSort = computed(() => (groupByClient.value ? 'client' : sortMode.value))
   try { const v = localStorage.getItem(SORT_KEY); if (sortOptions.some(o => o.value === v)) sortMode.value = v } catch (e) { /* preferência opcional */ }
   watch(sortMode, v => { try { localStorage.setItem(SORT_KEY, v) } catch (e) { /* preferência opcional */ } })
-  const byText = (a, b) => String(a || '').localeCompare(String(b || ''), 'pt-BR', { sensitivity: 'base' })
-  const norm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
-  const filtered = computed(() => {
-    const term = norm(q.value.trim())
-    return all.value.filter(r => {
-      if (!matchesClient(r.group_id || 0, clientFilter.value, groupName)) return false
-      if (!matchesSub(r.group_id || 0, subFilter.value, groupName)) return false
-      if (statusFilter.value === 'online' && !isOnline(r)) return false
-      if (statusFilter.value === 'offline' && isOnline(r)) return false
-      if (statusFilter.value === 'fav' && !qa.isFavorite(r.id)) return false
-      if (!term) return true
-      return [r.id, r.alias, r.hostname, r.username, r.last_online_ip, groupName(r.group_id)].some(v => norm(v).includes(term))
-    }).sort((a, b) => {
-      const recent = (b.last_online_time || 0) - (a.last_online_time || 0)
-      const name = x => x.alias || x.hostname || x.id
-      if (effSort.value === 'client') return byText(groupName(a.group_id) || '\uffff', groupName(b.group_id) || '\uffff') || byText(name(a), name(b))
-      if (effSort.value === 'name') return byText(name(a), name(b))
-      if (effSort.value === 'online') return Number(!!isOnline(b)) - Number(!!isOnline(a)) || recent || byText(name(a), name(b))
-      return recent
-    })
-  })
+  // a árvore fica aberta em telas largas; a escolha da pessoa é lembrada neste navegador
+  const TREE_KEY = 'nx-devices-tree'
+  const treeOpen = ref((() => {
+    try { const v = localStorage.getItem(TREE_KEY); if (v === '0' || v === '1') return v === '1' } catch (e) { /* sem armazenamento */ }
+    return window.innerWidth >= 1500
+  })())
+  const toggleTree = () => {
+    treeOpen.value = !treeOpen.value
+    try { localStorage.setItem(TREE_KEY, treeOpen.value ? '1' : '0') } catch (e) { /* sem armazenamento */ }
+  }
+  const onTreeSelect = ({ client, sub }) => { clientFilter.value = client; subFilter.value = sub; page.value = 1 }
   const clearFilters = () => { q.value = ''; clientFilter.value = null; subFilter.value = null; statusFilter.value = null }
   const onClientChange = () => { subFilter.value = null; page.value = 1 }
   // ?client=<id> pode ser o id de um subgrupo (links antigos): vira cliente + subgrupo assim que os grupos carregam
@@ -441,7 +482,9 @@
 
   const page = ref(1)
   const pageSize = ref(20)
-  const pageRows = computed(() => filtered.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value))
+  const pageRows = rows
+  watch([q, clientFilter, subFilter, statusFilter, effSort], () => { page.value = 1; schedule() })
+  watch([page, pageSize], schedule)
   // cada seção é uma tabela: a seleção de todas vira uma lista só
   const tblKey = ref(0)
   const selMap = reactive({})
@@ -460,8 +503,9 @@
       map.get(name).push(r)
     }
     return order.map((name, i) => {
-      const all = filtered.value.filter(r => (partsOf(r.group_id).client || 'Sem cliente') === name)
-      return { key: name, title: name, rows: map.get(name), first: i === 0, total: all.length, online: all.filter(isOnline).length }
+      // contagem do cliente inteiro, vinda da árvore do servidor (a página só tem uma parte)
+      const node = tree.value.nodes.find(n => !n.parent_id && n.name === name)
+      return { key: name, title: name, rows: map.get(name), first: i === 0, total: node ? node.total : tree.value.no_client, online: node ? node.online : undefined }
     })
   })
 
@@ -549,18 +593,60 @@
     ]
   })
 
+  // regras que valem para a máquina aberta na ficha (senha e política do app), com a origem de cada uma
+  const eff = reactive({ loading: false, data: null })
+  const effLoading = computed(() => eff.loading)
+  watch(() => [details.visible, details.row && details.row.id], async ([vis, id]) => {
+    eff.data = null
+    if (!vis || !id) return
+    eff.loading = true
+    const r = await policyEffective(id).catch(() => false)
+    eff.loading = false
+    if (r && details.row && details.row.id === id) eff.data = r.data
+  })
+  const effLines = computed(() => {
+    const d = eff.data
+    if (!d) return []
+    const s = d.secret || {}
+    const a = d.app || {}
+    const secretText = s.origin === 'none' ? 'Sem regra: a senha não troca sozinha.'
+      : `${s.enabled ? 'Troca a cada ' + everyText(s.interval_minutes) : 'Troca desligada'} (${originText(s.origin, s.origin_name, s.origin_group_id, d.group_id)})${s.auto_approve ? ', aprova sozinho' : ''}.`
+    const n = Object.values(a.options || {}).filter(Boolean).length
+    const appText = a.enabled ? `${n} ${n === 1 ? 'ajuste' : 'ajustes'} (${originText(a.origin && a.origin.origin, a.origin && a.origin.origin_name, a.origin && a.origin.origin_group_id, d.group_id)}).`
+      : 'Sem regra: o app fica como está.'
+    return [{ label: 'Senha', text: secretText }, { label: 'App', text: appText }]
+  })
+
+  const payloadOf = (r, group_id) => ({ ...Object.fromEntries(Object.keys(empty()).map(k => [k, r[k] ?? empty()[k]])), row_id: r.row_id, group_id })
+
+  // adicionar ou alterar o cliente de uma máquina (e o subgrupo) sem abrir a edição inteira
+  const clientDlg = reactive({ visible: false, saving: false, row: null, name: '', group_id: 0 })
+  const openClientDlg = (row) => {
+    Object.assign(clientDlg, { visible: true, saving: false, row, name: row.alias || row.hostname || row.id, group_id: row.group_id || 0 })
+  }
+  const saveClientDlg = async () => {
+    clientDlg.saving = true
+    const res = await update(payloadOf(clientDlg.row, clientDlg.group_id)).catch(() => false)
+    clientDlg.saving = false
+    if (!res) return
+    ok('Cliente atualizado.')
+    clientDlg.visible = false
+    if (details.row && details.row.row_id === clientDlg.row.row_id) details.visible = false
+    load()
+  }
+
   // mover vários para um cliente
   const batchMove = reactive({ visible: false, saving: false, group_id: null })
   const openBatchMove = () => { batchMove.group_id = null; batchMove.visible = true }
   const saveBatchMove = async () => {
     if (batchMove.group_id === null) return ElMessage.warning('Escolha o cliente.')
     batchMove.saving = true
-    const results = await Promise.all(selected.value.map(r => update({
-      ...Object.fromEntries(Object.keys(empty()).map(k => [k, r[k] ?? empty()[k]])), row_id: r.row_id, group_id: batchMove.group_id,
-    }).catch(() => false)))
+    const n = selected.value.length
+    const res = await devicesMove({ row_ids: selected.value.map(r => r.row_id), group_id: batchMove.group_id }).catch(() => false)
     batchMove.saving = false
-    const done = results.filter(Boolean).length
-    ElMessage[done === results.length ? 'success' : 'warning'](`${done} de ${results.length} dispositivo(s) movido(s).`)
+    if (!res) return // o servidor não mexeu em nenhuma máquina (tudo ou nada)
+    const { moved = 0, skipped = 0 } = res.data || {}
+    ok(`${moved} de ${n} dispositivo(s) movido(s)${skipped ? `; ${skipped} já estava(m) lá` : ''}.`)
     batchMove.visible = false
     selected.value = []
     load()
@@ -588,8 +674,15 @@
   }
 
   // exportar / importar
-  const exportCsv = () => {
-    const rows = filtered.value.map(r => ({
+  const exportCsv = async () => {
+    // baixa todas as páginas do filtro atual (200 por vez); acima de EXPORT_MAX recusa e pede para filtrar, sem cortar em silêncio
+    const got = await collectAllPages(pg => devicesList(deviceQueryParams({ page: pg, pageSize: PAGE_MAX, q: q.value, client: clientFilter.value,
+      sub: subFilter.value, status: statusFilter.value, sort: effSort.value, favorites: qa.state.favorites })))
+    if (!got.ok) {
+      if (got.reason === 'too_many') return ElMessage.warning(`São ${got.total} dispositivos no filtro atual e o limite da exportação é ${EXPORT_MAX}. Filtre por cliente e exporte de novo.`)
+      return ElMessage.error(got.reason === 'incomplete' ? 'A lista veio incompleta; nada foi exportado. Tente de novo.' : 'Não foi possível exportar.')
+    }
+    const rows = got.rows.map(r => ({
       id: r.id, alias: r.alias, hostname: r.hostname, username: r.username, group_id: r.group_id,
       cliente: groupName(r.group_id), os: r.os, version: r.version, cpu: r.cpu, memory: r.memory, uuid: r.uuid,
       last_online_ip: r.last_online_ip,
@@ -651,6 +744,11 @@
     &.is-off { background: #9A97AD; }
   }
 
+  .nx-layout { display: flex; gap: 16px; align-items: flex-start; }
+  .nx-side { flex: 0 0 220px; position: sticky; top: 12px; }
+  .nx-side.is-closed { flex-basis: 40px; }
+  .nx-content { flex: 1; min-width: 0; }
+  @media (max-width: 1100px) { .nx-side { display: none; } }
   .nx-card { background: var(--nx-surface); border-radius: var(--nx-radius-card); box-shadow: var(--nx-shadow-card); overflow: hidden; }
   .nx-id { font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace; font-size: 13px; white-space: nowrap; }
   :deep(td .cell:has(.nx-id)) { white-space: nowrap; }
@@ -683,6 +781,9 @@
   .nx-danger { color: #BA1A1A; }
   .nx-pager { padding: 12px 18px; border-top: 1px solid var(--nx-divider); display: flex; justify-content: flex-end; }
 
+  .nx-rules-title { margin: 18px 0 6px; font-size: 14px; color: var(--nx-text); }
+  .nx-rules-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px;
+    li { display: flex; gap: 10px; font-size: 13px; strong { flex: 0 0 56px; color: var(--nx-text-muted); } span { min-width: 0; overflow-wrap: anywhere; } } }
   .nx-form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 16px; }
   .nx-form :deep(.el-select) { width: 100%; }
   .nx-tech { margin-top: 4px; border-top: 1px solid var(--nx-divider); border-bottom: none;
