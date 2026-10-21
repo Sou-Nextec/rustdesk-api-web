@@ -116,6 +116,7 @@ Em ordem (detalhes em `nextec/PENDENCIAS.md`):
 | --- | --- |
 | Visão do painel e o que é nosso por arquivo | `README.nextec.md` |
 | Pendências e ideias | `nextec/PENDENCIAS.md` |
+| Projeto Sentinela (PAM e RMM): visão, roadmap, arquitetura e princípios | Repositório `Sou-Nextec/Projeto-Sentinela` |
 | Novidades por versão | `CHANGELOG.md` |
 | Patches da API (0001 a 0018) | `nextec/backend/LEIAME.md` |
 | Correções locais de autorização e identidade (0019) | `nextec/backend/0019-LEIAME.md` |

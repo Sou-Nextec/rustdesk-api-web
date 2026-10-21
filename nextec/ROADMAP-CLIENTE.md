@@ -36,6 +36,8 @@ Executar [plano de estabilização](../docs/superpowers/plans/2026-10-11-estabil
 
 ## P3 — PAM, identidade e continuidade
 
+> Substituído em 17/10/2026 por `docs/ROADMAP.md` do repositório `Sou-Nextec/Projeto-Sentinela`. Itens mantidos aqui só como histórico.
+
 - [ ] Avaliar PAM existente para cofre, rotação, credenciais temporárias e acesso individual ao sistema operacional.
 - [ ] Integrar PAM à identidade IAM/Entra e às permissões do painel; privilégios mínimos e elevação auditável.
 - [ ] Escolher mecanismo de acesso Linux: certificados SSH temporários, intermediação de sessão ou cofre conforme PAM selecionado; não compartilhar root por padrão.
