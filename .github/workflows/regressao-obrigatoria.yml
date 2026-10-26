@@ -12,6 +12,12 @@ jobs:
   regressao:
     runs-on: ubuntu-latest
     steps:
+      # os testes Go deste repositório vivem dentro de nextec/backend/*.patch: sem checkout esses arquivos não existem
+      # no runner e um PR com o teste no patch seria recusado. O job só lê arquivos, nada do PR é executado.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
       - name: Correção traz teste de regressão
         env:
           GH_TOKEN: ${{ github.token }}
