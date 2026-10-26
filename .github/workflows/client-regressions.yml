@@ -69,7 +69,7 @@ jobs:
       - name: Validar coordenador e tarefas de gerenciamento
         shell: powershell
         run: |
-          foreach ($test in @('test_coordinator.ps1', 'test_agent_task_registration.ps1', 'test_updater_identity.ps1', 'test_agent_http.ps1', 'test_remove_tasks.ps1', 'test_agent_auth_recovery.ps1', 'test_agent_401_integration.ps1', 'test_self_enroll.ps1', 'test_convite.ps1', 'test_painel_configuravel.ps1', 'test_invocar_rustdesk.ps1', 'test_latencia_troca.ps1', 'test_reinstalar_agente.ps1', 'test_app_name.ps1', 'test_client_settings_locked.ps1')) {
+          foreach ($test in @('test_coordinator.ps1', 'test_agent_task_registration.ps1', 'test_updater_identity.ps1', 'test_agent_http.ps1', 'test_remove_tasks.ps1', 'test_agent_auth_recovery.ps1', 'test_agent_401_integration.ps1', 'test_self_enroll.ps1', 'test_convite.ps1', 'test_convite_origem.ps1', 'test_convite_resultado.ps1', 'test_idioma.ps1', 'test_log_codigos.ps1', 'test_painel_configuravel.ps1', 'test_invocar_rustdesk.ps1', 'test_latencia_troca.ps1', 'test_reinstalar_agente.ps1', 'test_app_name.ps1', 'test_client_settings_locked.ps1')) {
             powershell.exe -NoProfile -ExecutionPolicy Bypass -File "nextec/atualizacao/$test"
             if ($LASTEXITCODE -ne 0) { throw "Management regression failed: $test" }
           }
