@@ -100,6 +100,12 @@ Em Minha área > Clientes liberados, o técnico vê os dispositivos dos clientes
 
 Um subgrupo é um grupo de dispositivos com o nome `Cliente / Subgrupo` (ex.: `Nextec / Servidores`), criado em Permissões por cliente > Mais ações > Novo subgrupo. Cada subgrupo tem a própria lista e o próprio acesso; quem acessa o cliente não vê o subgrupo, a menos que esteja liberado nele também. Em Dispositivos, filtrar pelo cliente mostra também os subgrupos.
 
+## Bug corrigido = teste de regressão (obrigatório)
+
+Todo bug corrigido leva, no mesmo PR, um teste automatizado que roda no CI, **falha no código antigo e passa no corrigido** e cobre a causa raiz. Quando a causa é um contrato entre o painel e o gerador (scripts do agente, nome ou formato de arquivo, rotas), o teste fica nos dois lados. O workflow `Teste de regressão obrigatório` recusa PR com `fix` no título ou na branch sem arquivo de teste alterado; exceção só com o rótulo `sem-teste-regressao` e justificativa no corpo. Padrão completo: `nextec-padroes-projetos-md/docs/standards/07-QUALIDADE-E-TESTES.md`.
+
+Exemplo: convite que não vinculava o cliente (rdgen#61): `rdgen/.github/scripts/test-convite-agente.ps1` e `rustdesk-api-web/nextec/testes/convite-download-contrato.test.mjs`.
+
 ## Desenvolvimento
 
 Requer Node 20 ou superior.

@@ -35,7 +35,8 @@ try {
     New-Item -ItemType Directory -Path $root -Force | Out-Null
     $paths = Get-NextecProvisionPaths -Root $root
     Save-NextecAgentTokenConfig -Path $paths.AgentConfig -Panel $script:NextecPainelFixo -Id '123456789' -Token ('A' * 43)
-    ([pscustomobject]@{ codigo = $code; criado_utc = $created.ToString('o') } | ConvertTo-Json -Compress) | Set-Content -LiteralPath $paths.Invite -Encoding UTF8
+    # como administrador a leitura confere a ACL de verdade: o convite precisa nascer protegido como o coordenador o grava
+    Write-NextecProtectedJson -Path $paths.Invite -Value ([pscustomobject]@{ codigo = $code; criado_utc = $created.ToString('o') })
     $root
   }
   function Log-Of($root) { $l = (Get-NextecProvisionPaths -Root $root).Log; if (Test-Path -LiteralPath $l) { Get-Content -LiteralPath $l -Raw } else { '' } }
@@ -69,6 +70,19 @@ try {
   $res = Get-Content -LiteralPath $paths.InviteResult -Raw | ConvertFrom-Json
   Assert ($res.estado -eq 'recusado' -and $res.http -eq 403) 'resultado do convite recusado'
   Assert ((Log-Of $root) -match 'invite_rejected') 'log invite_rejected'
+  Assert ($res.codigo -ceq $code) 'resultado guarda o codigo do convite'
+  # convite novo (outro MSI) dentro das 6 h: a espera do convite anterior nao vale para ele
+  $novo = 'Q8R3T5V7W9X2Y4Z6A3B5'
+  Write-NextecProtectedJson -Path $paths.Invite -Value ([pscustomobject]@{ codigo = $novo; criado_utc = $now.ToString('o') })
+  $calls.status = 200; $calls.n = 0
+  Assert ((Invoke-NextecInviteClaim -Root $root -PostInvite $post -Now $now.AddHours(1)) -eq 'claimed') 'convite novo tenta na hora'
+  Assert ($calls.n -eq 1) 'convite novo chamou o painel'
+  # resultado sem codigo (agente antigo) nao segura o convite atual
+  $root = New-Root $now; $paths = Get-NextecProvisionPaths -Root $root
+  Write-NextecProtectedJson -Path $paths.InviteResult -Value ([pscustomobject]@{ estado = 'recusado'; http = 403; em_utc = $now.ToString('o'); proxima_utc_ticks = $now.AddHours(6).Ticks })
+  $calls.n = 0
+  Assert ((Invoke-NextecInviteClaim -Root $root -PostInvite $post -Now $now.AddHours(1)) -eq 'claimed') 'resultado sem codigo nao bloqueia'
+  Assert ($calls.n -eq 1) 'chamou o painel'
 
   # erro temporario: tenta de novo no proximo ciclo, sem resultado gravado
   $root = New-Root $now; $paths = Get-NextecProvisionPaths -Root $root

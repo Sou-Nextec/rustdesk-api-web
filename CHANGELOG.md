@@ -2,6 +2,13 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.12.6
+
+Convites de instalação: a máquina volta a entrar no cliente escolhido.
+
+- **Causa:** desde a 2.12 o MSI do convite sai com nome fixo e o código vai na marca de origem do arquivo, mas o gerador ainda empacotava o agente antigo, que só lia o código no nome. Toda máquina instalada por convite entrava como Pendente.
+- **Correção:** o gerador 2.4.1 traz o agente atual. Gere o MSI de novo, publique em Atualizações e crie convites novos. O aviso da tela de convite passa a pedir o gerador 2.4.1 ou mais novo.
+
 ## 2.12.5
 
 Login: entra sozinho pela Microsoft, sem clicar de novo.
