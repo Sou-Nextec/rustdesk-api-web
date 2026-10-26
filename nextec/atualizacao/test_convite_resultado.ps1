@@ -69,6 +69,19 @@ try {
   $res = Get-Content -LiteralPath $paths.InviteResult -Raw | ConvertFrom-Json
   Assert ($res.estado -eq 'recusado' -and $res.http -eq 403) 'resultado do convite recusado'
   Assert ((Log-Of $root) -match 'invite_rejected') 'log invite_rejected'
+  Assert ($res.codigo -ceq $code) 'resultado guarda o codigo do convite'
+  # convite novo (outro MSI) dentro das 6 h: a espera do convite anterior nao vale para ele
+  $novo = 'Q8R3T5V7W9X2Y4Z6A3B5'
+  ([pscustomobject]@{ codigo = $novo; criado_utc = $now.ToString('o') } | ConvertTo-Json -Compress) | Set-Content -LiteralPath $paths.Invite -Encoding UTF8
+  $calls.status = 200; $calls.n = 0
+  Assert ((Invoke-NextecInviteClaim -Root $root -PostInvite $post -Now $now.AddHours(1)) -eq 'claimed') 'convite novo tenta na hora'
+  Assert ($calls.n -eq 1) 'convite novo chamou o painel'
+  # resultado sem codigo (agente antigo) nao segura o convite atual
+  $root = New-Root $now; $paths = Get-NextecProvisionPaths -Root $root
+  Write-NextecProtectedJson -Path $paths.InviteResult -Value ([pscustomobject]@{ estado = 'recusado'; http = 403; em_utc = $now.ToString('o'); proxima_utc_ticks = $now.AddHours(6).Ticks })
+  $calls.n = 0
+  Assert ((Invoke-NextecInviteClaim -Root $root -PostInvite $post -Now $now.AddHours(1)) -eq 'claimed') 'resultado sem codigo nao bloqueia'
+  Assert ($calls.n -eq 1) 'chamou o painel'
 
   # erro temporario: tenta de novo no proximo ciclo, sem resultado gravado
   $root = New-Root $now; $paths = Get-NextecProvisionPaths -Root $root
