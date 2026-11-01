@@ -471,3 +471,13 @@ Duas correções de revisão em `NextecEnrollAssign` (aplica depois do 0052).
 
 - **P1, "sem senha automática" em subgrupo.** A máquina que já está num subgrupo do cliente pedido fica onde está; a exceção desligada agora é decidida pela regra efetiva desse subgrupo (cadeia subgrupo > cliente > global, sem a regra própria da máquina), e não só pela do cliente pedido. O "Já tinha essa regra" e o resultado final também usam esse escopo. Testes: `TestAssignNoneUsesEffectiveRuleOfMachineSubgroup` (regra só no subgrupo e regra só no cliente).
 - **P2, aprovação não sobrepõe a herança.** "Seguir a regra do cliente" vale quando existe regra efetiva ligada herdada (cliente, ancestral, subgrupo ou global): nada é criado. Só sem nenhuma regra, e com `enable_group_rule`, a atribuição cria a regra do cliente (180 min por padrão). Teste: `TestAssignGroupFollowsInheritedRuleAndCreatesOnlyWhenNone` (global, cliente-pai, nenhuma).
+
+## Patch 0054: aba Grupo do cliente RustDesk respeita o acesso por equipe e pessoa
+
+Correção (aplica depois do 0053). No upstream, quem não é admin via na aba Grupo só as máquinas do próprio usuário, e `GET /api/device-group/accessible` respondia "Permission denied". O acesso dado na tela de Acesso (cliente ou máquina avulsa, para a pessoa ou para a equipe dela) só aparecia no Livro de endereços.
+
+- `GET /api/peers` passa por `NextecGroupTabPeers`: as máquinas que o upstream já mostrava (próprio usuário, ou equipe do tipo compartilhada) mais as das listas com regra de leitura para a pessoa ou a equipe dela (`rule > 0`). Equipe 0 (sem equipe) não herda nada. Paginação e total contam o conjunto todo.
+- Só valem listas "Cliente: X" e "Máquina: ..." de dono administrador (as da tela de Acesso). Lista pessoal de usuário comum com o ID de uma máquina alheia, mesmo compartilhada com a equipe, não libera os dados reais da máquina (revisão do PR #132).
+- `GET /api/device-group/accessible` para quem não é admin devolve só os grupos dessas máquinas (`NextecGroupTabDeviceGroups`). Admin continua recebendo todos.
+- Tirar a regra tira as máquinas da aba na consulta seguinte.
+- Teste: `service/nextec_group_tab_test.go` (`TestGroupTabShowsPeersGrantedToTeamAndPerson`), que falha com o filtro antigo só por `user_id`.

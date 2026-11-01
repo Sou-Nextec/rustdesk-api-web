@@ -1,0 +1,271 @@
+diff --git a/http/controller/api/group.go b/http/controller/api/group.go
+index a037f43..28556c7 100644
+--- a/http/controller/api/group.go
++++ b/http/controller/api/group.go
+@@ -79,27 +79,14 @@ func (g *Group) Peers(c *gin.Context) {
+ 		response.Error(c, err.Error())
+ 		return
+ 	}
+-	gr := service.AllService.GroupService.InfoById(u.GroupId)
+-	users := make([]*model.User, 0, 1)
+-	if !*u.IsAdmin && gr.Type != model.GroupTypeShare {
+-		//仅能获取到自己
+-		users = append(users, u)
+-	} else {
+-		users = service.AllService.UserService.ListIdAndNameByGroupId(u.GroupId)
+-	}
+-
+-	namesById := make(map[uint]string, len(users))
+-	userIds := make([]uint, 0, len(users))
+-	for _, user := range users {
+-		namesById[user.Id] = user.Username
+-		userIds = append(userIds, user.Id)
+-	}
++	namesById, userIds := groupTabUsers(u)
+ 	dGroupNameById := make(map[uint]string)
+ 	allGroup := service.AllService.GroupService.DeviceGroupList(1, 999, nil)
+ 	for _, group := range allGroup.DeviceGroups {
+ 		dGroupNameById[group.Id] = group.Name
+ 	}
+-	peerList := service.AllService.PeerService.ListByUserIds(userIds, q.Page, q.PageSize)
++	// Nextec: inclui as máquinas dos clientes e das máquinas avulsas liberadas para a pessoa ou a equipe dela
++	peerList := service.NextecGroupTabPeers(u, userIds, q.Page, q.PageSize)
+ 	data := make([]*apiResp.GroupPeerPayload, 0, len(peerList.Peers))
+ 	for _, peer := range peerList.Peers {
+ 		uname, ok := namesById[peer.UserId]
+@@ -138,7 +125,12 @@ func (g *Group) Peers(c *gin.Context) {
+ func (g *Group) Device(c *gin.Context) {
+ 	u := service.AllService.UserService.CurUser(c)
+ 	if !service.AllService.UserService.IsAdmin(u) {
+-		response.Error(c, "Permission denied")
++		// Nextec: quem não é admin recebe os grupos das máquinas que vê, em vez de "Permission denied"
++		_, userIds := groupTabUsers(u)
++		c.JSON(http.StatusOK, response.DataResponse{
++			Total: 0,
++			Data:  service.NextecGroupTabDeviceGroups(u, userIds),
++		})
+ 		return
+ 	}
+ 	allGroup := service.AllService.GroupService.DeviceGroupList(1, 999, nil)
+@@ -148,3 +140,22 @@ func (g *Group) Device(c *gin.Context) {
+ 		Data:  allGroup.DeviceGroups,
+ 	})
+ }
++
++// groupTabUsers devolve os usuários cujas máquinas a aba Grupo mostra (regra do upstream).
++func groupTabUsers(u *model.User) (map[uint]string, []uint) {
++	gr := service.AllService.GroupService.InfoById(u.GroupId)
++	users := make([]*model.User, 0, 1)
++	if !*u.IsAdmin && gr.Type != model.GroupTypeShare {
++		//仅能获取到自己
++		users = append(users, u)
++	} else {
++		users = service.AllService.UserService.ListIdAndNameByGroupId(u.GroupId)
++	}
++	namesById := make(map[uint]string, len(users))
++	userIds := make([]uint, 0, len(users))
++	for _, user := range users {
++		namesById[user.Id] = user.Username
++		userIds = append(userIds, user.Id)
++	}
++	return namesById, userIds
++}
+diff --git a/service/nextec_group_tab.go b/service/nextec_group_tab.go
+new file mode 100644
+index 0000000..3bbd93a
+--- /dev/null
++++ b/service/nextec_group_tab.go
+@@ -0,0 +1,66 @@
++package service
++
++import (
++	"github.com/lejianwen/rustdesk-api/v2/model"
++	"gorm.io/gorm"
++)
++
++// Aba Grupo do cliente RustDesk (/api/peers e /api/device-group/accessible). O upstream só mostra a quem não é admin
++// as máquinas do próprio usuário. Aqui entram também as máquinas das listas que a pessoa pode ver pela regra dela ou da
++// equipe dela: o acesso por cliente ("Cliente: X") e por máquina avulsa ("Máquina: ...") dado na tela de Acesso.
++
++// nextecReadableCollectionIDs devolve as listas que a pessoa pode ver por regra dela ou da equipe. Só valem as listas
++// "Cliente: X" e "Máquina: ..." de dono administrador: um usuário comum pode criar a própria lista com o ID de qualquer
++// máquina e compartilhá-la, e isso não pode virar acesso aos dados reais da máquina.
++func nextecReadableCollectionIDs(u *model.User) []uint {
++	admins := nextecAdminIDs(DB)
++	if len(admins) == 0 {
++		return nil
++	}
++	var rules []model.AddressBookCollectionRule
++	DB.Where("rule > 0 AND ((type = ? AND to_id = ?) OR (type = ? AND to_id = ? AND to_id <> 0))",
++		model.ShareAddressBookRuleTypePersonal, u.Id, model.ShareAddressBookRuleTypeGroup, u.GroupId).Find(&rules)
++	cand := make([]uint, 0, len(rules))
++	for _, r := range rules {
++		cand = append(cand, r.CollectionId)
++	}
++	if len(cand) == 0 {
++		return nil
++	}
++	var ids []uint
++	DB.Model(&model.AddressBookCollection{}).
++		Where("id IN ? AND user_id IN ? AND (name LIKE ? OR name LIKE ?)", uniqueUint(cand), admins, NextecClientListPrefix+"%", NextecMachineListPrefix+"%").
++		Pluck("id", &ids)
++	return ids
++}
++
++// nextecGroupTabScope filtra as máquinas visíveis: as dos usuários que o upstream já mostra e as das listas liberadas.
++func nextecGroupTabScope(u *model.User, userIds []uint) func(tx *gorm.DB) *gorm.DB {
++	cols := nextecReadableCollectionIDs(u)
++	return func(tx *gorm.DB) *gorm.DB {
++		if len(cols) == 0 {
++			return tx.Where("user_id IN ?", userIds)
++		}
++		shared := DB.Model(&model.AddressBook{}).Select("id").Where("collection_id IN ?", cols)
++		return tx.Where("user_id IN ? OR id IN (?)", userIds, shared)
++	}
++}
++
++// NextecGroupTabPeers lista as máquinas da aba Grupo, paginadas como o ListByUserIds do upstream.
++func NextecGroupTabPeers(u *model.User, userIds []uint, page, pageSize uint) *model.PeerList {
++	res := &model.PeerList{}
++	res.Page = int64(page)
++	res.PageSize = int64(pageSize)
++	tx := DB.Model(&model.Peer{}).Scopes(nextecGroupTabScope(u, userIds))
++	tx.Count(&res.Total)
++	tx.Scopes(Paginate(page, pageSize)).Order("row_id").Find(&res.Peers)
++	return res
++}
++
++// NextecGroupTabDeviceGroups devolve a quem não é admin só os grupos das máquinas que ele vê (antes era "Permission denied").
++func NextecGroupTabDeviceGroups(u *model.User, userIds []uint) []*model.DeviceGroup {
++	var groups []*model.DeviceGroup
++	ids := DB.Model(&model.Peer{}).Select("group_id").Scopes(nextecGroupTabScope(u, userIds))
++	DB.Where("id IN (?)", ids).Order("name").Find(&groups)
++	return groups
++}
+diff --git a/service/nextec_group_tab_test.go b/service/nextec_group_tab_test.go
+new file mode 100644
+index 0000000..341964c
+--- /dev/null
++++ b/service/nextec_group_tab_test.go
+@@ -0,0 +1,121 @@
++package service
++
++import (
++	"sort"
++	"testing"
++
++	"github.com/lejianwen/rustdesk-api/v2/model"
++)
++
++// Regressão: a aba Grupo do cliente RustDesk ignorava o acesso por equipe. Quem não é admin só via as máquinas
++// do próprio usuário e o /device-group/accessible respondia "Permission denied".
++
++func peerIDs(l *model.PeerList) []string {
++	out := []string{}
++	for _, p := range l.Peers {
++		out = append(out, p.Id)
++	}
++	sort.Strings(out)
++	return out
++}
++
++func groupIDs(gs []*model.DeviceGroup) []uint {
++	out := []uint{}
++	for _, g := range gs {
++		out = append(out, g.Id)
++	}
++	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
++	return out
++}
++
++func TestGroupTabShowsPeersGrantedToTeamAndPerson(t *testing.T) {
++	db, _ := devicesSetup(t)
++	db.Where("1 = 1").Delete(&model.Peer{})
++	admin := &model.User{}
++	db.First(admin, 1)
++	no := false
++	team := &model.Group{Name: "Suporte N1", Type: 1}
++	db.Create(team)
++	other := &model.Group{Name: "Suporte N2", Type: 1}
++	db.Create(other)
++	ana := &model.User{Username: "ana", GroupId: team.Id, IsAdmin: &no}
++	bia := &model.User{Username: "bia", GroupId: other.Id, IsAdmin: &no}
++	db.Create(ana)
++	db.Create(bia)
++	addPeer(t, db, "5001", "Servidor matriz", 7, true)
++	addPeer(t, db, "5002", "Servidor filial", 9, true)
++	addPeer(t, db, "5003", "Servidor cliente B", 8, true)
++	own := addPeer(t, db, "5004", "Notebook da Ana", 0, true)
++	db.Model(own).Update("user_id", ana.Id)
++
++	// sem nenhuma regra: só a máquina da própria Ana (comportamento do upstream continua)
++	if got := peerIDs(NextecGroupTabPeers(ana, []uint{ana.Id}, 1, 100)); len(got) != 1 || got[0] != "5004" {
++		t.Fatalf("sem regra a Ana vê só a máquina dela: %v", got)
++	}
++
++	// a equipe da Ana ganha o cliente A (com o subgrupo Filial); a Bia ganha só a máquina do cliente B
++	r, err := NextecAccessGrant(admin, "x", &NextecAccessGrantReq{TargetType: 2, TargetID: team.Id, Scope: "client", GroupID: 7, Rule: 1})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if _, err := NextecReconcileClientList(admin, "x", r.CollectionID); err != nil {
++		t.Fatal(err)
++	}
++	if _, err := NextecAccessGrant(admin, "x", &NextecAccessGrantReq{TargetType: 1, TargetID: bia.Id, Scope: "machine", PeerID: "5003", Rule: 1}); err != nil {
++		t.Fatal(err)
++	}
++
++	pa := NextecGroupTabPeers(ana, []uint{ana.Id}, 1, 100)
++	if got := peerIDs(pa); len(got) != 3 || got[0] != "5001" || got[1] != "5002" || got[2] != "5004" || pa.Total != 3 {
++		t.Fatalf("a Ana vê o cliente A pela equipe e a máquina dela: %v total %d", got, pa.Total)
++	}
++	if got := peerIDs(NextecGroupTabPeers(bia, []uint{bia.Id}, 1, 100)); len(got) != 1 || got[0] != "5003" {
++		t.Fatalf("a Bia vê só a máquina avulsa liberada: %v", got)
++	}
++	if got := groupIDs(NextecGroupTabDeviceGroups(ana, []uint{ana.Id})); len(got) != 2 || got[0] != 7 || got[1] != 9 {
++		t.Fatalf("grupos visíveis da Ana: %v", got)
++	}
++	if got := groupIDs(NextecGroupTabDeviceGroups(bia, []uint{bia.Id})); len(got) != 1 || got[0] != 8 {
++		t.Fatalf("grupos visíveis da Bia: %v", got)
++	}
++
++	// paginação conta o total certo
++	if p := NextecGroupTabPeers(ana, []uint{ana.Id}, 1, 2); len(p.Peers) != 2 || p.Total != 3 {
++		t.Fatalf("página 1 de 2: %d itens, total %d", len(p.Peers), p.Total)
++	}
++
++	// tirar o acesso da equipe some com o cliente A da aba
++	if _, err := NextecAccessGrant(admin, "x", &NextecAccessGrantReq{TargetType: 2, TargetID: team.Id, Scope: "client", GroupID: 7, Remove: true}); err != nil {
++		t.Fatal(err)
++	}
++	if got := peerIDs(NextecGroupTabPeers(ana, []uint{ana.Id}, 1, 100)); len(got) != 1 || got[0] != "5004" {
++		t.Fatalf("sem a regra da equipe a Ana volta a ver só a máquina dela: %v", got)
++	}
++
++	// revisão do PR #132: lista pessoal de um usuário comum, com o ID de uma máquina alheia, compartilhada com a
++	// equipe dele ou com outra pessoa, não pode liberar os dados reais da máquina (nem com o nome no padrão Nextec)
++	for _, name := range []string{"Minha lista", "Cliente: Cliente B", "Máquina: x (5003)"} {
++		col := &model.AddressBookCollection{UserId: ana.Id, Name: name}
++		db.Create(col)
++		db.Create(&model.AddressBook{Id: "5003", Hostname: "invented", UserId: ana.Id, CollectionId: col.Id})
++		db.Create(&model.AddressBookCollectionRule{UserId: ana.Id, CollectionId: col.Id, Rule: 1, Type: 2, ToId: team.Id})
++		db.Create(&model.AddressBookCollectionRule{UserId: ana.Id, CollectionId: col.Id, Rule: 1, Type: 1, ToId: bia.Id})
++	}
++	if got := peerIDs(NextecGroupTabPeers(ana, []uint{ana.Id}, 1, 100)); len(got) != 1 || got[0] != "5004" {
++		t.Fatalf("lista pessoal não libera máquina alheia: %v", got)
++	}
++	if got := groupIDs(NextecGroupTabDeviceGroups(ana, []uint{ana.Id})); len(got) != 0 {
++		t.Fatalf("lista pessoal não expõe grupo alheio: %v", got)
++	}
++	if got := peerIDs(NextecGroupTabPeers(bia, []uint{bia.Id}, 1, 100)); len(got) != 1 || got[0] != "5003" {
++		t.Fatalf("a Bia continua só com a avulsa dada pelo admin: %v", got)
++	}
++
++	// sem equipe (group_id 0) não herda regra de "equipe 0"
++	db.Create(&model.AddressBookCollectionRule{UserId: 1, CollectionId: r.CollectionID, Rule: 1, Type: 2, ToId: 0})
++	semEquipe := &model.User{Username: "caio", IsAdmin: &no}
++	db.Create(semEquipe)
++	if got := peerIDs(NextecGroupTabPeers(semEquipe, []uint{semEquipe.Id}, 1, 100)); len(got) != 0 {
++		t.Fatalf("sem equipe não vê nada: %v", got)
++	}
++}
