@@ -5,6 +5,7 @@ import test from 'node:test'
 import {
   ID_RE, PARAM, PENDING_KEY, PENDING_TTL_MS, INVALID_TEXT, confirmText, decide, hasParam, isPublicPath, nextQuery,
   paramFromHash, parseConnectId, queryWithout, savePending, takePending,
+  memoryPending, rememberPending, PENDING_TTL_MS as TTL_MEM,
 } from '../../src/nextec/connect-deeplink.mjs'
 import { fmtId } from '../../src/nextec/id.js'
 
@@ -148,4 +149,17 @@ test('confirmação mostra o ID formatado como o painel e o aviso de inválido d
 
 test('textos sem travessão nem meia-risca', () => {
   for (const t of [INVALID_TEXT, confirmText('123456789', fmtId)]) assert.ok(!/[–—]/.test(t))
+})
+
+test('regressão: reserva em memória respeita o prazo e não ressuscita pedido já gravado no armazenamento', () => {
+  const t0 = 1_000_000
+  // gravado no armazenamento: a memória nunca vale, nem dentro do prazo (o armazenamento decide, inclusive o vencimento)
+  assert.equal(memoryPending(rememberPending('123456789', true, t0), t0 + 1000), undefined)
+  // armazenamento bloqueado: a memória vale dentro do prazo e vence depois dele
+  const mem = rememberPending('123456789', false, t0)
+  assert.equal(memoryPending(mem, t0 + 1000), '123456789')
+  assert.equal(memoryPending(mem, t0 + TTL_MEM + 1), undefined)
+  assert.equal(memoryPending(mem, t0 - 1), undefined)
+  assert.equal(rememberPending(undefined, false, t0), undefined)
+  assert.equal(memoryPending(undefined, t0), undefined)
 })

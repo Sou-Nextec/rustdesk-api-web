@@ -83,6 +83,18 @@ export function takePending (storage, now = Date.now()) {
   } catch (e) { return undefined }
 }
 
+// Reserva em memória para quando o armazenamento da sessão está bloqueado. Vale só quando o pedido NÃO foi gravado
+// no armazenamento (se foi, um pedido vencido ou já tratado lá não pode voltar pela memória) e vence no mesmo prazo.
+export function rememberPending (value, stored, now = Date.now()) {
+  return value === undefined ? undefined : { value, stored: Boolean(stored), at: now }
+}
+export function memoryPending (mem, now = Date.now()) {
+  if (!mem || mem.stored || mem.value === undefined) return undefined
+  const at = Number(mem.at)
+  if (!at || now - at < 0 || now - at > PENDING_TTL_MS) return undefined
+  return mem.value
+}
+
 // ---------- decisão ----------
 // Depois de cada navegação: o que fazer com o pedido.
 //   loggedIn: há sessão e rotas carregadas; busy: já existe um pedido sendo tratado (diálogo aberto).

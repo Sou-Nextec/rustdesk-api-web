@@ -8,15 +8,24 @@ import { getToken } from '@/utils/auth'
 import { useUserStore } from '@/store/user'
 import { fmtId } from './id'
 import { connectDevice } from './connect'
-import { INVALID_TEXT, confirmText, decide, hasParam, isPublicPath, nextQuery, paramFromHash, savePending, takePending } from './connect-deeplink.mjs'
+import { INVALID_TEXT, confirmText, decide, hasParam, isPublicPath, memoryPending, nextQuery, paramFromHash, rememberPending, savePending, takePending } from './connect-deeplink.mjs'
 
 const session = () => { try { return window.sessionStorage } catch (e) { return null } }
 
 export function startConnectDeeplink ({ router, pinia }) {
-  // reserva em memória para quando o armazenamento da sessão está bloqueado (não sobrevive ao login externo)
-  let memory = paramFromHash(window.location.hash)
-  if (memory !== undefined) savePending(session(), memory)
+  // reserva em memória só para quando o armazenamento da sessão está bloqueado (não sobrevive ao login externo)
+  let memory
   let busy = false
+
+  // Guarda o pedido assim que ele aparece na URL, antes de qualquer guarda do roteador: na carga do painel e também
+  // quando o link é aberto numa aba já carregada (só o hash muda e a guarda de login redirecionaria antes de afterEach).
+  const capture = (hash) => {
+    const value = paramFromHash(hash)
+    if (value === undefined) return
+    memory = rememberPending(value, savePending(session(), value))
+  }
+  capture(window.location.hash)
+  window.addEventListener('hashchange', () => capture(window.location.hash))
 
   const loggedIn = () => {
     if (!getToken()) return false
@@ -28,13 +37,13 @@ export function startConnectDeeplink ({ router, pinia }) {
     let pending
     if (logged && !busy && !isPublicPath(to.path)) {
       pending = takePending(session())
-      if (pending === undefined) pending = memory
+      if (pending === undefined) pending = memoryPending(memory)
       memory = undefined
     }
     const d = decide({ path: to.path, query: to.query, pending, loggedIn: logged, busy })
     if (d.action === 'wait') {
       // chegou pela tela de login com o parâmetro na própria URL: guarda para depois de entrar
-      if (hasParam(to.query)) { savePending(session(), d.value); memory = d.value }
+      if (hasParam(to.query)) memory = rememberPending(d.value, savePending(session(), d.value))
       return
     }
     // limpa a URL antes de perguntar (recarregar a página não reabre a pergunta); em Meus dispositivos, filtra pelo ID

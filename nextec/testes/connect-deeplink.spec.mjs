@@ -140,4 +140,23 @@ describe('link Abrir no Connect (?conectar=<ID>)', () => {
     expect(box()).toBeNull()
     expect(sessionStorage.getItem('nx-conectar-pendente')).toContain('111222333')
   })
+
+  it('regressão: link aberto numa aba já carregada e sem sessão sobrevive à guarda de login', async () => {
+    sessionStorage.clear()
+    await router.push('/login')
+    // só o hash muda: a carga do painel não roda de novo e a guarda redireciona para o login sem o parâmetro
+    window.location.hash = '#/my/peer?conectar=444555666'
+    window.dispatchEvent(new HashChangeEvent('hashchange'))
+    await waitFor(() => router.currentRoute.value.path === '/login', 'voltar ao login')
+    await tick(100)
+    expect(box()).toBeNull()
+    expect(sessionStorage.getItem('nx-conectar-pendente')).toContain('444555666')
+    entrar()
+    await router.push({ path: '/my/peer', replace: true })
+    await waitFor(() => box(), 'confirmação depois de entrar')
+    expect(box().textContent).toContain('Conectar ao dispositivo 444 555 666?')
+    clickBox('Cancelar')
+    await waitFor(() => !box(), 'fechar')
+    expect(state.linkRequests).toEqual([])
+  })
 })
