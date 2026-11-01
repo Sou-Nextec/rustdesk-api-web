@@ -477,6 +477,7 @@ Duas correções de revisão em `NextecEnrollAssign` (aplica depois do 0052).
 Correção (aplica depois do 0053). No upstream, quem não é admin via na aba Grupo só as máquinas do próprio usuário, e `GET /api/device-group/accessible` respondia "Permission denied". O acesso dado na tela de Acesso (cliente ou máquina avulsa, para a pessoa ou para a equipe dela) só aparecia no Livro de endereços.
 
 - `GET /api/peers` passa por `NextecGroupTabPeers`: as máquinas que o upstream já mostrava (próprio usuário, ou equipe do tipo compartilhada) mais as das listas com regra de leitura para a pessoa ou a equipe dela (`rule > 0`). Equipe 0 (sem equipe) não herda nada. Paginação e total contam o conjunto todo.
+- Só valem listas "Cliente: X" e "Máquina: ..." de dono administrador (as da tela de Acesso). Lista pessoal de usuário comum com o ID de uma máquina alheia, mesmo compartilhada com a equipe, não libera os dados reais da máquina (revisão do PR #132).
 - `GET /api/device-group/accessible` para quem não é admin devolve só os grupos dessas máquinas (`NextecGroupTabDeviceGroups`). Admin continua recebendo todos.
 - Tirar a regra tira as máquinas da aba na consulta seguinte.
 - Teste: `service/nextec_group_tab_test.go` (`TestGroupTabShowsPeersGrantedToTeamAndPerson`), que falha com o filtro antigo só por `user_id`.

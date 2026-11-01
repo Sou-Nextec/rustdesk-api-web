@@ -72,10 +72,10 @@ index a037f43..28556c7 100644
 +}
 diff --git a/service/nextec_group_tab.go b/service/nextec_group_tab.go
 new file mode 100644
-index 0000000..e8a6200
+index 0000000..3bbd93a
 --- /dev/null
 +++ b/service/nextec_group_tab.go
-@@ -0,0 +1,53 @@
+@@ -0,0 +1,66 @@
 +package service
 +
 +import (
@@ -87,16 +87,29 @@ index 0000000..e8a6200
 +// as máquinas do próprio usuário. Aqui entram também as máquinas das listas que a pessoa pode ver pela regra dela ou da
 +// equipe dela: o acesso por cliente ("Cliente: X") e por máquina avulsa ("Máquina: ...") dado na tela de Acesso.
 +
-+// nextecReadableCollectionIDs devolve as listas que a pessoa pode ver por regra dela ou da equipe.
++// nextecReadableCollectionIDs devolve as listas que a pessoa pode ver por regra dela ou da equipe. Só valem as listas
++// "Cliente: X" e "Máquina: ..." de dono administrador: um usuário comum pode criar a própria lista com o ID de qualquer
++// máquina e compartilhá-la, e isso não pode virar acesso aos dados reais da máquina.
 +func nextecReadableCollectionIDs(u *model.User) []uint {
++	admins := nextecAdminIDs(DB)
++	if len(admins) == 0 {
++		return nil
++	}
 +	var rules []model.AddressBookCollectionRule
 +	DB.Where("rule > 0 AND ((type = ? AND to_id = ?) OR (type = ? AND to_id = ? AND to_id <> 0))",
 +		model.ShareAddressBookRuleTypePersonal, u.Id, model.ShareAddressBookRuleTypeGroup, u.GroupId).Find(&rules)
-+	ids := make([]uint, 0, len(rules))
++	cand := make([]uint, 0, len(rules))
 +	for _, r := range rules {
-+		ids = append(ids, r.CollectionId)
++		cand = append(cand, r.CollectionId)
 +	}
-+	return uniqueUint(ids)
++	if len(cand) == 0 {
++		return nil
++	}
++	var ids []uint
++	DB.Model(&model.AddressBookCollection{}).
++		Where("id IN ? AND user_id IN ? AND (name LIKE ? OR name LIKE ?)", uniqueUint(cand), admins, NextecClientListPrefix+"%", NextecMachineListPrefix+"%").
++		Pluck("id", &ids)
++	return ids
 +}
 +
 +// nextecGroupTabScope filtra as máquinas visíveis: as dos usuários que o upstream já mostra e as das listas liberadas.
@@ -131,10 +144,10 @@ index 0000000..e8a6200
 +}
 diff --git a/service/nextec_group_tab_test.go b/service/nextec_group_tab_test.go
 new file mode 100644
-index 0000000..cd2b417
+index 0000000..341964c
 --- /dev/null
 +++ b/service/nextec_group_tab_test.go
-@@ -0,0 +1,102 @@
+@@ -0,0 +1,121 @@
 +package service
 +
 +import (
@@ -227,6 +240,25 @@ index 0000000..cd2b417
 +	}
 +	if got := peerIDs(NextecGroupTabPeers(ana, []uint{ana.Id}, 1, 100)); len(got) != 1 || got[0] != "5004" {
 +		t.Fatalf("sem a regra da equipe a Ana volta a ver só a máquina dela: %v", got)
++	}
++
++	// revisão do PR #132: lista pessoal de um usuário comum, com o ID de uma máquina alheia, compartilhada com a
++	// equipe dele ou com outra pessoa, não pode liberar os dados reais da máquina (nem com o nome no padrão Nextec)
++	for _, name := range []string{"Minha lista", "Cliente: Cliente B", "Máquina: x (5003)"} {
++		col := &model.AddressBookCollection{UserId: ana.Id, Name: name}
++		db.Create(col)
++		db.Create(&model.AddressBook{Id: "5003", Hostname: "invented", UserId: ana.Id, CollectionId: col.Id})
++		db.Create(&model.AddressBookCollectionRule{UserId: ana.Id, CollectionId: col.Id, Rule: 1, Type: 2, ToId: team.Id})
++		db.Create(&model.AddressBookCollectionRule{UserId: ana.Id, CollectionId: col.Id, Rule: 1, Type: 1, ToId: bia.Id})
++	}
++	if got := peerIDs(NextecGroupTabPeers(ana, []uint{ana.Id}, 1, 100)); len(got) != 1 || got[0] != "5004" {
++		t.Fatalf("lista pessoal não libera máquina alheia: %v", got)
++	}
++	if got := groupIDs(NextecGroupTabDeviceGroups(ana, []uint{ana.Id})); len(got) != 0 {
++		t.Fatalf("lista pessoal não expõe grupo alheio: %v", got)
++	}
++	if got := peerIDs(NextecGroupTabPeers(bia, []uint{bia.Id}, 1, 100)); len(got) != 1 || got[0] != "5003" {
++		t.Fatalf("a Bia continua só com a avulsa dada pelo admin: %v", got)
 +	}
 +
 +	// sem equipe (group_id 0) não herda regra de "equipe 0"
