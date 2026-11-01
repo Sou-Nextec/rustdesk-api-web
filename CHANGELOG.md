@@ -2,6 +2,16 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.13.0
+
+Link "Abrir no Connect": outra ferramenta da Nextec (ex.: a plataforma Sentinela) pode mandar o analista direto para a conexão.
+
+- **Formato do link:** `https://painel-remoto.nex.tec.br/_admin/#/my/peer?conectar=<ID do RustDesk>` (espaços no ID são aceitos, como em `123 456 789`). Vale só ID numérico de 6 a 64 dígitos, o mesmo formato do servidor; qualquer outra coisa mostra "O link de conexão traz um ID de dispositivo inválido. Nada foi aberto." e não abre nada.
+- **Sempre com confirmação:** o painel pergunta "Conectar ao dispositivo 123 456 789?" antes de abrir. O link vem de fora, e o aplicativo só pode ser aberto por um clique da pessoa.
+- **As permissões continuam sendo do painel:** ao confirmar, a conexão segue o caminho do botão Conectar: o servidor confere se a pessoa pode acessar a máquina (`/my/connect-link`), o número do chamado é pedido quando está ligado e a auditoria registra o uso. O link não leva senha nem libera nada sozinho.
+- **Sobrevive ao login:** sem sessão, o pedido fica guardado nesta aba por até 15 minutos e é tratado logo depois de entrar, inclusive pela entrada automática com a Microsoft e quando o link é aberto numa aba do painel que já estava aberta. Depois dos 15 minutos o pedido vence e não volta.
+- **Uma vez só:** depois de confirmar ou cancelar, o parâmetro sai da URL; recarregar a página não pergunta de novo. Meus dispositivos abre filtrado pelo ID pedido.
+
 ## 2.12.6
 
 Convites de instalação: a máquina volta a entrar no cliente escolhido.

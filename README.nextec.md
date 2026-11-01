@@ -34,6 +34,7 @@ Tudo que é da Nextec fica em arquivos próprios:
 | `src/nextec/views/Support.vue`, `WaitingList.vue` e `upload.js` | Suporte avulso: app de suporte para o link público /suporte e fila Aguardando atendimento (patch 0010) |
 | `src/nextec/views/Policies.vue` e `Sessions.vue` | Políticas do app por cliente ou máquina (recebidas pelo app no heartbeat) e conexões ativas com desconectar (patch 0012) |
 | `src/nextec/views/Report.vue` | Relatório mensal por cliente, chamado na conexão (connect.js), CSV e impressão (patch 0013) |
+| `src/nextec/connect-deeplink.js` e `connect-deeplink.mjs` | Link "Abrir no Connect" (`#/my/peer?conectar=<ID>`): guarda o pedido durante o login, pede confirmação e chama o `connectDevice` de sempre |
 | `src/nextec/id.js` | Máscara de ID (`268 304 385` na tela, `268304385` ao copiar e salvar) |
 | `src/nextec/mobile-tables.js` | No celular, cada linha de tabela vira um cartão com rótulos (classe `nx-m-cards`; CSS em theme.scss) |
 | `nextec/PENDENCIAS.md` | Backlog do que foi visto na revisão de telas e ainda não foi feito |
@@ -87,6 +88,24 @@ Em Segurança > Login externo > Adicionar > OIDC, o botão **Preencher para Micr
 URI de redirecionamento no Entra: `https://<endereço do painel>/api/oidc/callback`. Com o Cloudflare Access na frente, esse caminho fica fora das rotas protegidas (`/_admin` e `/api/admin`). Para esconder o login por senha, `RUSTDESK_API_APP_DISABLE_PWD_LOGIN=true` no compose.
 
 **Entrada automática (2.12.5):** com um único provedor de login externo, a tela de login abre o fluxo OIDC sozinha. Como o painel fica atrás do Cloudflare Access com o mesmo Entra, a sessão já existe e a pessoa entra sem clicar. O servidor continua validando o login pelo OIDC (nada do cabeçalho do Cloudflare é confiado). Para ver o formulário de usuário e senha, abra `/_admin/#/login?manual=1`; quem usa Sair não é reconectado na hora. A lógica fica em `src/nextec/auto-sso.mjs`.
+
+## Link "Abrir no Connect" (outras ferramentas)
+
+Outra ferramenta da Nextec (ex.: a plataforma Sentinela) leva o analista à conexão com o link:
+
+```
+https://painel-remoto.nex.tec.br/_admin/#/my/peer?conectar=<ID do RustDesk>
+```
+
+O painel é quem abre a conexão; o link só diz qual máquina. Regras:
+
+1. **ID:** só dígitos, de 6 a 64 (espaços são removidos, como no Conectar pelo ID). Fora disso, o painel avisa que o link é inválido e não abre nada.
+2. **Confirmação explícita:** "Conectar ao dispositivo 123 456 789?". O link vem de fora e o protocolo do aplicativo exige um clique da pessoa.
+3. **Permissões do painel:** ao confirmar, roda o `connectDevice` de `src/nextec/connect.js`, o mesmo do botão Conectar: o servidor confere o acesso em `/my/connect-link`, o chamado é pedido quando ligado e o uso fica na auditoria. Nenhuma senha passa pelo link.
+4. **Login:** o pedido é lido do endereço assim que o painel carrega, antes da guarda de login, da entrada automática pela Microsoft (`auto-sso.mjs`) e do ida e volta do OIDC, e fica no `sessionStorage` da aba (`nx-conectar-pendente`) por até 15 minutos. Depois de entrar, a pergunta aparece na tela inicial. Com o armazenamento bloqueado, o pedido só sobrevive ao login por senha (sem sair da página).
+5. **Uma vez por navegação:** o parâmetro sai da URL com `router.replace` (recarregar não pergunta de novo). Em Meus dispositivos, a lista fica filtrada pelo ID (`?q=<ID>`).
+
+Regras puras e testes: `src/nextec/connect-deeplink.mjs`, `nextec/testes/connect-deeplink.test.mjs` (node --test) e `nextec/testes/connect-deeplink.spec.mjs` (vitest, com router e guarda de login reais).
 
 ## Foto de perfil
 

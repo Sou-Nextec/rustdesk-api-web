@@ -139,7 +139,8 @@
 </template>
 
 <script setup>
-  import { computed, onActivated, onMounted, reactive, ref } from 'vue'
+  import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
+  import { useRoute } from 'vue-router'
   import { fmtId, rawId } from '@/nextec/id'
   import { ElMessage } from 'element-plus'
   import { list } from '@/api/my/peer'
@@ -181,6 +182,14 @@
   })
   const page = ref(1)
   const pageSize = ref(20)
+  // atalho ?q= (link "Abrir no Connect", connect-deeplink.js): a lista abre filtrada pelo ID pedido
+  const route = useRoute()
+  watch(() => route.query.q, (qq) => {
+    if (!qq) return
+    q.value = String(qq)
+    statusFilter.value = null
+    page.value = 1
+  }, { immediate: true })
   const pageRows = computed(() => filtered.value.slice((page.value - 1) * pageSize.value, page.value * pageSize.value))
   const selected = ref([])
 

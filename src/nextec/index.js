@@ -14,6 +14,7 @@ import { guardRequiredFields } from './required-guard'
 import { enterToSubmit } from './enter-submit'
 import { startMobileTables } from './mobile-tables'
 import { recoverFromStaleAssets } from './stale-assets.mjs'
+import { startConnectDeeplink } from './connect-deeplink.js'
 import { ElMessage } from 'element-plus'
 import { h } from 'vue'
 import { router, asyncRoutes } from '@/router'
@@ -125,6 +126,9 @@ router.beforeEach((to, from) => {
     return { path: '/home', replace: true }
   }
 })
+
+// 3b. Link "Abrir no Connect" (#/my/peer?conectar=<ID>): sobrevive ao login, pede confirmação e usa o Conectar de sempre
+startConnectDeeplink({ router, pinia })
 
 // 4. Celular: o menu começa recolhido e fecha ao navegar
 const mobile = window.matchMedia('(max-width: 768px)')
