@@ -2,6 +2,13 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.12.7
+
+Convites de instalação: a máquina entra no cliente escolhido também quando o instalador vem do link.
+
+- **Causa:** o link entregue ao cliente é `/instalador/<código>`, mas o agente só reconhecia `/i/<código>` na marca de origem do arquivo (a que o navegador grava no download). Quem baixava pelo link entrava como Pendente, sem cliente. O comando PowerShell não era afetado: ele leva o código no nome do arquivo.
+- **Correção:** o agente passa a ler o código de `/instalador/<código>` e de `/i/<código>`. Gere o MSI de novo no gerador (que precisa trazer este agente), publique em Atualizações e crie convites novos. Convites e instaladores já baixados continuam como estão.
+
 ## 2.12.6
 
 Convites de instalação: a máquina volta a entrar no cliente escolhido.

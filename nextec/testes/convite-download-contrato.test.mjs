@@ -10,6 +10,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { installerLinkUrl } from '../../src/nextec/public-links.mjs'
 
 const raiz = join(import.meta.dirname, '..', '..')
 const backend = join(raiz, 'nextec', 'backend')
@@ -44,4 +45,21 @@ test('o coordenador do painel lê o código da marca de origem e o teste dele us
   const teste = readFileSync(join(raiz, 'nextec', 'atualizacao', 'test_convite_origem.ps1'), 'utf8')
   assert.match(teste, /'nextec-acesso-[\d.]+\.msi'[^\n]*HostUrl=[^\n]*\/i\/\$code\/baixar/,
     'test_convite_origem.ps1 precisa cobrir o nome fixo servido pelo painel com HostUrl /i/<código>/baixar')
+})
+
+// Regressão (2026-11-16): o link entregue ao cliente é /instalador/<código> (patch 0042), mas o coordenador só reconhecia
+// /i/<código> na marca de origem. O navegador grava HostUrl=.../instalador/<código>/baixar e a máquina entrava como Pendente.
+// Aqui o padrão do coordenador é lido do próprio script e testado contra o link que o painel realmente monta.
+test('o coordenador reconhece o link que o painel entrega (/instalador/<código>) e o antigo /i/<código>', () => {
+  const coord = readFileSync(join(raiz, 'nextec', 'atualizacao', 'Coordenar-Agente-Nextec.ps1'), 'utf8')
+  const achou = coord.match(/function Get-NextecInviteCodeFromUrl[\s\S]*?\[regex\]::Match\(\$Url, '([^']+)'/)
+  assert.ok(achou, 'padrão de URL do coordenador não encontrado')
+  const re = new RegExp(achou[1], 'i')
+  const code = 'K7M2QX9P4TA8B3C5D6E2'
+  const link = installerLinkUrl('https://painel-remoto.nex.tec.br', code)
+  assert.match(link, new RegExp(`/instalador/${code}$`), 'o link público do convite mudou de caminho')
+  for (const url of [link, `${link}/baixar`, `https://painel-remoto.nex.tec.br/i/${code}/baixar`]) {
+    assert.ok(re.test(url), `o coordenador não lê o código de ${url}: ajuste Get-NextecInviteCodeFromUrl e sincronize o rdgen`)
+  }
+  assert.ok(!re.test(`https://painel-remoto.nex.tec.br/atendimento/${code}/baixar`), 'link de atendimento não é convite')
 })
