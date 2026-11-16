@@ -48,6 +48,13 @@ try {
   Assert ((Get-NextecInviteCode -Origem $p) -eq '') 'codigo invalido'
   $p = New-Msi 'nextec-acesso-2.4.5.msi' @('[ZoneTransfer]', 'ZoneId=3', "HostUrl=https://painel/s/$code/baixar", "ReferrerUrl=https://painel/x/i/$code")
   Assert ((Get-NextecInviteCode -Origem $p) -eq '') 'caminho que nao e /i/<codigo>'
+  # endereco publico atual (/instalador/<codigo>, patch 0042): e o link que o painel entrega ao cliente
+  $p = New-Msi 'nextec-acesso-2.4.7.msi' @('[ZoneTransfer]', 'ZoneId=3', "ReferrerUrl=https://painel-remoto.nex.tec.br/instalador/$code", "HostUrl=https://painel-remoto.nex.tec.br/instalador/$code/baixar")
+  Assert ((Get-NextecInviteCode -Origem $p) -eq $code) 'HostUrl com /instalador/<codigo>/baixar'
+  $p = New-Msi 'nextec-acesso-2.4.8.msi' @('[ZoneTransfer]', 'ZoneId=3', "ReferrerUrl=https://painel-remoto.nex.tec.br/instalador/$code")
+  Assert ((Get-NextecInviteCode -Origem $p) -eq $code) 'so ReferrerUrl com /instalador/<codigo>'
+  $p = New-Msi 'nextec-acesso-2.4.9.msi' @('[ZoneTransfer]', 'ZoneId=3', "HostUrl=https://painel-remoto.nex.tec.br/atendimento/$code/baixar", "ReferrerUrl=https://painel-remoto.nex.tec.br/instaladorx/$code")
+  Assert ((Get-NextecInviteCode -Origem $p) -eq '') 'atendimento e prefixo parecido nao sao convite'
   # sem marca de origem e sem codigo no nome: vazio (maquina entra como Pendente)
   $p = New-Msi 'nextec-acesso-2.4.6.msi' $null
   Assert ((Get-NextecInviteCode -Origem $p) -eq '') 'sem marca e sem codigo no nome'
@@ -65,5 +72,6 @@ try {
   Assert ((Get-NextecInviteCodeFromUrl -Url "https://a.b/i/$code") -eq $code) 'url sem sufixo'
   Assert ((Get-NextecInviteCodeFromUrl -Url ("https://a.b/i/$code" + ('x' * 3000))) -eq '') 'url longa demais'
   Assert ((Get-NextecInviteCodeFromUrl -Url "ftp://a.b/i/$code") -eq '') 'so http e https'
+  Assert ((Get-NextecInviteCodeFromUrl -Url "https://a.b/instalador/$code/baixar") -eq $code) 'url /instalador com sufixo'
   Write-Host 'test_convite_origem: ok'
 } finally { Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue }
