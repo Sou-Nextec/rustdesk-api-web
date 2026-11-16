@@ -93,6 +93,33 @@ try {
     Assert-True ($client.ConfigRoot -match 'Suporte-Nextec\\config$') 'nome personalizado do executável não determinou o perfil'
   }
 
+  # Regressao: WMI corrompido ("Classe invalida" no Win32_Service) travava a inscricao do agente em protocol_error.
+  # Sem CIM, o agente tem que achar o servico pelo registro e devolver o mesmo cliente.
+  Invoke-Test 'Identity_WmiQuebrado_UsaRegistro' {
+    $base = Join-Path $temp 'wmi-quebrado'
+    $fixture = New-TestClient -Root $base -AppName 'Nextec-Connect' -PeerId '855555555'
+    $regRoot = 'HKCU:\Software\NextecTeste-' + [Guid]::NewGuid().ToString('N')
+    try {
+      $svcKey = New-Item -Path (Join-Path $regRoot 'Nextec-Connect') -Force
+      New-ItemProperty -LiteralPath $svcKey.PSPath -Name ImagePath -Value $fixture.Service.PathName -PropertyType String | Out-Null
+      New-ItemProperty -LiteralPath $svcKey.PSPath -Name Type -Value 16 -PropertyType DWord | Out-Null
+      New-ItemProperty -LiteralPath $svcKey.PSPath -Name ObjectName -Value 'NT AUTHORITY\LocalService' -PropertyType String | Out-Null
+      # driver (Type 1) com ImagePath e chave sem ImagePath nao podem virar candidatos
+      $drvKey = New-Item -Path (Join-Path $regRoot 'Driver') -Force
+      New-ItemProperty -LiteralPath $drvKey.PSPath -Name ImagePath -Value $fixture.Service.PathName -PropertyType String | Out-Null
+      New-ItemProperty -LiteralPath $drvKey.PSPath -Name Type -Value 1 -PropertyType DWord | Out-Null
+      New-Item -Path (Join-Path $regRoot 'SemImagem') -Force | Out-Null
+      function Get-CimInstance { [CmdletBinding()] param($ClassName) throw 'Classe invalida' }
+      try {
+        $client = Get-NextecInstalledClient -ServicesRegistryPath $regRoot -ProfileRootBase $base -PeerIdReader { param($service, $exe) '855555555' }
+      } finally { Remove-Item -LiteralPath Function:\Get-CimInstance -ErrorAction SilentlyContinue }
+      Assert-True ($client.ServiceName -eq 'Nextec-Connect') 'sem WMI o servico deveria vir do registro'
+      Assert-True ($client.PeerId -eq '855555555') 'sem WMI o PeerId deveria ser lido normalmente'
+      Assert-True ($client.ServiceAccount -eq 'NT AUTHORITY\LocalService') 'sem WMI a conta do servico deveria vir do registro'
+      Assert-True ($client.ExePath -eq $fixture.Exe) 'sem WMI o executavel deveria vir do registro'
+    } finally { Remove-Item -LiteralPath $regRoot -Recurse -Force -ErrorAction SilentlyContinue }
+  }
+
   foreach ($appName in @('XPTO', 'Nextec-Connect', 'Client-Nextec-Connect')) {
     Invoke-Test "Identity_MarkerChoosesApp_$appName" {
       $base = Join-Path $temp ('marker-' + $appName)
