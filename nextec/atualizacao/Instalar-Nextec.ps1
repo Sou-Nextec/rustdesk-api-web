@@ -243,11 +243,24 @@ function Get-NextecInstalledClient {
     [string]$ProfileRootBase,
     [scriptblock]$PeerIdReader,
     [object]$Marker,
-    [string]$MarkerFile
+    [string]$MarkerFile,
+    [string]$ServicesRegistryPath = 'HKLM:\SYSTEM\CurrentControlSet\Services'
   )
 
   if ($null -eq $Services) {
-    $Services = @(Get-CimInstance -ClassName Win32_Service -ErrorAction Stop)
+    try { $Services = @(Get-CimInstance -ClassName Win32_Service -ErrorAction Stop) }
+    catch {
+      # WMI quebrado ('Classe invalida' no Win32_Service): le o cadastro de servicos direto do registro. So servicos
+      # proprios (Type 0x10 e 0x20) com ImagePath entram, no mesmo formato (Name, PathName, StartName) que o CIM devolve.
+      $Services = @(
+        foreach ($key in @(Get-ChildItem -LiteralPath $ServicesRegistryPath -ErrorAction Stop)) {
+          $props = Get-ItemProperty -LiteralPath $key.PSPath -ErrorAction SilentlyContinue
+          if (-not $props -or -not $props.ImagePath) { continue }
+          if (-not ([int]$props.Type -band 0x30)) { continue }
+          [pscustomobject]@{ Name = [string]$key.PSChildName; DisplayName = [string]$props.DisplayName; PathName = [string]$props.ImagePath; StartName = [string]$props.ObjectName; State = '' }
+        }
+      )
+    }
   }
 
   # Marcador gravado pelo MSI (HKLM\SOFTWARE\Nextec\Agente {InstallDir, AppName}) ou nextec-marker.json.

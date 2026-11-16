@@ -2,6 +2,14 @@
 
 Cada versão segue o padrão `maior.menor.correção`. Esta página aparece no painel em **Novidades** (menu do usuário).
 
+## 2.12.8
+
+Agente: máquinas com o WMI corrompido voltam a se inscrever.
+
+- **Causa:** em algumas máquinas o WMI está com defeito e a consulta de serviços (`Win32_Service`) falha com "Classe inválida". O agente não achava o próprio serviço e o erro era registrado como `protocol_error` a cada 2 minutos, sem nunca inscrever a máquina.
+- **Correção:** se a consulta ao WMI falhar, o agente lê a lista de serviços direto do registro (`HKLM\SYSTEM\CurrentControlSet\Services`) e segue normalmente. O mesmo vale para o atualizador. Teste de regressão: `Identity_WmiQuebrado_UsaRegistro` e `agente-sem-wmi.test.mjs`.
+- **Para valer nas máquinas:** o gerador precisa trazer este agente. Gere o MSI de novo e publique em Atualizações. O log do agente já mostra o erro real como `unknown_code [texto]`; só o agente 2.3.6 antigo o escondia como `protocol_error`.
+
 ## 2.12.7
 
 Convites de instalação: a máquina entra no cliente escolhido também quando o instalador vem do link.
